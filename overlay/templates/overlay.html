@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1280,height=720">
+<title>Battle Overlay</title>
+<style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+        background: transparent;
+        font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+        width: 1280px;
+        height: 720px;
+        overflow: hidden;
+        color: #fff;
+    }
+
+    .scoreboard {
+        position: absolute;
+        top: 16px;
+        right: 16px;
+        background: rgba(0, 0, 0, 0.75);
+        border: 2px solid rgba(255, 255, 255, 0.15);
+        border-radius: 12px;
+        padding: 16px 24px;
+        min-width: 280px;
+        backdrop-filter: blur(8px);
+    }
+
+    .scoreboard h2 {
+        font-size: 14px;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        color: rgba(255, 255, 255, 0.6);
+        margin-bottom: 12px;
+        text-align: center;
+    }
+
+    .player-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .player-row:last-child {
+        border-bottom: none;
+    }
+
+    .player-name {
+        font-size: 18px;
+        font-weight: 600;
+    }
+
+    .player-name.red { color: #ff6b6b; }
+    .player-name.blue { color: #74b9ff; }
+
+    .player-wins {
+        font-size: 22px;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .match-count {
+        text-align: center;
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.5);
+        margin-top: 10px;
+    }
+
+    .last-result {
+        position: absolute;
+        bottom: 16px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(0, 0, 0, 0.7);
+        border-radius: 8px;
+        padding: 8px 20px;
+        font-size: 14px;
+        color: rgba(255, 255, 255, 0.8);
+        backdrop-filter: blur(8px);
+    }
+</style>
+<script>
+    setTimeout(() => location.reload(), 10000);
+</script>
+</head>
+<body>
+    <div class="scoreboard">
+        <h2>Scoreboard</h2>
+        <div class="player-row">
+            <span class="player-name red">ClaudeAggro</span>
+            <span class="player-wins">{{ wins.get("ClaudeAggro", 0) }}</span>
+        </div>
+        <div class="player-row">
+            <span class="player-name blue">ClaudeStall</span>
+            <span class="player-wins">{{ wins.get("ClaudeStall", 0) }}</span>
+        </div>
+        <div class="match-count">{{ total_matches }} match{{ "es" if total_matches != 1 else "" }} played</div>
+    </div>
+
+    {% if last_match %}
+    <div class="last-result">
+        Last winner: <strong>{{ last_match.winner }}</strong>
+    </div>
+    {% endif %}
+</body>
+</html>

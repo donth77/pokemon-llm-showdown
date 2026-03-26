@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=1280,height=720">
+  <title>{{ stream_title }}</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 1280px;
+      height: 720px;
+      overflow: hidden;
+      background: #0b1020;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+    .scene {
+      position: relative;
+      width: 1280px;
+      height: 720px;
+      overflow: hidden;
+    }
+    .battle-frame {
+      position: absolute;
+      inset: 0;
+      width: 1280px;
+      height: 720px;
+      border: 0;
+      background: #0b1020;
+    }
+    .overlay-frame {
+      position: absolute;
+      inset: 0;
+      width: 1280px;
+      height: 720px;
+      border: 0;
+      background: transparent;
+      pointer-events: none;
+    }
+    .stream-title {
+      position: absolute;
+      left: 16px;
+      top: 16px;
+      z-index: 10;
+      padding: 8px 12px;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.55);
+      color: #fff;
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+      pointer-events: none;
+    }
+    .battle-format {
+      position: absolute;
+      left: 16px;
+      top: 58px;
+      z-index: 10;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.48);
+      color: rgba(255, 255, 255, 0.9);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+      pointer-events: none;
+      text-transform: lowercase;
+    }
+    .thoughts-wrap {
+      position: absolute;
+      left: 16px;
+      right: 446px;
+      bottom: 56px;
+      z-index: 12;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      pointer-events: none;
+    }
+    .thoughts-panel {
+      background: rgba(4, 10, 24, 0.72);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 10px;
+      backdrop-filter: blur(8px);
+      padding: 10px 12px;
+      height: 136px;
+      overflow: hidden;
+    }
+    .thoughts-title {
+      font-size: 12px;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.8);
+      margin-bottom: 6px;
+      font-weight: 700;
+    }
+    .thoughts-scroll {
+      height: 102px;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+    }
+    .thought-line {
+      font-size: 12px;
+      line-height: 1.35;
+      color: rgba(255, 255, 255, 0.9);
+      margin-bottom: 6px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .thought-line .meta {
+      display: inline-block;
+      margin-right: 6px;
+      color: rgba(255, 255, 255, 0.55);
+      font-size: 11px;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="scene">
+    <div class="stream-title">{{ stream_title }}</div>
+    <div class="battle-format" id="battle-format-label">format: --</div>
+    <iframe
+      class="battle-frame"
+      id="battle-frame"
+      src="{{ showdown_internal_url }}"
+      title="Pokemon Showdown"
+      allow="autoplay; fullscreen"
+      allowfullscreen>
+    </iframe>
+    <iframe
+      class="overlay-frame"
+      src="/overlay"
+      title="Scoreboard Overlay">
+    </iframe>
+    <div class="thoughts-wrap">
+      <section class="thoughts-panel">
+        <div class="thoughts-title" id="thoughts-title-p1">Player 1</div>
+        <div class="thoughts-scroll" id="thoughts-p1"></div>
+      </section>
+      <section class="thoughts-panel">
+        <div class="thoughts-title" id="thoughts-title-p2">Player 2</div>
+        <div class="thoughts-scroll" id="thoughts-p2"></div>
+      </section>
+    </div>
+  </div>
+  <script>
+    // If viewed from host browser (localhost), use localhost showdown URL.
+    // If viewed from stream container (hostname "overlay"), keep internal Docker URL.
+    const battleFrame = document.getElementById("battle-frame");
+    const battleFormatLabel = document.getElementById("battle-format-label");
+    const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+    const showdownBaseRaw = isLocal ? "{{ showdown_local_url }}" : "{{ showdown_internal_url }}";
+    const showdownBase = showdownBaseRaw.endsWith("/") ? showdownBaseRaw : `${showdownBaseRaw}/`;
+    const baseParams = `broadcast_layout=1&_=${Date.now()}`;
+    const cacheBust = `?${baseParams}`;
+    let currentSrc = `${showdownBase}${cacheBust}`;
+    let lastBattleSrc = currentSrc;
+    battleFrame.src = currentSrc;
+
+    function battleUrlFromTag(tag) {
+      if (!tag) return `${showdownBase}${cacheBust}`;
+      let normalized = String(tag).trim();
+      normalized = normalized.replace(/^>+/, "").replace(/^\/+/, "");
+      if (!normalized) return `${showdownBase}${cacheBust}`;
+      if (/^https?:\/\//i.test(normalized)) return normalized;
+
+      if (!normalized.startsWith("battle-")) {
+        normalized = `battle-${normalized}`;
+      }
+      return `${showdownBase}${cacheBust}#${normalized}`;
+    }
+
+    async function refreshBattleTarget() {
+      try {
+        const resp = await fetch("/current_battle", { cache: "no-store" });
+        const data = await resp.json();
+        let nextSrc = lastBattleSrc;
+        if (battleFormatLabel) {
+          battleFormatLabel.textContent = `format: ${data.battle_format || "--"}`;
+        }
+        if (data.status === "live" && data.battle_tag) {
+          nextSrc = battleUrlFromTag(data.battle_tag);
+          lastBattleSrc = nextSrc;
+        }
+        if (nextSrc !== currentSrc) {
+          currentSrc = nextSrc;
+          battleFrame.src = currentSrc;
+        }
+      } catch (_) {
+        // keep current view
+      }
+    }
+
+    refreshBattleTarget();
+    setInterval(refreshBattleTarget, 3000);
+
+    const thoughtsP1 = document.getElementById("thoughts-p1");
+    const thoughtsP2 = document.getElementById("thoughts-p2");
+    const thoughtsTitleP1 = document.getElementById("thoughts-title-p1");
+    const thoughtsTitleP2 = document.getElementById("thoughts-title-p2");
+    let thoughtPlayer1 = "Player 1";
+    let thoughtPlayer2 = "Player 2";
+    let lastThoughtsUpdatedAt = 0;
+
+    function setThoughtPlayerNames(p1, p2) {
+      thoughtPlayer1 = p1 || thoughtPlayer1;
+      thoughtPlayer2 = p2 || thoughtPlayer2;
+      if (thoughtsTitleP1) thoughtsTitleP1.textContent = thoughtPlayer1;
+      if (thoughtsTitleP2) thoughtsTitleP2.textContent = thoughtPlayer2;
+    }
+
+    async function refreshThoughtNamesFromScoreboard() {
+      try {
+        const resp = await fetch("/scoreboard", { cache: "no-store" });
+        const data = await resp.json();
+        const wins = data?.wins || {};
+        const names = Object.keys(wins);
+        if (names.length >= 2) {
+          setThoughtPlayerNames(names[0], names[1]);
+        }
+      } catch (_) {
+        // keep existing names
+      }
+    }
+
+    function renderThoughtList(target, items) {
+      if (!target) return;
+      if (!Array.isArray(items) || !items.length) {
+        target.innerHTML = '<div class="thought-line"><span class="meta">--</span>Waiting for thoughts...</div>';
+        return;
+      }
+      const lastItems = items.slice(-14);
+      target.innerHTML = lastItems.map(item => {
+        const turn = Number.isFinite(item?.turn) ? `T${item.turn}` : "T?";
+        const action = item?.action ? String(item.action) : "action";
+        const reasoning = item?.reasoning ? String(item.reasoning) : "";
+        const safeReasoning = reasoning
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;");
+        return `<div class="thought-line"><span class="meta">${turn} ${action}</span>${safeReasoning}</div>`;
+      }).join("");
+      target.scrollTop = target.scrollHeight;
+    }
+
+    async function refreshThoughts() {
+      try {
+        const resp = await fetch("/thoughts", { cache: "no-store" });
+        const data = await resp.json();
+        const updatedAt = Number(data.updated_at || 0);
+        if (updatedAt === lastThoughtsUpdatedAt) return;
+        lastThoughtsUpdatedAt = updatedAt;
+        const players = data.players || {};
+        const names = Object.keys(players);
+        if (names.length >= 2) {
+          setThoughtPlayerNames(names[0], names[1]);
+        } else if (names.length === 1) {
+          setThoughtPlayerNames(names[0], thoughtPlayer2);
+        }
+        renderThoughtList(thoughtsP1, players[thoughtPlayer1] || []);
+        renderThoughtList(thoughtsP2, players[thoughtPlayer2] || []);
+      } catch (_) {
+        // keep existing view
+      }
+    }
+
+    refreshThoughtNamesFromScoreboard();
+    setInterval(refreshThoughtNamesFromScoreboard, 5000);
+    refreshThoughts();
+    setInterval(refreshThoughts, 1500);
+  </script>
+</body>
+</html>

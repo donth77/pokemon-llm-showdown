@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+node_modules/
+data/
+*.log
+.venv/
+venv/
+.DS_Store
+docs/broadcast-view.md

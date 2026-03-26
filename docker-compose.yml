@@ -1,0 +1,107 @@
+services:
+  showdown:
+    build: ./showdown
+    container_name: showdown
+    ports:
+      - "8000:8000"
+    networks:
+      - battle-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  overlay:
+    build: ./overlay
+    container_name: overlay
+    environment:
+      - STREAM_TITLE=${STREAM_TITLE:-Testing Pokemon Showdown battles with LLMs}
+    ports:
+      - "8080:8080"
+    volumes:
+      - overlay-data:/data
+      - replay-data:/replays:ro
+      - log-data:/logs:ro
+      - state-data:/state:ro
+    networks:
+      - battle-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  agents:
+    build: ./agents
+    container_name: agents
+    environment:
+      - SHOWDOWN_HOST=showdown
+      - SHOWDOWN_PORT=8000
+      - OVERLAY_HOST=overlay
+      - OVERLAY_PORT=8080
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-3-5-sonnet-latest}
+      - LLM_PROVIDER=${LLM_PROVIDER:-anthropic}
+      - LLM_MODEL=${LLM_MODEL:-${ANTHROPIC_MODEL:-claude-3-5-sonnet-latest}}
+      - REPLAY_DIR=/replays
+      - LOG_DIR=/logs
+      - LOG_RAW_BATTLE=${LOG_RAW_BATTLE:-1}
+      - STATE_DIR=/state
+      - TURN_DELAY_SECONDS=${TURN_DELAY_SECONDS:-0}
+      - DELAY_BETWEEN_MATCHES=${DELAY_BETWEEN_MATCHES:-15}
+      - MATCH_COUNT=${MATCH_COUNT:-1}
+    volumes:
+      - replay-data:/replays
+      - log-data:/logs
+      - state-data:/state
+    networks:
+      - battle-net
+    depends_on:
+      showdown:
+        condition: service_healthy
+      overlay:
+        condition: service_healthy
+    restart: unless-stopped
+
+  stream:
+    build: ./stream
+    container_name: stream
+    environment:
+      - SHOWDOWN_HOST=showdown
+      - SHOWDOWN_PORT=8000
+      - OVERLAY_HOST=overlay
+      - OVERLAY_PORT=8080
+      - STREAM_VIEW_URL=${STREAM_VIEW_URL:-http://overlay:8080/broadcast}
+      - TWITCH_STREAM_KEY=${TWITCH_STREAM_KEY}
+      - TWITCH_AUTO_SET_TITLE=${TWITCH_AUTO_SET_TITLE:-1}
+      - TWITCH_CLIENT_ID=${TWITCH_CLIENT_ID:-}
+      - TWITCH_OAUTH_TOKEN=${TWITCH_OAUTH_TOKEN:-}
+      - TWITCH_BROADCASTER_ID=${TWITCH_BROADCASTER_ID:-}
+      - TWITCH_GAME_ID=${TWITCH_GAME_ID:-491931}
+      - TWITCH_STREAM_TITLE=${TWITCH_STREAM_TITLE:-Testing Pokemon Showdown battles with LLMs}
+      - STREAM_AUDIO_SOURCE=${STREAM_AUDIO_SOURCE:-pulse}
+      - BATTLE_MUSIC_INPUT=${BATTLE_MUSIC_INPUT:-}
+      - DISPLAY=:99
+    networks:
+      - battle-net
+    depends_on:
+      showdown:
+        condition: service_healthy
+      overlay:
+        condition: service_healthy
+    restart: unless-stopped
+    shm_size: "2gb"
+
+networks:
+  battle-net:
+    driver: bridge
+
+volumes:
+  overlay-data:
+  replay-data:
+  log-data:
+  state-data:

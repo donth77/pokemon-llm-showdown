@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="UTF-8" />
+		<meta id="viewport" name="viewport" content="width=device-width" />
+		<title>Showdown!</title>
+		<link rel="stylesheet" href="https://play.pokemonshowdown.com/style/battle.css" />
+		<link rel="stylesheet" href="https://play.pokemonshowdown.com/style/client.css" />
+		<link rel="stylesheet" href="https://play.pokemonshowdown.com/style/sim-types.css" />
+		<link rel="stylesheet" href="https://play.pokemonshowdown.com/style/utilichart.css" />
+		<link rel="stylesheet" href="https://play.pokemonshowdown.com/style/font-awesome.css" />
+		<meta http-equiv="X-UA-Compatible" content="IE=Edge" />
+		<style>
+			.ps-overlay { display: none !important; }
+		</style>
+		<script src="https://play.pokemonshowdown.com/config/config.js"></script>
+		<script>
+			Config.testclient = false;
+			Config.server = {
+				id: 'localhost',
+				host: location.hostname,
+				port: parseInt(location.port) || 8000,
+				httpport: parseInt(location.port) || 8000,
+				altport: 80,
+				https: false,
+				registered: false
+			};
+			Config.defaultserver = Config.server;
+			Config.loginserver = '';
+			Config.routes = {
+				root: location.hostname,
+				client: location.hostname,
+				dex: 'dex.pokemonshowdown.com',
+				replays: 'replay.pokemonshowdown.com',
+				users: location.hostname + '/users',
+				teams: location.hostname + '/teams'
+			};
+			Config.resourceprefix = 'https://play.pokemonshowdown.com/';
+		</script>
+	</head>
+	<body>
+		<div id="header" class="header">
+			<img class="logo" src="https://play.pokemonshowdown.com/pokemonshowdownbeta.png" alt="Pok&eacute;mon Showdown! (beta)" width="146" height="44" /><div class="maintabbarbottom"></div>
+		</div>
+		<div class="ps-room scrollable" id="mainmenu"><div class="mainmenuwrapper">
+			<div class="leftmenu">
+				<div class="activitymenu">
+					<div class="pmbox"></div>
+				</div>
+				<div class="mainmenu">
+					<div id="loading-message" class="mainmessage">Initializing... <noscript>FAILED<br /><br />Pok&eacute;mon Showdown requires JavaScript.</noscript></div>
+				</div>
+			</div>
+			<div class="rightmenu"></div>
+			<div class="mainmenufooter">
+				<small><a href="//pokemonshowdown.com/" target="_blank"><strong>Pok&eacute;mon Showdown</strong></a> | <a href="//pokemonshowdown.com/dex/" target="_blank">Pok&eacute;dex</a> | <a href="//pokemonshowdown.com/replay/" target="_blank">Replays</a> | <a href="//pokemonshowdown.com/rules" target="_blank">Rules</a> | <a href="//pokemonshowdown.com/forums/" target="_blank">Forum</a> | <a href="//pokemonshowdown.com/credits" target="_blank">Credits</a> | <a href="//pokemonshowdown.com/privacy" target="_blank">Privacy policy</a></small>
+			</div>
+		</div></div>
+
+		<script>document.getElementById('loading-message').innerHTML += ' DONE<br />Loading libraries...';</script>
+
+		<script nomodule src="https://play.pokemonshowdown.com/js/lib/ps-polyfill.js"></script>
+		<script src="https://play.pokemonshowdown.com/js/lib/jquery-2.2.4.min.js"></script>
+		<script src="https://play.pokemonshowdown.com/js/lib/jquery-cookie.js"></script>
+		<script src="https://play.pokemonshowdown.com/js/lib/autoresize.jquery.min.js"></script>
+		<script src="https://play.pokemonshowdown.com/js/battle-sound.js"></script>
+		<script>
+			(function() {
+				var CDN = 'https://play.pokemonshowdown.com/';
+				if (!window.BattleSound) return;
+				BattleSound.getSound = function(url) {
+					if (!window.HTMLAudioElement) return;
+					var finalUrl = /^https?:\/\//i.test(String(url || ''))
+						? String(url)
+						: CDN + String(url || '').replace(/^\/+/, '');
+					if (this.soundCache[finalUrl]) return this.soundCache[finalUrl];
+					try {
+						var sound = document.createElement('audio');
+						sound.src = finalUrl;
+						sound.volume = this.effectVolume / 100;
+						this.soundCache[finalUrl] = sound;
+						return sound;
+					} catch (_unused) {}
+				};
+			})();
+		</script>
+		<script src="https://play.pokemonshowdown.com/js/lib/html-css-sanitizer-minified.js"></script>
+		<script src="https://play.pokemonshowdown.com/js/lib/lodash.core.js"></script>
+		<script src="https://play.pokemonshowdown.com/js/lib/backbone.js"></script>
+		<script src="https://play.pokemonshowdown.com/js/lib/d3.v3.min.js"></script>
+
+		<script>
+			document.getElementById('loading-message').innerHTML += ' DONE<br />Loading data...';
+			window.exports = window;
+		</script>
+
+		<script src="https://play.pokemonshowdown.com/js/server/chat-formatter.js"></script>
+		<script src="https://play.pokemonshowdown.com/js/battledata.js"></script>
+		<script>
+			(function() {
+				var CDN = 'https://play.pokemonshowdown.com/';
+				if (window.Dex) {
+					Dex.resourcePrefix = CDN;
+					Dex.fxPrefix = CDN + 'fx/';
+					Dex.spritePrefix = CDN + 'sprites/';
+				}
+			})();
+		</script>
+		<script src="https://play.pokemonshowdown.com/data/text.js"></script>
+		<script src="https://play.pokemonshowdown.com/data/pokedex-mini.js"></script>
+		<script src="https://play.pokemonshowdown.com/data/pokedex-mini-bw.js"></script>
+		<script src="https://play.pokemonshowdown.com/data/typechart.js"></script>
+		<script src="https://play.pokemonshowdown.com/js/battle.js"></script>
+		<script src="https://play.pokemonshowdown.com/js/lib/sockjs-1.4.0-nwjsfix.min.js"></script>
+		<script src="https://play.pokemonshowdown.com/js/lib/color-thief.min.js"></script>
+
+		<script>document.getElementById('loading-message').innerHTML += ' DONE<br />Loading client...';</script>
+
+		<script src="https://play.pokemonshowdown.com/js/client.js"></script>
+		<script src="https://play.pokemonshowdown.com/js/client-topbar.js"></script>
+		<script src="https://play.pokemonshowdown.com/js/client-mainmenu.js"></script>
+		<script src="https://play.pokemonshowdown.com/js/client-teambuilder.js"></script>
+		<script src="https://play.pokemonshowdown.com/js/client-ladder.js"></script>
+		<script src="https://play.pokemonshowdown.com/js/client-chat.js"></script>
+		<script src="https://play.pokemonshowdown.com/js/client-chat-tournament.js"></script>
+		<script src="https://play.pokemonshowdown.com/js/battle-tooltips.js"></script>
+		<script src="https://play.pokemonshowdown.com/js/client-battle.js"></script>
+		<script src="https://play.pokemonshowdown.com/js/client-rooms.js"></script>
+		<script src="https://play.pokemonshowdown.com/js/storage.js"></script>
+		<script src="https://play.pokemonshowdown.com/data/graphics.js"></script>
+
+		<script src="https://play.pokemonshowdown.com/data/pokedex.js"></script>
+		<script src="https://play.pokemonshowdown.com/data/moves.js"></script>
+		<script src="https://play.pokemonshowdown.com/data/items.js"></script>
+		<script src="https://play.pokemonshowdown.com/data/abilities.js"></script>
+
+		<script src="https://play.pokemonshowdown.com/data/search-index.js"></script>
+		<script src="https://play.pokemonshowdown.com/data/teambuilder-tables.js"></script>
+		<script src="https://play.pokemonshowdown.com/js/battle-dex-search.js"></script>
+		<script src="https://play.pokemonshowdown.com/js/search.js"></script>
+
+		<script src="https://play.pokemonshowdown.com/data/aliases.js" async="async"></script>
+		<script src="https://play.pokemonshowdown.com/data/commands.js" async="async"></script>
+
+		<script>
+			window.onload = function() {
+				var params = new URLSearchParams(window.location.search);
+				var isBroadcastLayout = params.get('broadcast_layout') === '1';
+				var CDN = 'https://play.pokemonshowdown.com/';
+				Config.testclient = false;
+				Config.loginserver = '';
+
+				if (window.Dex) {
+					Dex.resourcePrefix = CDN;
+					Dex.fxPrefix = CDN + 'fx/';
+					Dex.spritePrefix = CDN + 'sprites/';
+				}
+				if (window.BattleEffects) {
+					for (var id in BattleEffects) {
+						var url = BattleEffects[id].url;
+						if (!url) continue;
+						if (url.indexOf('http') === 0) continue;
+						var basename = url.replace(/^.*\//, '');
+						BattleEffects[id].url = CDN + 'fx/' + basename;
+					}
+				}
+
+				window.app = new App();
+
+				if (isBroadcastLayout) {
+					var layoutStyle = document.createElement('style');
+					layoutStyle.textContent = [
+						'#header, .leftmenu, .mainmenufooter, .activitymenu, .chat-log-add, .chatbox, .battle-controls-wrap { display: none !important; }',
+						'.ps-room, .ps-room.scrollable { width: 1280px !important; height: 720px !important; overflow: hidden !important; margin: 0 !important; }',
+						'.battle, .battle-controls, .battle-log { margin: 0 !important; }',
+						'.battle { position: absolute !important; left: 0 !important; top: 0 !important; width: 860px !important; height: 720px !important; max-width: none !important; }',
+						'.battle .innerbattle, .battle .backdrop { left: 0 !important; }',
+						'.battle-log { position: absolute !important; top: 0 !important; right: 0 !important; width: 420px !important; height: 720px !important; box-sizing: border-box !important; padding-top: 112px !important; padding-bottom: 188px !important; background: rgba(8, 12, 24, 0.68) !important; }',
+						'.battle-log .inner, .battle-log .battle-history, .battle-log .battle-log { max-height: none !important; height: 100% !important; }',
+					].join('\\n');
+					document.head.appendChild(layoutStyle);
+				}
+
+				var observer = new MutationObserver(function(mutations) {
+					mutations.forEach(function(m) {
+						m.addedNodes.forEach(function(node) {
+							if (!node.querySelectorAll) return;
+							var popup = (node.classList && node.classList.contains('ps-overlay'))
+								? node : node.querySelector && node.querySelector('.ps-overlay');
+							if (!popup) return;
+							var btn = popup.querySelector('button[name="close"]');
+							if (!btn) {
+								var buttons = popup.querySelectorAll('button');
+								for (var i = 0; i < buttons.length; i++) {
+									if (/Cancel|close/i.test(buttons[i].textContent)) { btn = buttons[i]; break; }
+								}
+							}
+							if (btn) btn.click();
+						});
+					});
+				});
+				observer.observe(document.body, { childList: true, subtree: true });
+
+				function dismissLoginPopup() {
+					var overlays = document.querySelectorAll('.ps-overlay, .ps-popup');
+					overlays.forEach(function(el) {
+						var btn = el.querySelector('button[name="close"]');
+						if (!btn) {
+							var buttons = el.querySelectorAll('button');
+							for (var i = 0; i < buttons.length; i++) {
+								if (/Cancel|close/i.test(buttons[i].textContent)) { btn = buttons[i]; break; }
+							}
+						}
+						if (btn) btn.click();
+					});
+				}
+				setTimeout(dismissLoginPopup, 500);
+				setTimeout(dismissLoginPopup, 1500);
+				setTimeout(dismissLoginPopup, 3000);
+			};
+		</script>
+	</body>
+</html>
