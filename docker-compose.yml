@@ -19,6 +19,7 @@ services:
     container_name: overlay
     environment:
       - STREAM_TITLE=${STREAM_TITLE:-Testing Pokemon Showdown battles with LLMs}
+      - HIDE_BATTLE_UI=${HIDE_BATTLE_UI:-1}
     ports:
       - "8080:8080"
     volumes:
@@ -30,7 +31,13 @@ services:
       - battle-net
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')",
+        ]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -44,9 +51,12 @@ services:
       - OVERLAY_HOST=overlay
       - OVERLAY_PORT=8080
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-3-5-sonnet-latest}
-      - LLM_PROVIDER=${LLM_PROVIDER:-anthropic}
-      - LLM_MODEL=${LLM_MODEL:-${ANTHROPIC_MODEL:-claude-3-5-sonnet-latest}}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      - PLAYER1_PROVIDER=${PLAYER1_PROVIDER}
+      - PLAYER1_MODEL=${PLAYER1_MODEL}
+      - PLAYER2_PROVIDER=${PLAYER2_PROVIDER}
+      - PLAYER2_MODEL=${PLAYER2_MODEL}
       - REPLAY_DIR=/replays
       - LOG_DIR=/logs
       - LOG_RAW_BATTLE=${LOG_RAW_BATTLE:-1}
@@ -65,11 +75,13 @@ services:
         condition: service_healthy
       overlay:
         condition: service_healthy
-    restart: unless-stopped
+    restart: "no"
 
   stream:
     build: ./stream
     container_name: stream
+    ports:
+      - "9222:9222"
     environment:
       - SHOWDOWN_HOST=showdown
       - SHOWDOWN_PORT=8000
@@ -81,8 +93,9 @@ services:
       - TWITCH_CLIENT_ID=${TWITCH_CLIENT_ID:-}
       - TWITCH_OAUTH_TOKEN=${TWITCH_OAUTH_TOKEN:-}
       - TWITCH_BROADCASTER_ID=${TWITCH_BROADCASTER_ID:-}
-      - TWITCH_GAME_ID=${TWITCH_GAME_ID:-491931}
+      - TWITCH_GAME_ID=${TWITCH_GAME_ID:-1982936547}
       - TWITCH_STREAM_TITLE=${TWITCH_STREAM_TITLE:-Testing Pokemon Showdown battles with LLMs}
+      - HIDE_BATTLE_UI=${HIDE_BATTLE_UI:-1}
       - STREAM_AUDIO_SOURCE=${STREAM_AUDIO_SOURCE:-pulse}
       - BATTLE_MUSIC_INPUT=${BATTLE_MUSIC_INPUT:-}
       - DISPLAY=:99

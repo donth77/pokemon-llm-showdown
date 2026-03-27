@@ -14,6 +14,7 @@ docker-compose.yml
 ```
 
 **Agents:**
+
 - **MaxDamage** — always picks the highest base power move
 - **SmartBot** — picks moves factoring type effectiveness + STAB
 
@@ -43,12 +44,12 @@ bash scripts/healthcheck.sh
 
 ## Services
 
-| Service    | Port | Description                                |
-|------------|------|--------------------------------------------|
-| `showdown` | 8000 | Pokemon Showdown battle server             |
-| `overlay`  | 8080 | FastAPI overlay (scoreboard, match data)   |
-| `agents`   | —    | AI battle agents (no exposed port)         |
-| `stream`   | —    | Xvfb + Chromium + FFmpeg to Twitch         |
+| Service    | Port | Description                              |
+| ---------- | ---- | ---------------------------------------- |
+| `showdown` | 8000 | Pokemon Showdown battle server           |
+| `overlay`  | 8080 | FastAPI overlay (scoreboard, match data) |
+| `agents`   | —    | AI battle agents (no exposed port)       |
+| `stream`   | —    | Xvfb + Chromium + FFmpeg to Twitch       |
 
 ## Useful Commands
 
@@ -71,6 +72,12 @@ open http://localhost:8080/replays
 # Restart a single service
 docker compose restart agents
 
+# Manually start a fresh battle run (respects MATCH_COUNT)
+bash scripts/start_battle.sh
+
+# Manually start and reset replay/log/results history first
+bash scripts/start_battle.sh --reset
+
 # Set Twitch stream title/category via API (requires OAuth env vars)
 bash scripts/set_twitch_title.sh
 
@@ -86,7 +93,7 @@ To update the Twitch channel title (and optional category) programmatically:
    - `TWITCH_CLIENT_ID`
    - `TWITCH_OAUTH_TOKEN` (must include `channel:manage:broadcast`)
    - `TWITCH_BROADCASTER_ID`
-   - Optional: `TWITCH_GAME_ID` (defaults to Pokemon `491931`)
+   - Optional: `TWITCH_GAME_ID` (defaults to Pokémon `1982936547`)
    - Optional: `TWITCH_STREAM_TITLE`
 2. Run:
 
@@ -104,29 +111,29 @@ When `stream` starts via Docker, it also attempts to set Twitch title/category a
 
 ## Overlay Endpoints
 
-| Endpoint         | Method | Description                              |
-|------------------|--------|------------------------------------------|
-| `/scoreboard`    | GET    | Win/loss records as JSON                 |
-| `/result`        | POST   | Submit match result (used by orchestrator)|
-| `/overlay`       | GET    | Transparent HTML overlay for compositing |
-| `/replays`       | GET    | Replay history page (clickable HTML files) |
-| `/health`        | GET    | Health check                             |
+| Endpoint      | Method | Description                                |
+| ------------- | ------ | ------------------------------------------ |
+| `/scoreboard` | GET    | Win/loss records as JSON                   |
+| `/result`     | POST   | Submit match result (used by orchestrator) |
+| `/overlay`    | GET    | Transparent HTML overlay for compositing   |
+| `/replays`    | GET    | Replay history page (clickable HTML files) |
+| `/health`     | GET    | Health check                               |
 
 ## Configuration
 
 Key environment variables (see `.env.example`):
 
-| Variable           | Required | Default    | Description             |
-|--------------------|----------|------------|-------------------------|
-| `TWITCH_STREAM_KEY`| Yes      | —          | Your Twitch stream key  |
-| `STREAM_TITLE`     | No       | `Testing Pokemon Showdown battles with LLMs` | Title text rendered on broadcast scene |
-| `STREAM_AUDIO_SOURCE`| No     | `pulse`    | Audio source mode: `browser`, `music`, or `pulse` |
-| `BATTLE_MUSIC_INPUT`| No      | empty      | Looping FFmpeg music input (file path or URL) |
-| `SHOWDOWN_HOST`    | No       | `showdown` | Showdown server host    |
-| `SHOWDOWN_PORT`    | No       | `8000`     | Showdown server port    |
-| `OVERLAY_HOST`     | No       | `overlay`  | Overlay service host    |
-| `OVERLAY_PORT`     | No       | `8080`     | Overlay service port    |
-| `REPLAY_DIR`       | No       | `/replays` | Local replay export path |
+| Variable              | Required | Default                                      | Description                                       |
+| --------------------- | -------- | -------------------------------------------- | ------------------------------------------------- |
+| `TWITCH_STREAM_KEY`   | Yes      | —                                            | Your Twitch stream key                            |
+| `STREAM_TITLE`        | No       | `Testing Pokemon Showdown battles with LLMs` | Title text rendered on broadcast scene            |
+| `STREAM_AUDIO_SOURCE` | No       | `pulse`                                      | Audio source mode: `browser`, `music`, or `pulse` |
+| `BATTLE_MUSIC_INPUT`  | No       | empty                                        | Looping FFmpeg music input (file path or URL)     |
+| `SHOWDOWN_HOST`       | No       | `showdown`                                   | Showdown server host                              |
+| `SHOWDOWN_PORT`       | No       | `8000`                                       | Showdown server port                              |
+| `OVERLAY_HOST`        | No       | `overlay`                                    | Overlay service host                              |
+| `OVERLAY_PORT`        | No       | `8080`                                       | Overlay service port                              |
+| `REPLAY_DIR`          | No       | `/replays`                                   | Local replay export path                          |
 
 ## Development
 

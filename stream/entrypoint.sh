@@ -23,7 +23,7 @@ maybe_set_twitch_title() {
     local oauth_token="${TWITCH_OAUTH_TOKEN:-}"
     local broadcaster_id="${TWITCH_BROADCASTER_ID:-}"
     local stream_title="${TWITCH_STREAM_TITLE:-Testing Pokemon Showdown battles with LLMs}"
-    local game_id="${TWITCH_GAME_ID:-491931}"
+    local game_id="${TWITCH_GAME_ID:-1982936547}"
 
     if [[ -z "${client_id}" || -z "${oauth_token}" || -z "${broadcaster_id}" ]]; then
         echo "[entrypoint] Twitch title update skipped (missing TWITCH_CLIENT_ID/TWITCH_OAUTH_TOKEN/TWITCH_BROADCASTER_ID)."
@@ -70,6 +70,10 @@ if [[ "${STREAM_AUDIO_SOURCE}" == "browser" ]]; then
 fi
 
 maybe_set_twitch_title
+
+echo "[entrypoint] Hiding mouse cursor..."
+unclutter -idle 0 -root &
+xdotool mousemove 9999 9999 2>/dev/null || true
 
 echo "[entrypoint] Launching browser..."
 python -u browser.py &
