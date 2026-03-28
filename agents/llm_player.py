@@ -1,7 +1,7 @@
 """
-LLM-powered Pokemon battle player (Anthropic / DeepSeek).
+LLM-powered Pokémon battle player (Anthropic / DeepSeek / OpenRouter).
 
-Sends the full battle state to Claude each turn and parses back
+Sends the full battle state to the LLM each turn and parses back
 a move or switch decision.
 """
 
@@ -13,8 +13,11 @@ import time
 import threading
 from typing import Literal
 
+import httpx
+import aiohttp
+import requests
 from anthropic import Anthropic
-from openai import OpenAI
+from openai import BadRequestError, OpenAI
 from poke_env.player import Player
 from poke_env.battle.move import Move
 from poke_env.battle.pokemon import Pokemon
@@ -22,29 +25,173 @@ from poke_env.battle.abstract_battle import AbstractBattle as Battle
 from poke_env.battle.pokemon_type import PokemonType
 from poke_env.battle.side_condition import SideCondition
 
-Provider = Literal["anthropic", "deepseek"]
+Provider = Literal["anthropic", "deepseek", "openrouter"]
 
-_anthropic_client: Anthropic | None = None
-_deepseek_client: OpenAI | None = None
-
-
-def _get_anthropic_client() -> Anthropic:
-    global _anthropic_client
-    if _anthropic_client is None:
-        _anthropic_client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-    return _anthropic_client
+_LLM_REQUEST_TIMEOUT = httpx.Timeout(
+    connect=10.0,
+    read=120.0,
+    write=30.0,
+    pool=30.0,
+)
 
 
-def _get_deepseek_client() -> OpenAI:
-    global _deepseek_client
-    if _deepseek_client is None:
-        api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY")
-        _deepseek_client = OpenAI(
-            api_key=api_key,
-            base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+def _make_anthropic_client() -> Anthropic:
+    return Anthropic(
+        api_key=os.getenv("ANTHROPIC_API_KEY"),
+        timeout=_LLM_REQUEST_TIMEOUT,
+    )
+
+
+def _make_deepseek_client() -> OpenAI:
+    api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY")
+    return OpenAI(
+        api_key=api_key,
+        base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+        timeout=_LLM_REQUEST_TIMEOUT,
+    )
+
+
+def _make_openrouter_client() -> OpenAI:
+    return OpenAI(
+        api_key=os.getenv("OPENROUTER_API_KEY"),
+        base_url=os.getenv(
+            "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
+        ),
+        timeout=_LLM_REQUEST_TIMEOUT,
+        default_headers={
+            "HTTP-Referer": "https://github.com/pokemon-llm-showdown",
+            "X-Title": "Pokemon LLM Showdown",
+        },
+    )
+
+
+def _openrouter_api_base_for_rest() -> str:
+    return (
+        os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
+    )
+
+
+def _openrouter_structured_output_mode() -> str:
+    """auto | force | off — whether to use json_schema when the model supports it."""
+    return (os.getenv("OPENROUTER_STRUCTURED_OUTPUTS") or "auto").strip().lower()
+
+
+# OpenRouter GET /models?supported_parameters=structured_outputs — cached for process lifetime.
+_openrouter_structured_ids: set[str] | None = None
+_openrouter_structured_ids_attempted: bool = False
+_openrouter_structured_ids_lock = threading.Lock()
+# Models that returned 400 on json_schema this run (API list can be wrong or route-specific).
+_openrouter_structured_deny: set[str] = set()
+_openrouter_structured_deny_lock = threading.Lock()
+
+
+def _openrouter_fetch_structured_model_ids() -> set[str] | None:
+    """Return model ids that advertise structured_outputs support, or None if the fetch failed."""
+    api_key = (os.getenv("OPENROUTER_API_KEY") or "").strip()
+    if not api_key:
+        return None
+    url = f"{_openrouter_api_base_for_rest()}/models?supported_parameters=structured_outputs"
+    try:
+        r = requests.get(
+            url,
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=25,
         )
-    return _deepseek_client
+        r.raise_for_status()
+        payload = r.json()
+    except Exception as e:
+        print(
+            f"  [openrouter] Structured-output model list unavailable ({e}); "
+            "using json_object",
+            flush=True,
+        )
+        return None
+    data = payload.get("data")
+    if not isinstance(data, list):
+        return set()
+    out: set[str] = set()
+    for m in data:
+        if isinstance(m, dict) and m.get("id"):
+            out.add(str(m["id"]))
+    return out
 
+
+def _openrouter_get_structured_model_id_set() -> set[str] | None:
+    global _openrouter_structured_ids, _openrouter_structured_ids_attempted
+    with _openrouter_structured_ids_lock:
+        if _openrouter_structured_ids_attempted:
+            return _openrouter_structured_ids
+    fetched = _openrouter_fetch_structured_model_ids()
+    with _openrouter_structured_ids_lock:
+        if not _openrouter_structured_ids_attempted:
+            _openrouter_structured_ids = fetched
+            _openrouter_structured_ids_attempted = True
+    return _openrouter_structured_ids
+
+
+def _openrouter_wants_json_schema(model_id: str) -> bool:
+    mode = _openrouter_structured_output_mode()
+    if mode in ("off", "0", "false", "no"):
+        return False
+    with _openrouter_structured_deny_lock:
+        denied = model_id in _openrouter_structured_deny
+    if denied and mode not in ("force", "on", "1", "true", "yes"):
+        return False
+    if mode in ("force", "on", "1", "true", "yes"):
+        return True
+    ids = _openrouter_get_structured_model_id_set()
+    if not ids:
+        return False
+    return model_id in ids
+
+
+def _openrouter_battle_response_format(use_json_schema: bool) -> dict:
+    if not use_json_schema:
+        return {"type": "json_object"}
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "pokemon_battle_action",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "action_type": {
+                        "type": "string",
+                        "enum": ["move", "switch"],
+                    },
+                    "index": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": (
+                            "1-based index from the valid actions list for this turn."
+                        ),
+                    },
+                    "reasoning": {
+                        "type": "string",
+                        "description": (
+                            "1–3 sentences, first person, in your persona voice."
+                        ),
+                    },
+                    "callout": {
+                        "type": "string",
+                        "description": "Short in-character phrase or empty string.",
+                    },
+                },
+                "required": [
+                    "action_type",
+                    "index",
+                    "reasoning",
+                    "callout",
+                ],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+OVERLAY_HOST = os.getenv("OVERLAY_HOST", "overlay")
+OVERLAY_PORT = int(os.getenv("OVERLAY_PORT", "8080"))
 
 DEFAULT_PROVIDER: Provider = "anthropic"
 DEFAULT_MODEL_ID = (
@@ -53,9 +200,19 @@ DEFAULT_MODEL_ID = (
     or "claude-sonnet-4-20250514"
 )
 DEFAULT_TURN_DELAY_SECONDS = float(os.getenv("TURN_DELAY_SECONDS") or "0")
+# Cap on model output per turn (tool JSON or chat JSON). Verbose personas need headroom.
+_LLM_MAX_OUTPUT_TOKENS = int(
+    os.getenv("LLM_MAX_OUTPUT_TOKENS")
+    or os.getenv("CHAT_COMPLETION_MAX_TOKENS")
+    or "512"
+)
 THOUGHTS_FILE = os.getenv("THOUGHTS_FILE", "/state/thoughts.json")
 MAX_THOUGHTS_PER_PLAYER = int(os.getenv("MAX_THOUGHTS_PER_PLAYER", "80"))
 _thoughts_lock = threading.Lock()
+
+# Hard ceiling: even if httpx read-timeout doesn't fire (e.g. keepalive bytes drip in),
+# abort the entire _completion coroutine after this many seconds.
+_LLM_TURN_TIMEOUT = float(os.getenv("LLM_TURN_TIMEOUT") or "150")
 
 
 def _normalize_battle_tag(tag: str | None) -> str:
@@ -81,17 +238,16 @@ def _append_thought(
     player: str,
     action: str,
     reasoning: str,
+    callout: str,
     turn: int | None,
 ) -> None:
-    if not reasoning:
-        return
-
     clean_tag = _normalize_battle_tag(battle_tag)
     thought = {
         "timestamp": time.time(),
         "turn": turn,
         "action": action,
-        "reasoning": reasoning.strip(),
+        "reasoning": (reasoning or "").strip(),
+        "callout": (callout or "").strip(),
     }
 
     with _thoughts_lock:
@@ -110,6 +266,60 @@ def _append_thought(
         os.makedirs(os.path.dirname(THOUGHTS_FILE), exist_ok=True)
         with open(THOUGHTS_FILE, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
+
+
+def _recent_callouts(
+    *,
+    battle_tag: str,
+    player: str,
+    limit: int = 5,
+) -> list[str]:
+    clean_tag = _normalize_battle_tag(battle_tag)
+    if not clean_tag or not player:
+        return []
+    payload = _read_thoughts_payload()
+    if payload.get("battle_tag") != clean_tag:
+        return []
+    players = payload.get("players", {})
+    items = players.get(player, []) if isinstance(players, dict) else []
+    callouts: list[str] = []
+    for thought in reversed(items if isinstance(items, list) else []):
+        callout = str((thought or {}).get("callout", "")).strip()
+        if callout:
+            callouts.append(callout)
+        if len(callouts) >= limit:
+            break
+    return callouts
+
+
+async def _post_thought_to_overlay(
+    *,
+    player: str,
+    action: str,
+    reasoning: str,
+    callout: str,
+    turn: int | None,
+    battle_side: str | None = None,
+) -> None:
+    url = f"http://{OVERLAY_HOST}:{OVERLAY_PORT}/thought"
+    payload: dict[str, object] = {
+        "player": player,
+        "action": action,
+        "reasoning": reasoning,
+        "callout": callout,
+        "turn": turn,
+        "timestamp": time.time(),
+    }
+    if battle_side in ("p1", "p2"):
+        payload["battle_side"] = battle_side
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url, json=payload, timeout=aiohttp.ClientTimeout(total=3)
+            ):
+                pass
+    except Exception as e:
+        print(f"  [overlay] Failed to post thought: {e}", flush=True)
 
 
 def _pokemon_summary(pokemon: Pokemon, is_opponent: bool = False) -> str:
@@ -329,6 +539,237 @@ def format_battle_state(battle: Battle) -> str:
     return "\n".join(lines)
 
 
+def _parse_json_action_payload(reply: str) -> dict | None:
+    """
+    Many chat models (including some OpenRouter free tiers) return JSON wrapped in
+    markdown fences or with leading prose. Extract and parse the first JSON object.
+    """
+    text = (reply or "").strip()
+    if not text:
+        return None
+
+    if text.startswith("```"):
+        lines = text.split("\n")
+        if lines:
+            lines = lines[1:]
+        while lines and not lines[-1].strip():
+            lines.pop()
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+
+    decoder = json.JSONDecoder()
+    for i, ch in enumerate(text):
+        if ch != "{":
+            continue
+        try:
+            obj, _ = decoder.raw_decode(text, i)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            return obj
+    return None
+
+
+def _coerce_action_index(raw: object) -> int | None:
+    if raw is None or isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, float):
+        return int(raw)
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return None
+        try:
+            return int(float(s))
+        except ValueError:
+            return None
+    return None
+
+
+def _normalize_json_action_type(raw: object) -> str:
+    s = str(raw or "").strip().lower()
+    if s in ("move", "switch"):
+        return s
+    if s in ("moves",):
+        return "move"
+    if s in ("switches", "swap"):
+        return "switch"
+    return ""
+
+
+def _action_string_from_json_fields(
+    action_type: str,
+    raw_idx: int | None,
+    battle: Battle,
+) -> str | None:
+    """Map action_type + index (1-based or 0 for first slot) to poke-env order string."""
+    if not action_type or raw_idx is None:
+        return None
+    if raw_idx >= 1:
+        index = raw_idx - 1
+    elif raw_idx == 0:
+        index = 0
+    else:
+        return None
+    if action_type == "move" and 0 <= index < len(battle.available_moves):
+        return f"move:{index}"
+    if action_type == "switch" and 0 <= index < len(battle.available_switches):
+        return f"switch:{index}"
+    return None
+
+
+def _regex_extract_action_fields(text: str) -> tuple[str, int] | None:
+    """
+    Recover action_type and index when JSON is truncated (verbose reasoning + low
+    max_tokens) or otherwise invalid for json.loads/raw_decode.
+    """
+    if not text:
+        return None
+    at = re.search(
+        r'["\']action_type["\']\s*:\s*["\'](move|switch)["\']',
+        text,
+        re.I,
+    )
+    if not at:
+        at = re.search(
+            r'["\']actionType["\']\s*:\s*["\'](move|switch)["\']',
+            text,
+            re.I,
+        )
+    idx_m = re.search(r'["\']index["\']\s*:\s*(\d+)', text)
+    if not at or not idx_m:
+        return None
+    return (at.group(1).lower(), int(idx_m.group(1)))
+
+
+def _preamble_reasoning_from_reply(reply: str, max_chars: int = 4000) -> str:
+    """
+    Reasoning models often write analysis before the JSON object. The JSON may still
+    carry an empty "reasoning" field — use the leading prose for overlay / thoughts.json.
+    """
+    text = (reply or "").strip()
+    if not text:
+        return ""
+    if text.startswith("```"):
+        nl = text.find("\n")
+        if nl != -1:
+            text = text[nl + 1 :].strip()
+        if text.endswith("```"):
+            text = text[: -3].strip()
+    brace = text.find("{")
+    if brace < 0:
+        return text[:max_chars].strip()
+    if brace == 0:
+        return ""
+    return text[:brace].strip()[:max_chars]
+
+
+def _openrouter_message_text_chunks(msg: dict) -> list[str]:
+    """Collect visible strings from an OpenAI-style chat message object."""
+    out: list[str] = []
+    c = msg.get("content")
+    if isinstance(c, str) and c.strip():
+        out.append(c.strip())
+    elif isinstance(c, list):
+        for part in c:
+            if not isinstance(part, dict):
+                continue
+            t = None
+            if part.get("type") in ("text", "output_text"):
+                t = part.get("text")
+            if t is None:
+                t = part.get("text") or part.get("content")
+            if isinstance(t, str) and t.strip():
+                out.append(t.strip())
+    r = msg.get("reasoning")
+    if isinstance(r, str) and r.strip():
+        out.append(r.strip())
+    return out
+
+
+def _openrouter_reasoning_detail_chunks(item: object, depth: int = 0) -> list[str]:
+    """Flatten OpenRouter choice.reasoning_details entries to strings."""
+    if depth > 14:
+        return []
+    out: list[str] = []
+    if isinstance(item, str) and item.strip():
+        return [item.strip()]
+    if not isinstance(item, dict):
+        return out
+    for key in ("text", "content", "summary", "data", "encrypted_text"):
+        v = item.get(key)
+        if isinstance(v, str) and v.strip():
+            out.append(v.strip())
+        elif isinstance(v, list):
+            for sub in v:
+                out.extend(_openrouter_reasoning_detail_chunks(sub, depth + 1))
+        elif isinstance(v, dict):
+            out.extend(_openrouter_reasoning_detail_chunks(v, depth + 1))
+    return out
+
+
+def _openrouter_raw_response_text(data: dict) -> tuple[str, str]:
+    """
+    Merge message.content, message.reasoning, and choice.reasoning_details into one
+    string for JSON parsing. Reasoning models on OpenRouter often leave content empty;
+    the OpenAI SDK may drop reasoning_details when building the typed response.
+    """
+    err = data.get("error")
+    if isinstance(err, dict):
+        msg = err.get("message") or json.dumps(err)
+        code = err.get("code", "")
+        raise RuntimeError(f"OpenRouter API error ({code}): {msg}")
+    if isinstance(err, str) and err.strip():
+        raise RuntimeError(f"OpenRouter API error: {err}")
+
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return "", ""
+
+    choice = choices[0]
+    if not isinstance(choice, dict):
+        return "", ""
+
+    finish = str(choice.get("finish_reason") or "")
+    parts: list[str] = []
+    msg = choice.get("message")
+    if isinstance(msg, dict):
+        parts.extend(_openrouter_message_text_chunks(msg))
+
+    rd = choice.get("reasoning_details")
+    if isinstance(rd, list):
+        for item in rd:
+            parts.extend(_openrouter_reasoning_detail_chunks(item))
+
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for p in parts:
+        p = p.strip()
+        if p and p not in seen:
+            seen.add(p)
+            uniq.append(p)
+    return "\n".join(uniq), finish
+
+
+def _openrouter_extra_body() -> dict | None:
+    """Optional JSON merged into the chat completion body (OpenRouter extensions)."""
+    raw = os.getenv("OPENROUTER_EXTRA_BODY_JSON", "").strip()
+    if not raw:
+        return None
+    try:
+        extra = json.loads(raw)
+    except json.JSONDecodeError:
+        print(
+            "  [openrouter] Invalid OPENROUTER_EXTRA_BODY_JSON, ignoring",
+            flush=True,
+        )
+        return None
+    return extra if isinstance(extra, dict) else None
+
+
 def parse_llm_action(response_text: str, battle: Battle) -> str | None:
     """
     Extract 'move N' or 'switch N' from the LLM response.
@@ -362,7 +803,7 @@ def parse_llm_action(response_text: str, battle: Battle) -> str | None:
 
 class LLMPlayer(Player):
     """
-    A Pokemon battle agent powered by Claude.
+    A Pokémon battle agent powered by Claude.
 
     Each instance can have its own system prompt (personality) and model.
     Falls back to a random valid move if Claude's response can't be parsed.
@@ -372,45 +813,93 @@ class LLMPlayer(Player):
         self,
         provider: Provider = DEFAULT_PROVIDER,
         system_prompt: str | None = None,
+        opponent_name: str | None = None,
+        opponent_account_name: str | None = None,
         model_id: str = DEFAULT_MODEL_ID,
         turn_delay_seconds: float | None = None,
+        battle_side: str | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self._provider = provider
         self._model_id = model_id
+        self._llm_client = self._create_llm_client()
         self._turn_delay_seconds = (
             DEFAULT_TURN_DELAY_SECONDS
             if turn_delay_seconds is None
             else turn_delay_seconds
         )
+        self._opponent_name = (opponent_name or "").strip()
+        # Showdown username; thoughts.json keys callouts by this, not persona abbreviation.
+        self._opponent_account_name = (
+            (opponent_account_name or opponent_name or "").strip()
+        )
         self._system_prompt = system_prompt or (
-            "You are a competitive Pokemon battle AI. Analyze the battle state "
+            "You are a competitive Pokémon battle AI. Analyze the battle state "
             "and choose the best action. You must respond with exactly one action "
             "in the format: ACTION: move N  or  ACTION: switch N  (where N is the "
             "number from the list). Before the action, briefly explain your reasoning "
             "in 1-2 sentences."
         )
         self._turn_history: dict[str, list[dict]] = {}
+        self._battle_side = battle_side if battle_side in ("p1", "p2") else None
+
+    def _create_llm_client(self) -> Anthropic | OpenAI:
+        if self._provider == "anthropic":
+            return _make_anthropic_client()
+        if self._provider == "deepseek":
+            return _make_deepseek_client()
+        if self._provider == "openrouter":
+            return _make_openrouter_client()
+        raise ValueError(f"Unsupported provider: {self._provider}")
 
     def _get_history(self, battle_tag: str) -> list[dict]:
         if battle_tag not in self._turn_history:
             self._turn_history[battle_tag] = []
         return self._turn_history[battle_tag]
 
+    def _callout_context_text(self, battle: Battle) -> str:
+        battle_tag = _normalize_battle_tag(getattr(battle, "battle_tag", ""))
+        if not battle_tag:
+            return ""
+        my_recent = _recent_callouts(
+            battle_tag=battle_tag, player=self.username, limit=5
+        )
+        opp_recent = (
+            _recent_callouts(
+                battle_tag=battle_tag, player=self._opponent_account_name, limit=2
+            )
+            if self._opponent_account_name
+            else []
+        )
+        if not my_recent and not opp_recent:
+            return ""
+        lines = ["=== CALLOUT CONTEXT ==="]
+        if my_recent:
+            lines.append(
+                "Your recent callouts (avoid reusing these exact lines): "
+                + " | ".join(my_recent)
+            )
+        if opp_recent:
+            lines.append(
+                f"{self._opponent_name}'s recent callouts (react to this rivalry when natural): "
+                + " | ".join(opp_recent)
+            )
+        return "\n".join(lines)
+
     async def _anthropic_completion(self, messages: list[dict]) -> str:
-        client = _get_anthropic_client()
+        client = self._llm_client
 
         def _request() -> str:
             response = client.messages.create(
                 model=self._model_id,
-                max_tokens=150,
+                max_tokens=_LLM_MAX_OUTPUT_TOKENS,
                 system=self._system_prompt,
                 messages=messages,
                 tools=[
                     {
                         "name": "submit_action",
-                        "description": "Submit the selected Pokemon battle action.",
+                        "description": "Submit the selected Pokémon battle action.",
                         "input_schema": {
                             "type": "object",
                             "properties": {
@@ -425,7 +914,17 @@ class LLMPlayer(Player):
                                 },
                                 "reasoning": {
                                     "type": "string",
-                                    "description": "Short explanation for the chosen action.",
+                                    "description": (
+                                        "1-3 sentences explaining the action in the same voice and "
+                                        "personality as your system instructions (first person)."
+                                    ),
+                                },
+                                "callout": {
+                                    "type": "string",
+                                    "description": (
+                                        "Usually empty. Only on standout turns: short taunt, quip, "
+                                        "or battle cry (otherwise omit or use empty string)."
+                                    ),
                                 },
                             },
                             "required": ["action_type", "index", "reasoning"],
@@ -447,12 +946,14 @@ class LLMPlayer(Player):
         return await asyncio.to_thread(_request)
 
     async def _deepseek_completion(self, messages: list[dict]) -> str:
-        client = _get_deepseek_client()
+        client = self._llm_client
 
         system = (
             self._system_prompt
             + "\n\nRespond ONLY with strict JSON: "
-            + '{"action_type":"move|switch","index":<1-based integer>,"reasoning":"short explanation"}'
+            + '{"action_type":"move|switch","index":<1-based integer>,'
+            + '"reasoning":"1-3 sentences in your persona voice (first person)",'
+            + '"callout":"usually empty; short phrase only on standout moments"}'
         )
 
         def _request() -> str:
@@ -463,7 +964,7 @@ class LLMPlayer(Player):
                     *messages,
                 ],
                 temperature=0.2,
-                max_tokens=220,
+                max_tokens=_LLM_MAX_OUTPUT_TOKENS,
                 response_format={"type": "json_object"},
             )
             content = response.choices[0].message.content or ""
@@ -471,15 +972,95 @@ class LLMPlayer(Player):
 
         return await asyncio.to_thread(_request)
 
+    async def _openrouter_completion(self, messages: list[dict]) -> str:
+        client = self._llm_client
+
+        system = (
+            self._system_prompt
+            + "\n\nRespond ONLY with strict JSON: "
+            + '{"action_type":"move|switch","index":<1-based integer>,'
+            + '"reasoning":"1-3 sentences in your persona voice (first person)",'
+            + '"callout":"usually empty; short phrase only on standout moments"}'
+        )
+
+        def _request() -> str:
+            extra = _openrouter_extra_body()
+            raw_api = getattr(client.chat.completions, "with_raw_response", None)
+
+            for attempt in range(2):
+                use_schema = _openrouter_wants_json_schema(self._model_id) and attempt == 0
+                kwargs: dict = dict(
+                    model=self._model_id,
+                    messages=[
+                        {"role": "system", "content": system},
+                        *messages,
+                    ],
+                    temperature=0.2,
+                    max_tokens=_LLM_MAX_OUTPUT_TOKENS,
+                    response_format=_openrouter_battle_response_format(use_schema),
+                )
+                if extra:
+                    kwargs["extra_body"] = extra
+
+                try:
+                    if raw_api is not None:
+                        raw = raw_api.create(**kwargs)
+                        try:
+                            data = raw.http_response.json()
+                        except Exception:
+                            parsed = raw.parse()
+                            return (parsed.choices[0].message.content or "").strip()
+                        text, finish = _openrouter_raw_response_text(data)
+                        if not text.strip():
+                            model = data.get("model", "")
+                            choice0 = (data.get("choices") or [{}])[0]
+                            ckeys = (
+                                list(choice0.keys())
+                                if isinstance(choice0, dict)
+                                else []
+                            )
+                            print(
+                                f"  [openrouter] No assistant text in raw response "
+                                f"(finish_reason={finish!r}, model={model!r}, choice_keys={ckeys})",
+                                flush=True,
+                            )
+                        return text.strip()
+
+                    response = client.chat.completions.create(**kwargs)
+                    return (response.choices[0].message.content or "").strip()
+                except BadRequestError as e:
+                    if use_schema and attempt == 0:
+                        with _openrouter_structured_deny_lock:
+                            _openrouter_structured_deny.add(self._model_id)
+                        print(
+                            f"  [openrouter] json_schema rejected for "
+                            f"{self._model_id!r}; falling back to json_object ({e})",
+                            flush=True,
+                        )
+                        continue
+                    raise
+
+        return await asyncio.to_thread(_request)
+
     async def _completion(self, messages: list[dict]) -> str:
+        return await asyncio.wait_for(
+            self._provider_completion(messages), timeout=_LLM_TURN_TIMEOUT
+        )
+
+    async def _provider_completion(self, messages: list[dict]) -> str:
         if self._provider == "anthropic":
             return await self._anthropic_completion(messages)
         if self._provider == "deepseek":
             return await self._deepseek_completion(messages)
+        if self._provider == "openrouter":
+            return await self._openrouter_completion(messages)
         raise ValueError(f"Unsupported provider: {self._provider}")
 
     async def choose_move(self, battle: Battle) -> str:
         state_text = format_battle_state(battle)
+        callout_context = self._callout_context_text(battle)
+        if callout_context:
+            state_text = f"{state_text}\n\n{callout_context}"
         history = self._get_history(battle.battle_tag)
 
         history.append({"role": "user", "content": state_text})
@@ -489,39 +1070,63 @@ class LLMPlayer(Player):
 
         try:
             reply = await self._completion(trimmed)
-            print(
-                f"  [{self.username}] {self._provider} action payload: {reply[:120]}...",
-                flush=True,
-            )
 
             history.append({"role": "assistant", "content": reply})
 
             action = None
             reasoning = ""
-            try:
-                payload = json.loads(reply)
-                action_type = str(payload.get("action_type", "")).lower()
-                index = int(payload.get("index", 0)) - 1
+            callout = ""
+            payload = _parse_json_action_payload(reply)
+            if isinstance(payload, dict):
+                action_type = _normalize_json_action_type(
+                    payload.get("action_type") or payload.get("actionType")
+                )
+                raw_idx = _coerce_action_index(payload.get("index"))
                 reasoning = str(payload.get("reasoning", "")).strip()
-                if action_type == "move" and 0 <= index < len(battle.available_moves):
-                    action = f"move:{index}"
-                elif action_type == "switch" and 0 <= index < len(
-                    battle.available_switches
-                ):
-                    action = f"switch:{index}"
-            except Exception:
-                # Keep a resilient fallback in case provider behavior changes.
+                callout = str(payload.get("callout", "")).strip()
+                action = _action_string_from_json_fields(
+                    action_type, raw_idx, battle
+                )
+
+            if not action:
+                reg = _regex_extract_action_fields(reply)
+                if reg:
+                    rt, ri = reg
+                    action = _action_string_from_json_fields(rt, ri, battle)
+
+            if not action:
                 action = parse_llm_action(reply, battle)
                 if "ACTION:" in reply:
                     reasoning = reply.split("ACTION:", 1)[0].strip()
 
+            if action and not (reasoning or "").strip():
+                reasoning = _preamble_reasoning_from_reply(reply)
+
             if action:
+                rp = (reasoning or "").strip()
+                rp_show = (rp[:100] + "…") if len(rp) > 100 else rp
+                co = (callout or "").strip()
+                co_part = f" callout={co!r}" if co else ""
+                print(
+                    f"  [{self.username}] {self._provider} choice: {action} "
+                    f"reasoning={rp_show!r}{co_part}",
+                    flush=True,
+                )
                 _append_thought(
                     battle_tag=battle.battle_tag,
                     player=self.username,
                     action=action.replace(":", " "),
                     reasoning=reasoning,
+                    callout=callout,
                     turn=getattr(battle, "turn", None),
+                )
+                await _post_thought_to_overlay(
+                    player=self.username,
+                    action=action.replace(":", " "),
+                    reasoning=reasoning,
+                    callout=callout,
+                    turn=getattr(battle, "turn", None),
+                    battle_side=self._battle_side,
                 )
                 if self._turn_delay_seconds > 0:
                     await asyncio.sleep(self._turn_delay_seconds)
@@ -532,8 +1137,10 @@ class LLMPlayer(Player):
                 else:
                     return self.create_order(battle.available_switches[idx])
 
+            preview = reply[:200] + ("…" if len(reply) > 200 else "")
             print(
-                f"  [{self.username}] Could not parse action, falling back to random",
+                f"  [{self.username}] Could not parse action (reply_len={len(reply)}), "
+                f"preview={preview!r}, falling back to random",
                 flush=True,
             )
 

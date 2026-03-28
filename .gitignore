@@ -9,3 +9,5 @@ data/
 venv/
 .DS_Store
 docs/broadcast-view.md
+.cursor/
+.ruff_cache/

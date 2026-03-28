@@ -2,16 +2,18 @@
 Overlay service — tracks match results and serves a transparent scoreboard overlay.
 """
 
+import asyncio
 import json
 import os
+import time
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-app = FastAPI(title="Pokemon Battle Overlay")
+app = FastAPI(title="Pokémon Battle Overlay")
 templates = Jinja2Templates(directory="templates")
 
 DATA_FILE = Path("/data/results.json")
@@ -19,8 +21,40 @@ REPLAY_DIR = Path("/replays")
 LOG_DIR = Path("/logs")
 STATE_FILE = Path("/state/current_battle.json")
 THOUGHTS_FILE = Path("/state/thoughts.json")
-STREAM_TITLE = os.getenv("STREAM_TITLE", "Testing Pokemon Showdown battles with LLMs")
+STREAM_TITLE = os.getenv("STREAM_TITLE", "Pokémon Showdown battles with LLMs")
 HIDE_BATTLE_UI = os.getenv("HIDE_BATTLE_UI", "1").strip() in ("1", "true", "yes")
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    raw = os.getenv(name, str(default)).strip()
+    try:
+        v = int(raw, 10)
+        return v if v > 0 else default
+    except ValueError:
+        return default
+
+
+# How long the post-battle victory splash stays fully visible (seconds).
+VICTORY_MODAL_MS = _positive_int_env("VICTORY_MODAL_SECONDS", 30) * 1000
+
+MAX_THOUGHTS_PER_PLAYER = 80
+_thought_store: dict[str, list[dict]] = {}
+_ws_clients: set[WebSocket] = set()
+
+
+async def _broadcast(message: dict) -> None:
+    if not _ws_clients:
+        return
+    data = json.dumps(message)
+    dead: set[WebSocket] = set()
+    for ws in _ws_clients:
+        try:
+            await ws.send_text(data)
+        except Exception:
+            dead.add(ws)
+    _ws_clients.difference_update(dead)
+
+RECENT_MATCHES_COUNT = 10
 
 app.mount(
     "/replays/files",
@@ -30,6 +64,7 @@ app.mount(
 app.mount(
     "/logs/files", StaticFiles(directory=str(LOG_DIR), html=False), name="log-files"
 )
+app.mount("/static", StaticFiles(directory="static", html=False), name="static")
 
 
 def _load_data() -> dict:
@@ -59,6 +94,18 @@ def _load_current_battle_state() -> dict:
     return {}
 
 
+def _display_model_id(model_id: str | None) -> str:
+    """UI-only label: strip OpenRouter routing prefix; state files keep full ids."""
+    if model_id is None:
+        return ""
+    s = str(model_id).strip()
+    prefix = "openrouter/"
+    if s.lower().startswith(prefix):
+        rest = s[len(prefix) :].lstrip()
+        return rest if rest else s
+    return s
+
+
 @app.get("/scoreboard", response_class=JSONResponse)
 async def get_scoreboard():
     data = _load_data()
@@ -66,8 +113,13 @@ async def get_scoreboard():
     total_matches = len(data["matches"])
     p1_name = state.get("player1_name") or "Player 1"
     p2_name = state.get("player2_name") or "Player 2"
-    p1_model = state.get("player1_model_id") or ""
-    p2_model = state.get("player2_model_id") or ""
+    p1_model = _display_model_id(state.get("player1_model_id") or "")
+    p2_model = _display_model_id(state.get("player2_model_id") or "")
+    p1_slug = state.get("player1_persona_slug") or ""
+    p2_slug = state.get("player2_persona_slug") or ""
+    p1_sprite = state.get("player1_sprite_url") or ""
+    p2_sprite = state.get("player2_sprite_url") or ""
+    recent_matches = list(reversed(data["matches"]))[:RECENT_MATCHES_COUNT]
     return {
         "total_matches": total_matches,
         "wins": data["wins"],
@@ -75,7 +127,12 @@ async def get_scoreboard():
         "player2_name": p2_name,
         "player1_model_id": p1_model,
         "player2_model_id": p2_model,
+        "player1_persona_slug": p1_slug,
+        "player2_persona_slug": p2_slug,
+        "player1_sprite_url": p1_sprite,
+        "player2_sprite_url": p2_sprite,
         "last_match": data["matches"][-1] if data["matches"] else None,
+        "recent_matches": recent_matches,
     }
 
 
@@ -87,11 +144,16 @@ async def post_result(request: Request):
     timestamp = body.get("timestamp", 0)
 
     data = _load_data()
+    battle_format = body.get("battle_format", "")
+    duration = body.get("duration", 0)
+
     data["matches"].append(
         {
             "winner": winner,
             "loser": loser,
             "timestamp": timestamp,
+            "battle_format": battle_format,
+            "duration": duration,
         }
     )
     data["wins"][winner] = data["wins"].get(winner, 0) + 1
@@ -103,32 +165,22 @@ async def post_result(request: Request):
 
 @app.get("/overlay", response_class=HTMLResponse)
 async def get_overlay(request: Request):
-    data = _load_data()
-    wins = data["wins"]
-    state = _load_current_battle_state()
-    names = list(wins.keys())
-    player1_name = state.get("player1_name") or (
-        names[0] if len(names) >= 1 else "Player 1"
-    )
-    player2_name = state.get("player2_name") or (
-        names[1] if len(names) >= 2 else "Player 2"
-    )
-    player1_model_id = state.get("player1_model_id") or ""
-    player2_model_id = state.get("player2_model_id") or ""
     return templates.TemplateResponse(
         request=request,
         name="overlay.html",
+        context={"request": request},
+    )
+
+
+@app.get("/victory", response_class=HTMLResponse)
+async def get_victory_splash(request: Request):
+    """Full-frame transparent overlay: animated winner announcement after each battle."""
+    return templates.TemplateResponse(
+        request=request,
+        name="victory.html",
         context={
             "request": request,
-            "wins": wins,
-            "player1_name": player1_name,
-            "player2_name": player2_name,
-            "player1_model_id": player1_model_id,
-            "player2_model_id": player2_model_id,
-            "player1_wins": wins.get(player1_name, 0),
-            "player2_wins": wins.get(player2_name, 0),
-            "total_matches": len(data["matches"]),
-            "last_match": data["matches"][-1] if data["matches"] else None,
+            "victory_modal_ms": VICTORY_MODAL_MS,
         },
     )
 
@@ -202,3 +254,51 @@ async def get_thoughts():
         }
     except Exception:
         return {"battle_tag": None, "updated_at": 0, "players": {}}
+
+
+@app.post("/thought", response_class=JSONResponse)
+async def post_thought(request: Request):
+    body = await request.json()
+    player = str(body.get("player", "")).strip()
+    bs = str(body.get("battle_side", "")).strip().lower()
+    battle_side = bs if bs in ("p1", "p2") else ""
+    thought = {
+        "timestamp": body.get("timestamp", time.time()),
+        "turn": body.get("turn"),
+        "action": str(body.get("action", "")),
+        "reasoning": str(body.get("reasoning", "")),
+        "callout": str(body.get("callout", "")),
+        "battle_side": battle_side,
+    }
+    if player:
+        items = _thought_store.setdefault(player, [])
+        items.append(thought)
+        if len(items) > MAX_THOUGHTS_PER_PLAYER:
+            _thought_store[player] = items[-MAX_THOUGHTS_PER_PLAYER:]
+    await _broadcast({"type": "thought", "player": player, **thought})
+    return {"status": "ok"}
+
+
+@app.post("/thoughts/clear", response_class=JSONResponse)
+async def clear_thoughts_endpoint():
+    _thought_store.clear()
+    await _broadcast({"type": "clear"})
+    return {"status": "ok"}
+
+
+@app.websocket("/thoughts/ws")
+async def thoughts_ws(ws: WebSocket):
+    await ws.accept()
+    _ws_clients.add(ws)
+    try:
+        await ws.send_text(
+            json.dumps({"type": "history", "players": _thought_store})
+        )
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        _ws_clients.discard(ws)

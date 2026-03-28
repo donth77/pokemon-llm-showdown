@@ -24,8 +24,30 @@
       rel="stylesheet"
       href="https://play.pokemonshowdown.com/style/font-awesome.css"
     />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap"
+    />
     <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
     <style id="hide-battle-ui-style"></style>
+    <style id="battle-log-player-name-colors">
+      .battle-log .battle-history .battle-hist-player-p1 {
+        color: #ff6b82;
+        font-weight: 700;
+      }
+      .battle-log .battle-history .battle-hist-player-p2 {
+        color: #7aa3ff;
+        font-weight: 700;
+      }
+      .battle-log .battle-history .battle-hist-species {
+        color: #e4b86a;
+        font-weight: 600;
+      }
+      .battle-log .battle-history .battle-hist-move {
+        color: #5fd4c8;
+        font-weight: 600;
+      }
+    </style>
     <script>
       // Capture the query params NOW before Showdown's router strips them.
       var __hideBattleUI = new URLSearchParams(window.location.search).has(
@@ -35,9 +57,8 @@
     </script>
     <script>
       (function () {
-        if (!__hideBattleUI) return;
-
         // Inject aggressive CSS to hide non-battle UI elements.
+        if (__hideBattleUI) {
         var styleEl = document.getElementById("hide-battle-ui-style");
         if (styleEl) {
           styleEl.textContent =
@@ -45,8 +66,19 @@
             "#mainmenu, #room-lobby, #room-, #room-battles, .chat-log-add, " +
             "ul.battle-userlist, .battle-log-add { display: none !important; } " +
             "body, .ps-room-opaque { background-image: none !important; background-color: #0b1020 !important; } " +
-            ".battle-log { height: 100% !important; width: 330px !important; } " +
+            ".battle-log { height: 100% !important; width: 330px !important; background: #101728 !important; color: #d4d9e6 !important; border-left: 1px solid rgba(255,255,255,0.08) !important; scrollbar-width: none !important; -ms-overflow-style: none !important; } " +
+            ".battle-log::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none !important; } " +
+            ".battle-log .inner, .battle-log .chat, .battle-log .battle-history, .battle-log .message-log { background: #101728 !important; color: #d4d9e6 !important; } " +
+            ".battle-log div.battle-history, .battle-log div.battle-history small, .battle-log div.battle-history strong { font-family: 'Press Start 2P', 'VT323', 'Courier New', monospace !important; letter-spacing: 0.2px !important; font-size: 0.9em !important; line-height: 14px !important; } " +
+            ".battle-log .messagebar.message, .battle-log .messagebar.message p, .battle-log .messagebar.message small, .battle-log .messagebar.message strong { font-family: 'Press Start 2P', 'VT323', 'Courier New', monospace !important; letter-spacing: 0.2px !important; font-size: 0.9em !important; } " +
+            ".battle-log h2.battle-history { background: #263554 !important; color: #dbe2f2 !important; } " +
+            ".battle-log .chat em, .battle-log .small, .battle-log .timestamp { color: #9ea6b8 !important; } " +
+            ".battle-log .battle-history .battle-hist-player-p1 { color: #ff6b82 !important; font-weight: 700 !important; } " +
+            ".battle-log .battle-history .battle-hist-player-p2 { color: #7aa3ff !important; font-weight: 700 !important; } " +
+            ".battle-log .battle-history .battle-hist-species { color: #e4b86a !important; font-weight: 600 !important; } " +
+            ".battle-log .battle-history .battle-hist-move { color: #5fd4c8 !important; font-weight: 600 !important; } " +
             ".battle-options { display: none !important; }";
+        }
         }
 
         var HIDE_SELS = [
@@ -67,6 +99,7 @@
         ];
 
         function hideBattleChrome() {
+          if (!__hideBattleUI) return;
           document.body.style.backgroundImage = "none";
           document.body.style.backgroundColor = "#0b1020";
           var opaques = document.querySelectorAll(".ps-room-opaque");
@@ -89,6 +122,7 @@
         }
 
         function forceShowBattleRoom() {
+          if (!__hideBattleUI) return;
           var hash = getBattleHash();
           if (!hash || hash.indexOf("battle-") !== 0) return;
           var rooms = document.querySelectorAll(".ps-room");
@@ -132,6 +166,70 @@
         }
 
         var battleSentJoin = {};
+        if (!window.__psBattleLog) {
+          window.__psBattleLog = {
+            species: Object.create(null),
+            moves: Object.create(null),
+            resetTerms: function () {
+              this.species = Object.create(null);
+              this.moves = Object.create(null);
+            },
+            _noteSpecies: function (s) {
+              s = String(s || "").trim();
+              if (s.length >= 2) this.species[s] = true;
+            },
+            _noteMove: function (m) {
+              m = String(m || "").trim();
+              if (m.length < 2 || m.charAt(0) === "[") return;
+              this.moves[m] = true;
+            },
+            ingestProtocol: function (raw) {
+              if (!raw) return;
+              var lines = String(raw).split("\n");
+              var st = this;
+              for (var li = 0; li < lines.length; li++) {
+                var line = lines[li];
+                if (!line || line.charAt(0) !== "|") continue;
+                var p = line.split("|");
+                var cmd = (p[1] || "").toLowerCase();
+                if (cmd === "move" && p.length >= 4) {
+                  st._noteMove(p[3]);
+                } else if (
+                  cmd === "switch" ||
+                  cmd === "drag" ||
+                  cmd === "replace"
+                ) {
+                  if (p.length >= 4) {
+                    var det = String(p[3] || "").trim();
+                    var head = det.split(",")[0].trim();
+                    if (head) st._noteSpecies(head);
+                  }
+                  if (p.length >= 3) {
+                    var ident = String(p[2] || "");
+                    var c = ident.indexOf(":");
+                    if (c >= 0) st._noteSpecies(ident.slice(c + 1).trim());
+                  }
+                } else if (cmd === "poke" && p.length >= 4) {
+                  var pd = String(p[3] || "").trim();
+                  var ph = pd.split(",")[0].trim();
+                  if (ph) st._noteSpecies(ph);
+                } else if (cmd === "detailschange" && p.length >= 4) {
+                  var dc = String(p[3] || "").trim();
+                  var dh = dc.split(",")[0].trim();
+                  if (dh) st._noteSpecies(dh);
+                } else if (cmd === "cant" && p.length >= 5) {
+                  if ((p[3] || "").toLowerCase() === "disable") {
+                    st._noteMove(p[4]);
+                  }
+                } else if (cmd === "faint" && p.length >= 3) {
+                  var idf = String(p[2] || "");
+                  var cf = idf.indexOf(":");
+                  if (cf >= 0) st._noteSpecies(idf.slice(cf + 1).trim());
+                }
+              }
+            },
+          };
+        }
         var OrigWS = window.WebSocket;
         window.WebSocket = function (url, protocols) {
           var ws = protocols ? new OrigWS(url, protocols) : new OrigWS(url);
@@ -159,9 +257,69 @@
             setTimeout(forceShowBattleRoom, 400);
           }
 
+          function emitBattleActionEvents(protocolChunk) {
+            if (!protocolChunk || !window.parent) return;
+            var lines = String(protocolChunk).split("\n");
+            for (var i = 0; i < lines.length; i++) {
+              var line = lines[i];
+              if (!line || line.charAt(0) !== "|") continue;
+
+              if (line.indexOf("|turn|") === 0) {
+                try {
+                  window.parent.postMessage(
+                    { type: "battle_turn", ts: Date.now() },
+                    "*",
+                  );
+                } catch (_unused) {}
+                continue;
+              }
+
+              var side = "";
+              var action = "";
+              if (line.indexOf("|move|") === 0) {
+                action = "move";
+              } else if (line.indexOf("|switch|") === 0) {
+                action = "switch";
+              } else if (line.indexOf("|cant|") === 0) {
+                action = "cant";
+              } else {
+                continue;
+              }
+              if (
+                line.indexOf("|p1a:") !== -1 ||
+                line.indexOf("|p1b:") !== -1 ||
+                line.indexOf("|p1:") !== -1
+              ) {
+                side = "p1";
+              } else if (
+                line.indexOf("|p2a:") !== -1 ||
+                line.indexOf("|p2b:") !== -1 ||
+                line.indexOf("|p2:") !== -1
+              ) {
+                side = "p2";
+              }
+              if (!side) continue;
+              try {
+                window.parent.postMessage(
+                  {
+                    type: "battle_action",
+                    side: side,
+                    action: action,
+                    ts: Date.now(),
+                  },
+                  "*",
+                );
+              } catch (_unused) {}
+            }
+          }
+
           ws.addEventListener("message", function (evt) {
             try {
               var data = typeof evt.data === "string" ? evt.data : "";
+              if (window.__psBattleLog && window.__psBattleLog.ingestProtocol) {
+                window.__psBattleLog.ingestProtocol(data);
+              }
+              emitBattleActionEvents(data);
               if (
                 data.indexOf("queryresponse|roomlist") !== -1 ||
                 data.indexOf("|switch|") !== -1 ||
@@ -208,6 +366,9 @@
         window.WebSocket.CLOSED = OrigWS.CLOSED;
 
         window.addEventListener("hashchange", function () {
+          if (window.__psBattleLog && window.__psBattleLog.resetTerms) {
+            window.__psBattleLog.resetTerms();
+          }
           // New battle — reset join tracking and join the new room.
           var hash = location.hash.replace(/^#/, "");
           if (hash && hash.indexOf("battle-") === 0) {
@@ -231,10 +392,12 @@
         });
 
         // Aggressively keep hiding chrome and forcing battle room visible.
-        setInterval(function () {
-          hideBattleChrome();
-          forceShowBattleRoom();
-        }, 500);
+        if (__hideBattleUI) {
+          setInterval(function () {
+            hideBattleChrome();
+            forceShowBattleRoom();
+          }, 500);
+        }
 
         // Fallback: periodically ensure the battle room is joined and focused.
         setInterval(function () {
@@ -504,6 +667,460 @@
         setTimeout(dismissLoginPopup, 1500);
         setTimeout(dismissLoginPopup, 3000);
       };
+    </script>
+    <script>
+      (function () {
+        var P1_SPRITE = "/trainers/aggro.png";
+        var P2_SPRITE = "/trainers/stall.png";
+
+        function findNearTrainersprite() {
+          return (
+            document.querySelector(".trainer.trainer-near .trainersprite") ||
+            document.querySelector(".trainer-near .trainersprite")
+          );
+        }
+
+        function findFarTrainersprite() {
+          return (
+            document.querySelector(".trainer.trainer-far .trainersprite") ||
+            document.querySelector(".trainer-far .trainersprite")
+          );
+        }
+
+        function applyCustomTrainerSprites() {
+          var near = findNearTrainersprite();
+          var far = findFarTrainersprite();
+          if (near) {
+            near.style.backgroundImage = 'url("' + P1_SPRITE + '")';
+            near.style.backgroundRepeat = "no-repeat";
+            near.style.backgroundPosition = "bottom center";
+            near.style.backgroundSize = "contain";
+            near.style.transform = "scaleX(-1)";
+            near.style.transformOrigin = "center bottom";
+          }
+          if (far) {
+            far.style.backgroundImage = 'url("' + P2_SPRITE + '")';
+            far.style.backgroundRepeat = "no-repeat";
+            far.style.backgroundPosition = "bottom center";
+            far.style.backgroundSize = "contain";
+            far.style.transform = "";
+            far.style.transformOrigin = "";
+          }
+        }
+
+        applyCustomTrainerSprites();
+        if (document.body) {
+          var mo = new MutationObserver(function () {
+            applyCustomTrainerSprites();
+          });
+          mo.observe(document.body, { childList: true, subtree: true });
+        }
+        setInterval(applyCustomTrainerSprites, 600);
+      })();
+    </script>
+    <script>
+      (function () {
+        var p1Name = "";
+        var p2Name = "";
+        var colorizeMicrotaskPending = false;
+        var BATTLE_START_RE =
+          /Battle started between\s+(.+?)\s+and\s+(.+?)!/i;
+        var HIGHLIGHT_SPAN_SEL =
+          ".battle-hist-player-p1, .battle-hist-player-p2, .battle-hist-species, .battle-hist-move";
+
+        function mutationTouchesBattleLog(mutation) {
+          var t = mutation.target;
+          if (t && t.nodeType === 1 && t.closest && t.closest(".battle-log"))
+            return true;
+          var nodes = mutation.addedNodes;
+          for (var i = 0; i < nodes.length; i++) {
+            var n = nodes[i];
+            if (n.nodeType !== 1) continue;
+            if (n.classList && n.classList.contains("battle-log")) return true;
+            if (n.closest && n.closest(".battle-log")) return true;
+            if (n.querySelector && n.querySelector(".battle-history")) return true;
+          }
+          return false;
+        }
+
+        function resetPlayerNames() {
+          p1Name = "";
+          p2Name = "";
+        }
+
+        function tryLearnNamesFromBattleLog() {
+          var els = document.querySelectorAll(".battle-log .battle-history");
+          for (var i = 0; i < els.length; i++) {
+            var t = els[i].textContent || "";
+            var m = t.match(BATTLE_START_RE);
+            if (m) {
+              p1Name = String(m[1] || "").trim();
+              p2Name = String(m[2] || "").trim();
+              return !!(p1Name && p2Name);
+            }
+          }
+          return false;
+        }
+
+        function isWordChar(ch) {
+          return ch && /[A-Za-z0-9-]/.test(ch);
+        }
+
+        function findNextHighlightTerm(text, start, terms) {
+          for (var t = 0; t < terms.length; t++) {
+            var term = terms[t];
+            var n = term.name;
+            var len = n.length;
+            if (!len || start + len > text.length) continue;
+            if (text.slice(start, start + len) !== n) continue;
+            if (isWordChar(text.charAt(start - 1))) continue;
+            if (isWordChar(text.charAt(start + len))) continue;
+            return term;
+          }
+          return null;
+        }
+
+        function splitTextWithHighlights(fullText, terms) {
+          if (!fullText || !terms.length) return null;
+          var frag = document.createDocumentFragment();
+          var i = 0;
+          var found = false;
+          var text = fullText;
+          while (i < text.length) {
+            var term = findNextHighlightTerm(text, i, terms);
+            if (term) {
+              if (i > 0) {
+                frag.appendChild(document.createTextNode(text.slice(0, i)));
+              }
+              var span = document.createElement("span");
+              span.className = term.cls;
+              span.appendChild(document.createTextNode(term.name));
+              frag.appendChild(span);
+              text = text.slice(i + term.name.length);
+              i = 0;
+              found = true;
+            } else {
+              i++;
+            }
+          }
+          if (!found) return null;
+          if (text.length) frag.appendChild(document.createTextNode(text));
+          return frag;
+        }
+
+        function buildHighlightTerms() {
+          var out = [];
+          if (p1Name) {
+            out.push({ name: p1Name, cls: "battle-hist-player-p1", prio: 0 });
+          }
+          if (p2Name) {
+            out.push({ name: p2Name, cls: "battle-hist-player-p2", prio: 0 });
+          }
+          var st = window.__psBattleLog;
+          if (st && st.species && st.moves) {
+            for (var sp in st.species) {
+              if (!Object.prototype.hasOwnProperty.call(st.species, sp)) continue;
+              if (sp === p1Name || sp === p2Name) continue;
+              out.push({ name: sp, cls: "battle-hist-species", prio: 1 });
+            }
+            for (var mv in st.moves) {
+              if (!Object.prototype.hasOwnProperty.call(st.moves, mv)) continue;
+              if (mv === p1Name || mv === p2Name) continue;
+              out.push({ name: mv, cls: "battle-hist-move", prio: 2 });
+            }
+          }
+          out.sort(function (a, b) {
+            var ld = b.name.length - a.name.length;
+            if (ld !== 0) return ld;
+            return a.prio - b.prio;
+          });
+          return out;
+        }
+
+        function isInsideHighlightSpan(node) {
+          var p = node && node.parentElement;
+          return !!(p && p.closest && p.closest(HIGHLIGHT_SPAN_SEL));
+        }
+
+        function colorizeBattleHistoryElement(el, terms) {
+          if (!el || !terms.length) return;
+          var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+          var textNodes = [];
+          var n;
+          while ((n = walker.nextNode())) {
+            if (!isInsideHighlightSpan(n)) textNodes.push(n);
+          }
+          for (var i = 0; i < textNodes.length; i++) {
+            var tn = textNodes[i];
+            if (!tn.parentNode) continue;
+            var frag = splitTextWithHighlights(tn.nodeValue, terms);
+            if (frag) tn.parentNode.replaceChild(frag, tn);
+          }
+        }
+
+        function colorizeBattleLog() {
+          colorizeMicrotaskPending = false;
+          tryLearnNamesFromBattleLog();
+          var terms = buildHighlightTerms();
+          if (!terms.length) return;
+          var blocks = document.querySelectorAll(".battle-log .battle-history");
+          for (var b = 0; b < blocks.length; b++) {
+            colorizeBattleHistoryElement(blocks[b], terms);
+          }
+        }
+
+        function scheduleColorize(mutations) {
+          if (mutations && mutations.length) {
+            var relevant = false;
+            for (var mi = 0; mi < mutations.length; mi++) {
+              if (mutationTouchesBattleLog(mutations[mi])) {
+                relevant = true;
+                break;
+              }
+            }
+            if (!relevant) return;
+          }
+          if (colorizeMicrotaskPending) return;
+          colorizeMicrotaskPending = true;
+          queueMicrotask(colorizeBattleLog);
+        }
+
+        window.addEventListener("hashchange", resetPlayerNames);
+
+        if (document.body) {
+          var mo = new MutationObserver(scheduleColorize);
+          mo.observe(document.body, { childList: true, subtree: true });
+        }
+        scheduleColorize(null);
+      })();
+    </script>
+    <script>
+      (function () {
+        var layer = null;
+        var nearPill = null;
+        var farPill = null;
+        var nearTimer = null;
+        var farTimer = null;
+        var lastNear = "";
+        var lastFar = "";
+        var lastVersion = 0;
+
+        function ensureLayer() {
+          if (layer) return layer;
+          layer = document.createElement("div");
+          layer.id = "callout-layer";
+          layer.style.position = "fixed";
+          layer.style.inset = "0";
+          layer.style.pointerEvents = "none";
+          layer.style.zIndex = "2147483647";
+          document.body.appendChild(layer);
+
+          var style = document.createElement("style");
+          style.textContent =
+            "#callout-layer .callout-pill{" +
+            "position:absolute;" +
+            "max-width:400px;" +
+            "box-sizing:border-box;" +
+            "padding:8px 12px;" +
+            "border-radius:999px;" +
+            "font-weight:700;" +
+            "font-size:13px;" +
+            "line-height:1.2;" +
+            "letter-spacing:.2px;" +
+            "color:#fff;" +
+            "background:rgba(9,14,28,.92);" +
+            "border:1px solid rgba(255,255,255,.32);" +
+            "box-shadow:0 10px 24px rgba(0,0,0,.45);" +
+            "backdrop-filter:blur(4px);" +
+            "opacity:0;" +
+            "transform:translateY(8px) scale(.98);" +
+            "transition:opacity .25s ease, transform .25s ease;" +
+            "white-space:nowrap;" +
+            "overflow:hidden;" +
+            "text-overflow:ellipsis;" +
+            "}" +
+            "#callout-layer .callout-pill.show{" +
+            "opacity:1;" +
+            "transform:translateY(0) scale(1);" +
+            "}" +
+            "#callout-layer .callout-pill.near{" +
+            "background:linear-gradient(135deg, rgba(255,80,100,.96), rgba(180,36,67,.93));" +
+            "}" +
+            "#callout-layer .callout-pill.far{" +
+            "background:linear-gradient(135deg, rgba(86,140,255,.96), rgba(39,86,207,.93));" +
+            "}";
+          document.head.appendChild(style);
+
+          nearPill = document.createElement("div");
+          nearPill.className = "callout-pill near";
+          farPill = document.createElement("div");
+          farPill.className = "callout-pill far";
+          layer.appendChild(nearPill);
+          layer.appendChild(farPill);
+          return layer;
+        }
+
+        function setPillPosition(pill, anchorEl, yOffset) {
+          if (!pill || !anchorEl) return false;
+          var rect = anchorEl.getBoundingClientRect();
+          if (!rect || rect.width <= 0 || rect.height <= 0) return false;
+          var left = rect.left + rect.width / 2;
+          var top = rect.top + yOffset;
+          positionPillInViewport(pill, left, top);
+          return true;
+        }
+
+        function positionPillInViewport(pill, left, top) {
+          if (!pill) return;
+          var viewportW =
+            window.innerWidth ||
+            document.documentElement.clientWidth ||
+            document.body.clientWidth ||
+            1280;
+          var viewportH =
+            window.innerHeight ||
+            document.documentElement.clientHeight ||
+            document.body.clientHeight ||
+            720;
+          var margin = 8;
+          var width = Math.max(1, pill.offsetWidth || 220);
+          var height = Math.max(1, pill.offsetHeight || 32);
+          var halfWidth = width / 2;
+          var minCenterX = margin + halfWidth;
+          var maxCenterX = viewportW - margin - halfWidth;
+          var clampedLeft =
+            maxCenterX <= minCenterX
+              ? viewportW / 2
+              : Math.min(maxCenterX, Math.max(minCenterX, left));
+          var minTop = margin;
+          var maxTop = viewportH - margin - height;
+          var clampedTop =
+            maxTop <= minTop ? minTop : Math.min(maxTop, Math.max(minTop, top));
+          pill.style.left = Math.round(clampedLeft) + "px";
+          pill.style.top = Math.round(clampedTop) + "px";
+          pill.style.transform = "translate(-50%, 8px) scale(.98)";
+          if (pill.classList.contains("show")) {
+            pill.style.transform = "translate(-50%, 0) scale(1)";
+          }
+        }
+
+        function hidePill(pill, timerRefName) {
+          if (!pill) return;
+          if (timerRefName === "near" && nearTimer) {
+            clearTimeout(nearTimer);
+            nearTimer = null;
+          }
+          if (timerRefName === "far" && farTimer) {
+            clearTimeout(farTimer);
+            farTimer = null;
+          }
+          pill.classList.remove("show");
+        }
+
+        function getAnchor(side) {
+          if (side === "near") {
+            return (
+              document.querySelector(".trainer.trainer-near") ||
+              document.querySelector(".trainer-near .trainer") ||
+              document.querySelector(".trainer-near")
+            );
+          }
+          return (
+            document.querySelector(".trainer.trainer-far") ||
+            document.querySelector(".trainer-far .trainer") ||
+            document.querySelector(".trainer-far")
+          );
+        }
+
+        function setFallbackPosition(side, pill) {
+          if (!pill) return;
+          var viewportW =
+            window.innerWidth ||
+            document.documentElement.clientWidth ||
+            document.body.clientWidth ||
+            1280;
+          var viewportH =
+            window.innerHeight ||
+            document.documentElement.clientHeight ||
+            document.body.clientHeight ||
+            720;
+          var left = side === "near" ? viewportW * 0.32 : viewportW * 0.68;
+          var top = side === "near" ? viewportH * 0.70 : viewportH * 0.30;
+          positionPillInViewport(pill, left, top);
+        }
+
+        function showPill(side, text) {
+          ensureLayer();
+          var trimmed = String(text || "").trim();
+          var anchor = getAnchor(side);
+          var pill = side === "near" ? nearPill : farPill;
+          if (!trimmed || !pill) {
+            hidePill(pill, side);
+            return;
+          }
+
+          pill.textContent = trimmed;
+          var yOffset = side === "near" ? -10 : -18;
+          if (!anchor || !setPillPosition(pill, anchor, yOffset)) {
+            setFallbackPosition(side, pill);
+          }
+          pill.classList.add("show");
+          if (side === "near") {
+            if (nearTimer) clearTimeout(nearTimer);
+            nearTimer = setTimeout(function () {
+              hidePill(nearPill, "near");
+            }, 3200);
+          } else {
+            if (farTimer) clearTimeout(farTimer);
+            farTimer = setTimeout(function () {
+              hidePill(farPill, "far");
+            }, 3200);
+          }
+        }
+
+        function repositionVisiblePills() {
+          if (!nearPill || !farPill) return;
+          if (nearPill.classList.contains("show")) {
+            var nearAnchor = getAnchor("near");
+            if (!nearAnchor || !setPillPosition(nearPill, nearAnchor, -10)) {
+              setFallbackPosition("near", nearPill);
+            }
+          }
+          if (farPill.classList.contains("show")) {
+            var farAnchor = getAnchor("far");
+            if (!farAnchor || !setPillPosition(farPill, farAnchor, -18)) {
+              setFallbackPosition("far", farPill);
+            }
+          }
+        }
+
+        window.addEventListener("resize", repositionVisiblePills);
+        setInterval(repositionVisiblePills, 500);
+
+        window.addEventListener("message", function (event) {
+          var data = event && event.data;
+          if (!data || data.type !== "llm_callouts") return;
+          var version = Number(data.version || 0);
+          if (version && version === lastVersion) return;
+          if (version) lastVersion = version;
+          var nearText = String(data.p1_callout || "").trim();
+          var farText = String(data.p2_callout || "").trim();
+
+          if (nearText !== lastNear) {
+            lastNear = nearText;
+            showPill("near", nearText);
+          } else if (!nearText) {
+            hidePill(nearPill, "near");
+          }
+
+          if (farText !== lastFar) {
+            lastFar = farText;
+            showPill("far", farText);
+          } else if (!farText) {
+            hidePill(farPill, "far");
+          }
+        });
+      })();
     </script>
   </body>
 </html>

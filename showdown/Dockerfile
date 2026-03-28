@@ -11,6 +11,7 @@ RUN git clone --depth 1 https://github.com/smogon/pokemon-showdown.git . && \
 
 COPY config/config.js config/config.js
 COPY static/index.html server/static/index.html
+COPY static/trainers/ server/static/trainers/
 
 EXPOSE 8000
 

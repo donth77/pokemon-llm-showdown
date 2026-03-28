@@ -46,6 +46,18 @@
         pointer-events: none;
       }
 
+      /* Full-frame winner splash; above scoreboard overlay, below nothing critical */
+      .victory-frame {
+        position: absolute;
+        inset: 0;
+        width: 1280px;
+        height: 720px;
+        border: 0;
+        background: transparent;
+        pointer-events: none;
+        z-index: 14;
+      }
+
       .stream-title {
         padding: 8px 12px;
         border-radius: 8px;
@@ -62,7 +74,7 @@
       .top-left-bar {
         position: absolute;
         left: 16px;
-        top: 16px;
+        top: 10px;
         z-index: 10;
         display: flex;
         align-items: center;
@@ -80,7 +92,6 @@
         font-weight: 700;
         letter-spacing: 0.2px;
         pointer-events: none;
-        text-transform: lowercase;
       }
 
       .thoughts-wrap {
@@ -114,11 +125,26 @@
         font-weight: 700;
       }
 
+      /* Match overlay scoreboard .player-name.red / .player-name.blue */
+      .thoughts-title.red {
+        color: #ff6b6b;
+      }
+
+      .thoughts-title.blue {
+        color: #74b9ff;
+      }
+
       .thoughts-scroll {
         height: 102px;
         overflow-y: auto;
-        scrollbar-width: thin;
-        scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+      }
+
+      .thoughts-scroll::-webkit-scrollbar {
+        width: 0;
+        height: 0;
+        display: none;
       }
 
       .thought-line {
@@ -138,32 +164,38 @@
         font-weight: 600;
       }
     </style>
+    <script src="/static/format-utils.js"></script>
   </head>
 
   <body>
     <div class="scene">
       <div class="top-left-bar">
         <div class="stream-title">{{ stream_title }}</div>
-        <div class="battle-format" id="battle-format-label">format: --</div>
+        <div class="battle-format" id="battle-format-label">Format: --</div>
       </div>
       <iframe
         class="battle-frame"
         id="battle-frame"
         src="{{ showdown_internal_url }}"
-        title="Pokemon Showdown"
+        title="Pokémon Showdown"
         allow="autoplay; fullscreen"
         allowfullscreen
       >
       </iframe>
       <iframe class="overlay-frame" src="/overlay" title="Scoreboard Overlay">
       </iframe>
+      <iframe
+        class="victory-frame"
+        src="/victory"
+        title="Victory splash"
+      ></iframe>
       <div class="thoughts-wrap">
         <section class="thoughts-panel">
-          <div class="thoughts-title" id="thoughts-title-p1">Player 1</div>
+          <div class="thoughts-title red" id="thoughts-title-p1">Player 1</div>
           <div class="thoughts-scroll" id="thoughts-p1"></div>
         </section>
         <section class="thoughts-panel">
-          <div class="thoughts-title" id="thoughts-title-p2">Player 2</div>
+          <div class="thoughts-title blue" id="thoughts-title-p2">Player 2</div>
           <div class="thoughts-scroll" id="thoughts-p2"></div>
         </section>
       </div>
@@ -234,8 +266,9 @@
           const resp = await fetch("/current_battle", { cache: "no-store" });
           const data = await resp.json();
           if (battleFormatLabel) {
-            battleFormatLabel.textContent = `format: ${data.battle_format || "--"}`;
+            battleFormatLabel.textContent = `Format: ${displayBattleFormat(data.battle_format)}`;
           }
+          maybeReloadBetweenMatches(data.status);
           if (data.status === "live" && data.battle_tag) {
             const tag = normalizeBattleTag(data.battle_tag);
             if (tag && tag !== currentBattleTag) {
@@ -252,6 +285,23 @@
         }
       }
 
+      // Periodic full-page reload between matches to flush Chromium memory.
+      // Only triggers when the battle status is "idle" (between matches) and
+      // the page has been alive for at least 30 minutes.
+      const PAGE_LOAD_TIME = Date.now();
+      const RELOAD_AFTER_MS = 30 * 60 * 1000;
+      let lastSeenStatus = "";
+
+      function maybeReloadBetweenMatches(status) {
+        lastSeenStatus = status || "";
+        if (
+          lastSeenStatus === "idle" &&
+          Date.now() - PAGE_LOAD_TIME > RELOAD_AFTER_MS
+        ) {
+          location.reload();
+        }
+      }
+
       refreshBattleTarget();
       setInterval(refreshBattleTarget, 3000);
 
@@ -261,7 +311,6 @@
       const thoughtsTitleP2 = document.getElementById("thoughts-title-p2");
       let thoughtPlayer1 = "Player 1";
       let thoughtPlayer2 = "Player 2";
-      let lastThoughtsUpdatedAt = 0;
 
       function setThoughtPlayerNames(p1, p2) {
         thoughtPlayer1 = p1 || thoughtPlayer1;
@@ -280,14 +329,10 @@
             setThoughtPlayerNames(p1, p2);
             return;
           }
-
-          // Fallback for older scoreboard payloads.
           const wins = data?.wins || {};
           const names = Object.keys(wins);
           if (names.length >= 2) setThoughtPlayerNames(names[0], names[1]);
-        } catch (_) {
-          // keep existing names
-        }
+        } catch (_) {}
       }
 
       function renderThoughtList(target, items) {
@@ -313,42 +358,184 @@
         target.scrollTop = target.scrollHeight;
       }
 
-      async function refreshThoughts() {
+      // Monotonic id so the battle iframe never drops an update when Date.now()
+      // matches the previous message (e.g. multiple protocol lines in one chunk).
+      let calloutMessageSeq = 0;
+      function postCalloutsToBattleFrame(p1Callout, p2Callout) {
         try {
-          const resp = await fetch("/thoughts", { cache: "no-store" });
-          const data = await resp.json();
-          const updatedAt = Number(data.updated_at || 0);
-          if (updatedAt === lastThoughtsUpdatedAt) return;
-          lastThoughtsUpdatedAt = updatedAt;
-          const players = data.players || {};
+          if (!battleFrame || !battleFrame.contentWindow) return;
+          calloutMessageSeq += 1;
+          battleFrame.contentWindow.postMessage(
+            {
+              type: "llm_callouts",
+              p1_callout: p1Callout || "",
+              p2_callout: p2Callout || "",
+              version: calloutMessageSeq,
+            },
+            "*",
+          );
+        } catch (_) {}
+      }
 
-          const keys = Object.keys(players);
-          // Prefer the expected matchup names (set from /scoreboard).
-          // Only fall back to Object key order if the expected names aren't present yet.
-          const p1Has = thoughtPlayer1 && keys.includes(thoughtPlayer1);
-          const p2Has = thoughtPlayer2 && keys.includes(thoughtPlayer2);
+      // --- WebSocket thought feed + callout queue ---
 
-          if (keys.length === 1) {
-            // If only one player has thoughts yet, label panel 1 with it.
-            setThoughtPlayerNames(keys[0], thoughtPlayer2);
-          } else if (!p1Has || !p2Has) {
-            // Last resort fallback: keep stable assignment by sorting keys.
-            // (This prevents random object key ordering from swapping panels.)
-            const sorted = keys.slice().sort();
-            if (sorted.length >= 2) setThoughtPlayerNames(sorted[0], sorted[1]);
-          }
+      const thoughtItems = {};
+      const calloutQueue = [];
+      const pendingCalloutsBySide = { p1: [], p2: [] };
+      const unreleasedActionTsBySide = { p1: 0, p2: 0 };
+      const UNRELEASED_ACTION_MAX_AGE_MS = 4000;
+      let calloutPlaying = false;
+      const CALLOUT_DISPLAY_MS = 3200;
 
-          renderThoughtList(thoughtsP1, players[thoughtPlayer1] || []);
-          renderThoughtList(thoughtsP2, players[thoughtPlayer2] || []);
-        } catch (_) {
-          // keep existing view
+      function syncPlayerNamesFromThoughts() {
+        const keys = Object.keys(thoughtItems);
+        const p1Has = thoughtPlayer1 && keys.includes(thoughtPlayer1);
+        const p2Has = thoughtPlayer2 && keys.includes(thoughtPlayer2);
+        if (keys.length === 1 && !p1Has) {
+          setThoughtPlayerNames(keys[0], thoughtPlayer2);
+        } else if (keys.length >= 2 && (!p1Has || !p2Has)) {
+          const sorted = keys.slice().sort();
+          setThoughtPlayerNames(sorted[0], sorted[1]);
         }
+      }
+
+      function renderAllThoughtPanels() {
+        syncPlayerNamesFromThoughts();
+        renderThoughtList(thoughtsP1, thoughtItems[thoughtPlayer1] || []);
+        renderThoughtList(thoughtsP2, thoughtItems[thoughtPlayer2] || []);
+      }
+
+      function enqueueDisplayCallout(side, text) {
+        calloutQueue.push({ side, text });
+      }
+
+      function releasePendingCalloutForSide(side) {
+        if (side !== "p1" && side !== "p2") return;
+        const pending = pendingCalloutsBySide[side];
+        if (!pending || !pending.length) return;
+        const item = pending.shift();
+        if (!item || !item.text) return;
+        enqueueDisplayCallout(side, item.text);
+        drainCalloutQueue();
+      }
+
+      function drainCalloutQueue() {
+        if (calloutPlaying || !calloutQueue.length) return;
+        calloutPlaying = true;
+        const { side, text } = calloutQueue.shift();
+        const p1 = side === "p1" ? text : "";
+        const p2 = side === "p2" ? text : "";
+        postCalloutsToBattleFrame(p1, p2);
+        setTimeout(() => {
+          calloutPlaying = false;
+          drainCalloutQueue();
+        }, CALLOUT_DISPLAY_MS);
+      }
+
+      function handleThoughtsMessage(msg) {
+        if (msg.type === "history") {
+          for (const k of Object.keys(thoughtItems)) delete thoughtItems[k];
+          const players = msg.players || {};
+          for (const [player, items] of Object.entries(players)) {
+            thoughtItems[player] = Array.isArray(items) ? items : [];
+          }
+          renderAllThoughtPanels();
+        } else if (msg.type === "thought") {
+          const player = msg.player || "";
+          if (!player) return;
+          if (!thoughtItems[player]) thoughtItems[player] = [];
+          thoughtItems[player].push({
+            timestamp: msg.timestamp,
+            turn: msg.turn,
+            action: msg.action,
+            reasoning: msg.reasoning,
+            callout: msg.callout,
+          });
+          if (thoughtItems[player].length > 80) {
+            thoughtItems[player] = thoughtItems[player].slice(-80);
+          }
+          renderAllThoughtPanels();
+          const callout = (msg.callout || "").trim();
+          if (callout) {
+            const bs = String(msg.battle_side || "")
+              .trim()
+              .toLowerCase();
+            const side =
+              bs === "p1" || bs === "p2"
+                ? bs
+                : player === thoughtPlayer1
+                  ? "p1"
+                  : "p2";
+            const actionAge =
+              Date.now() - (unreleasedActionTsBySide[side] || 0);
+            if (actionAge < UNRELEASED_ACTION_MAX_AGE_MS) {
+              unreleasedActionTsBySide[side] = 0;
+              pendingCalloutsBySide[side] = [];
+              enqueueDisplayCallout(side, callout);
+              drainCalloutQueue();
+            } else {
+              pendingCalloutsBySide[side] = [
+                {
+                  text: callout,
+                  turn: msg.turn,
+                  action: msg.action,
+                  timestamp: msg.timestamp,
+                },
+              ];
+            }
+          }
+        } else if (msg.type === "clear") {
+          for (const k of Object.keys(thoughtItems)) delete thoughtItems[k];
+          pendingCalloutsBySide.p1.length = 0;
+          pendingCalloutsBySide.p2.length = 0;
+          unreleasedActionTsBySide.p1 = 0;
+          unreleasedActionTsBySide.p2 = 0;
+          calloutQueue.length = 0;
+          calloutPlaying = false;
+          renderAllThoughtPanels();
+          postCalloutsToBattleFrame("", "");
+        }
+      }
+
+      window.addEventListener("message", (event) => {
+        const data = event && event.data;
+        if (!data) return;
+        if (!battleFrame || event.source !== battleFrame.contentWindow) return;
+
+        if (data.type === "battle_action") {
+          const side =
+            data.side === "p1" ? "p1" : data.side === "p2" ? "p2" : "";
+          if (!side) return;
+          const pending = pendingCalloutsBySide[side];
+          if (pending && pending.length) {
+            unreleasedActionTsBySide[side] = 0;
+            releasePendingCalloutForSide(side);
+          } else {
+            unreleasedActionTsBySide[side] = Date.now();
+          }
+        } else if (data.type === "battle_turn") {
+          for (const s of ["p1", "p2"]) {
+            releasePendingCalloutForSide(s);
+          }
+        }
+      });
+
+      function connectThoughtsWS() {
+        const proto = location.protocol === "https:" ? "wss:" : "ws:";
+        const url = `${proto}//${location.host}/thoughts/ws`;
+        const ws = new WebSocket(url);
+        ws.onmessage = (event) => {
+          try {
+            handleThoughtsMessage(JSON.parse(event.data));
+          } catch (_) {}
+        };
+        ws.onclose = () => setTimeout(connectThoughtsWS, 2000);
+        ws.onerror = () => ws.close();
       }
 
       refreshThoughtNamesFromScoreboard();
       setInterval(refreshThoughtNamesFromScoreboard, 5000);
-      refreshThoughts();
-      setInterval(refreshThoughts, 1500);
+      connectThoughtsWS();
     </script>
   </body>
 </html>

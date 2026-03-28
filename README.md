@@ -1,12 +1,12 @@
-# AI Pokemon Showdown Livestream
+# AI Pokémon Showdown Livestream
 
-Automated 24/7 Twitch livestream where two AI agents battle each other on Pokemon Showdown. Runs fully headless — no OBS, no GUI.
+Automated 24/7 Twitch livestream where two AI agents battle each other on Pokémon Showdown. Runs fully headless — no OBS, no GUI.
 
 ## Architecture
 
 ```
 docker-compose.yml
-├── showdown/    — Pokemon Showdown server (local, no auth)
+├── showdown/    — Pokémon Showdown server (local, no auth)
 ├── agents/      — Two Python AI agents (poke-env)
 ├── stream/      — Xvfb + Chromium + FFmpeg → Twitch RTMP
 ├── overlay/     — FastAPI scoreboard & overlay server
@@ -46,7 +46,7 @@ bash scripts/healthcheck.sh
 
 | Service    | Port | Description                              |
 | ---------- | ---- | ---------------------------------------- |
-| `showdown` | 8000 | Pokemon Showdown battle server           |
+| `showdown` | 8000 | Pokémon Showdown battle server           |
 | `overlay`  | 8080 | FastAPI overlay (scoreboard, match data) |
 | `agents`   | —    | AI battle agents (no exposed port)       |
 | `stream`   | —    | Xvfb + Chromium + FFmpeg to Twitch       |
@@ -73,6 +73,7 @@ open http://localhost:8080/replays
 docker compose restart agents
 
 # Manually start a fresh battle run (respects MATCH_COUNT)
+# Use MATCH_COUNT=0 in .env for continuous back-to-back matches (default in docker-compose).
 bash scripts/start_battle.sh
 
 # Manually start and reset replay/log/results history first
@@ -104,7 +105,7 @@ bash scripts/set_twitch_title.sh
 Or pass a one-off title:
 
 ```bash
-bash scripts/set_twitch_title.sh "Testing Pokemon Showdown battles with LLMs"
+bash scripts/set_twitch_title.sh "Pokémon Showdown battles with LLMs"
 ```
 
 When `stream` starts via Docker, it also attempts to set Twitch title/category automatically if these env vars are present (`TWITCH_CLIENT_ID`, `TWITCH_OAUTH_TOKEN`, `TWITCH_BROADCASTER_ID`). Disable with `TWITCH_AUTO_SET_TITLE=0`.
@@ -126,13 +127,15 @@ Key environment variables (see `.env.example`):
 | Variable              | Required | Default                                      | Description                                       |
 | --------------------- | -------- | -------------------------------------------- | ------------------------------------------------- |
 | `TWITCH_STREAM_KEY`   | Yes      | —                                            | Your Twitch stream key                            |
-| `STREAM_TITLE`        | No       | `Testing Pokemon Showdown battles with LLMs` | Title text rendered on broadcast scene            |
+| `STREAM_TITLE`        | No       | `Pokémon Showdown battles with LLMs` | Title text rendered on broadcast scene            |
 | `STREAM_AUDIO_SOURCE` | No       | `pulse`                                      | Audio source mode: `browser`, `music`, or `pulse` |
 | `BATTLE_MUSIC_INPUT`  | No       | empty                                        | Looping FFmpeg music input (file path or URL)     |
 | `SHOWDOWN_HOST`       | No       | `showdown`                                   | Showdown server host                              |
 | `SHOWDOWN_PORT`       | No       | `8000`                                       | Showdown server port                              |
 | `OVERLAY_HOST`        | No       | `overlay`                                    | Overlay service host                              |
 | `OVERLAY_PORT`        | No       | `8080`                                       | Overlay service port                              |
+| `PLAYER1_PERSONA`     | No       | `aggro`                                      | Persona slug for player 1 (`agents/personas/*.md`) |
+| `PLAYER2_PERSONA`     | No       | `stall`                                      | Persona slug for player 2 (`agents/personas/*.md`) |
 | `REPLAY_DIR`          | No       | `/replays`                                   | Local replay export path                          |
 
 ## Development

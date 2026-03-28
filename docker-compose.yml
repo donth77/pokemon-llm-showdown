@@ -18,8 +18,9 @@ services:
     build: ./overlay
     container_name: overlay
     environment:
-      - STREAM_TITLE=${STREAM_TITLE:-Testing Pokemon Showdown battles with LLMs}
+      - STREAM_TITLE=${STREAM_TITLE:-Pokémon Showdown battles with LLMs}
       - HIDE_BATTLE_UI=${HIDE_BATTLE_UI:-1}
+      - VICTORY_MODAL_SECONDS=${VICTORY_MODAL_SECONDS:-30}
     ports:
       - "8080:8080"
     volumes:
@@ -53,17 +54,22 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - OPENROUTER_BASE_URL=${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
       - PLAYER1_PROVIDER=${PLAYER1_PROVIDER}
       - PLAYER1_MODEL=${PLAYER1_MODEL}
       - PLAYER2_PROVIDER=${PLAYER2_PROVIDER}
       - PLAYER2_MODEL=${PLAYER2_MODEL}
+      - PLAYER1_PERSONA=${PLAYER1_PERSONA:-aggro}
+      - PLAYER2_PERSONA=${PLAYER2_PERSONA:-stall}
       - REPLAY_DIR=/replays
       - LOG_DIR=/logs
       - LOG_RAW_BATTLE=${LOG_RAW_BATTLE:-1}
       - STATE_DIR=/state
       - TURN_DELAY_SECONDS=${TURN_DELAY_SECONDS:-0}
       - DELAY_BETWEEN_MATCHES=${DELAY_BETWEEN_MATCHES:-15}
-      - MATCH_COUNT=${MATCH_COUNT:-1}
+      # 0 or empty from compose side: run continuous matches (use MATCH_COUNT=1 in .env for a single battle)
+      - MATCH_COUNT=${MATCH_COUNT:-0}
     volumes:
       - replay-data:/replays
       - log-data:/logs
@@ -94,7 +100,7 @@ services:
       - TWITCH_OAUTH_TOKEN=${TWITCH_OAUTH_TOKEN:-}
       - TWITCH_BROADCASTER_ID=${TWITCH_BROADCASTER_ID:-}
       - TWITCH_GAME_ID=${TWITCH_GAME_ID:-1982936547}
-      - TWITCH_STREAM_TITLE=${TWITCH_STREAM_TITLE:-Testing Pokemon Showdown battles with LLMs}
+      - TWITCH_STREAM_TITLE=${TWITCH_STREAM_TITLE:-Pokémon Showdown battles with LLMs}
       - HIDE_BATTLE_UI=${HIDE_BATTLE_UI:-1}
       - STREAM_AUDIO_SOURCE=${STREAM_AUDIO_SOURCE:-pulse}
       - BATTLE_MUSIC_INPUT=${BATTLE_MUSIC_INPUT:-}

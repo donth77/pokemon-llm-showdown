@@ -5,13 +5,11 @@ from poke_env.battle.pokemon import Pokemon
 
 def _type_effectiveness(move: Move, target: Pokemon) -> float:
     """Compute a rough effectiveness multiplier for a move against a target."""
-    multiplier = 1.0
-    if move.type is None:
-        return multiplier
-    for t in target.types:
-        if t is not None:
-            multiplier *= move.type.damage_multiplier(t)
-    return multiplier
+    try:
+        return float(target.damage_multiplier(move))
+    except Exception:
+        # Be resilient across poke-env API differences.
+        return 1.0
 
 
 class SmartPlayer(Player):

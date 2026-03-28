@@ -22,7 +22,7 @@ maybe_set_twitch_title() {
     local client_id="${TWITCH_CLIENT_ID:-}"
     local oauth_token="${TWITCH_OAUTH_TOKEN:-}"
     local broadcaster_id="${TWITCH_BROADCASTER_ID:-}"
-    local stream_title="${TWITCH_STREAM_TITLE:-Testing Pokemon Showdown battles with LLMs}"
+    local stream_title="${TWITCH_STREAM_TITLE:-Pokémon Showdown battles with LLMs}"
     local game_id="${TWITCH_GAME_ID:-1982936547}"
 
     if [[ -z "${client_id}" || -z "${oauth_token}" || -z "${broadcaster_id}" ]]; then
