@@ -4,6 +4,8 @@ services:
     container_name: showdown
     ports:
       - "8000:8000"
+    volumes:
+      - ./showdown/static/trainers:/showdown/server/static/trainers
     networks:
       - battle-net
     restart: unless-stopped
@@ -14,20 +16,27 @@ services:
       retries: 5
       start_period: 30s
 
-  overlay:
-    build: ./overlay
-    container_name: overlay
+  web:
+    build: ./web
+    container_name: web
     environment:
       - STREAM_TITLE=${STREAM_TITLE:-Pokémon Showdown battles with LLMs}
       - HIDE_BATTLE_UI=${HIDE_BATTLE_UI:-1}
       - VICTORY_MODAL_SECONDS=${VICTORY_MODAL_SECONDS:-30}
+      - PERSONAS_DIR=/personas
+      - SHOWDOWN_VIEW_BASE=${SHOWDOWN_VIEW_BASE:-http://localhost:8000}
+      - MANAGER_HOST_ENV_FILE=/app/host.env
     ports:
       - "8080:8080"
     volumes:
-      - overlay-data:/data
+      - web-data:/data
+      - manager-data:/manager-data
       - replay-data:/replays:ro
       - log-data:/logs:ro
       - state-data:/state:ro
+      - ./agents/personas:/personas
+      - ./showdown/static/trainers:/app/static/trainers
+      - ./.env:/app/host.env
     networks:
       - battle-net
     restart: unless-stopped
@@ -49,39 +58,40 @@ services:
     environment:
       - SHOWDOWN_HOST=showdown
       - SHOWDOWN_PORT=8000
-      - OVERLAY_HOST=overlay
-      - OVERLAY_PORT=8080
+      - WEB_HOST=web
+      - WEB_PORT=8080
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       - OPENROUTER_BASE_URL=${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
-      - PLAYER1_PROVIDER=${PLAYER1_PROVIDER}
-      - PLAYER1_MODEL=${PLAYER1_MODEL}
-      - PLAYER2_PROVIDER=${PLAYER2_PROVIDER}
-      - PLAYER2_MODEL=${PLAYER2_MODEL}
-      - PLAYER1_PERSONA=${PLAYER1_PERSONA:-aggro}
-      - PLAYER2_PERSONA=${PLAYER2_PERSONA:-stall}
       - REPLAY_DIR=/replays
       - LOG_DIR=/logs
       - LOG_RAW_BATTLE=${LOG_RAW_BATTLE:-1}
       - STATE_DIR=/state
       - TURN_DELAY_SECONDS=${TURN_DELAY_SECONDS:-0}
       - DELAY_BETWEEN_MATCHES=${DELAY_BETWEEN_MATCHES:-15}
-      # 0 or empty from compose side: run continuous matches (use MATCH_COUNT=1 in .env for a single battle)
-      - MATCH_COUNT=${MATCH_COUNT:-0}
+      - QUEUE_POLL_INTERVAL=${QUEUE_POLL_INTERVAL:-5}
+      - LLM_MAX_OUTPUT_TOKENS=${LLM_MAX_OUTPUT_TOKENS:-512}
+      - LLM_TURN_TIMEOUT=${LLM_TURN_TIMEOUT:-150}
+      - OPENROUTER_STRUCTURED_OUTPUTS=${OPENROUTER_STRUCTURED_OUTPUTS:-auto}
+      - OPENROUTER_EXTRA_BODY_JSON=${OPENROUTER_EXTRA_BODY_JSON:-}
+      - POKEDEX_TOOL_ENABLED=${POKEDEX_TOOL_ENABLED:-0}
+      - POKEDEX_AUTO_ENRICH=${POKEDEX_AUTO_ENRICH:-0}
+      - POKEDEX_MAX_LOOKUPS=${POKEDEX_MAX_LOOKUPS:-3}
     volumes:
       - replay-data:/replays
       - log-data:/logs
       - state-data:/state
+      - ./agents/personas:/app/personas
     networks:
       - battle-net
     depends_on:
       showdown:
         condition: service_healthy
-      overlay:
+      web:
         condition: service_healthy
-    restart: "no"
+    restart: unless-stopped
 
   stream:
     build: ./stream
@@ -91,9 +101,9 @@ services:
     environment:
       - SHOWDOWN_HOST=showdown
       - SHOWDOWN_PORT=8000
-      - OVERLAY_HOST=overlay
-      - OVERLAY_PORT=8080
-      - STREAM_VIEW_URL=${STREAM_VIEW_URL:-http://overlay:8080/broadcast}
+      - WEB_HOST=web
+      - WEB_PORT=8080
+      - STREAM_VIEW_URL=${STREAM_VIEW_URL:-http://web:8080/broadcast}
       - TWITCH_STREAM_KEY=${TWITCH_STREAM_KEY}
       - TWITCH_AUTO_SET_TITLE=${TWITCH_AUTO_SET_TITLE:-1}
       - TWITCH_CLIENT_ID=${TWITCH_CLIENT_ID:-}
@@ -103,14 +113,13 @@ services:
       - TWITCH_STREAM_TITLE=${TWITCH_STREAM_TITLE:-Pokémon Showdown battles with LLMs}
       - HIDE_BATTLE_UI=${HIDE_BATTLE_UI:-1}
       - STREAM_AUDIO_SOURCE=${STREAM_AUDIO_SOURCE:-pulse}
-      - BATTLE_MUSIC_INPUT=${BATTLE_MUSIC_INPUT:-}
       - DISPLAY=:99
     networks:
       - battle-net
     depends_on:
       showdown:
         condition: service_healthy
-      overlay:
+      web:
         condition: service_healthy
     restart: unless-stopped
     shm_size: "2gb"
@@ -120,7 +129,8 @@ networks:
     driver: bridge
 
 volumes:
-  overlay-data:
+  web-data:
+  manager-data:
   replay-data:
   log-data:
   state-data:

@@ -39,7 +39,8 @@
         border: 2px solid rgba(255, 255, 255, 0.15);
         border-radius: 12px;
         padding: 16px 24px;
-        min-width: 280px;
+        width: 310px;
+        max-width: 310px;
         backdrop-filter: blur(8px);
         flex-shrink: 0;
       }
@@ -68,6 +69,9 @@
       .player-name {
         font-size: 18px;
         font-weight: 600;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       .player-meta {
@@ -81,7 +85,7 @@
         font-size: 11px;
         color: rgba(255, 255, 255, 0.55);
         font-variant-numeric: tabular-nums;
-        max-width: 200px;
+        max-width: 100%;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
@@ -102,6 +106,8 @@
         font-size: 22px;
         font-weight: 700;
         font-variant-numeric: tabular-nums;
+        flex-shrink: 0;
+        margin-left: 8px;
       }
 
       .match-count {
@@ -109,15 +115,6 @@
         font-size: 12px;
         color: rgba(255, 255, 255, 0.5);
         margin-top: 10px;
-      }
-
-      .last-result {
-        text-align: center;
-        font-size: 12px;
-        color: rgba(255, 255, 255, 0.5);
-        margin-top: 8px;
-        padding-top: 8px;
-        border-top: 1px solid rgba(255, 255, 255, 0.1);
       }
 
       .match-history {
@@ -200,6 +197,22 @@
         font-size: 11px;
         margin-top: 1px;
       }
+
+      .history-context {
+        color: rgba(255, 255, 255, 0.42);
+        font-size: 11px;
+        margin-top: 3px;
+        line-height: 1.35;
+        overflow-wrap: anywhere;
+      }
+
+      .history-empty {
+        color: rgba(255, 255, 255, 0.4);
+        font-size: 12px;
+        text-align: center;
+        padding: 24px 8px;
+        line-height: 1.5;
+      }
     </style>
   </head>
   <body>
@@ -221,10 +234,9 @@
           <span class="player-wins" id="p2-wins">0</span>
         </div>
         <div class="match-count" id="match-count">0 matches played</div>
-        <div class="last-result" id="last-result" style="display:none"></div>
       </div>
 
-      <div class="match-history" id="history-panel" style="display:none">
+      <div class="match-history" id="history-panel">
         <h2>Recent Matches</h2>
         <div class="history-scroll" id="history-scroll"></div>
       </div>
@@ -240,12 +252,19 @@
         return s + "s";
       }
 
+      var historyDateTimeFormatter = new Intl.DateTimeFormat("en-GB", {
+        timeZone: "UTC",
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      });
+
       function formatTime(ts) {
         if (!ts || ts <= 0) return "--";
-        var d = new Date(ts * 1000);
-        var h = String(d.getUTCHours()).padStart(2, "0");
-        var min = String(d.getUTCMinutes()).padStart(2, "0");
-        return h + ":" + min + " UTC";
+        return historyDateTimeFormatter.format(new Date(ts * 1000)) + " UTC";
       }
 
       function esc(s) {
@@ -255,6 +274,44 @@
           .replace(/>/g, "&gt;");
       }
 
+      function titleCaseBracketToken(b) {
+        if (!b) return "";
+        return String(b)
+          .split("_")
+          .filter(Boolean)
+          .map(function (w) {
+            return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+          })
+          .join(" ");
+      }
+
+      /** Tournament name + series slot (S#, bracket, R/M, optional Gn) for scoreboard history. */
+      function formatTournamentSeriesContext(m) {
+        var bits = [];
+        var tname = m.tournament_name;
+        if (tname != null && String(tname).trim()) {
+          bits.push(esc(String(tname).trim()));
+        }
+        var sid = m.series_id;
+        if (sid != null && sid !== "") {
+          var n = Number(sid);
+          if (Number.isFinite(n) && n > 0) {
+            var segs = ["S#" + n];
+            var brk = titleCaseBracketToken(m.series_bracket);
+            if (brk) segs.push(brk);
+            var rn = m.series_round_number;
+            var mp = m.series_match_position;
+            if (rn != null && rn !== "") segs.push("R" + rn);
+            if (mp != null && mp !== "") segs.push("M" + mp);
+            var gn = m.game_number;
+            if (gn != null && Number(gn) > 1) segs.push("G" + gn);
+            bits.push(esc(segs.join(" · ")));
+          }
+        }
+        if (!bits.length) return "";
+        return bits.join(" · ");
+      }
+
       var $p1Name = document.getElementById("p1-name");
       var $p1Model = document.getElementById("p1-model");
       var $p1Wins = document.getElementById("p1-wins");
@@ -262,7 +319,6 @@
       var $p2Model = document.getElementById("p2-model");
       var $p2Wins = document.getElementById("p2-wins");
       var $matchCount = document.getElementById("match-count");
-      var $lastResult = document.getElementById("last-result");
       var $historyPanel = document.getElementById("history-panel");
       var $historyScroll = document.getElementById("history-scroll");
 
@@ -271,6 +327,8 @@
         var p2 = data.player2_name || "Player 2";
         var wins = data.wins || {};
         var total = data.total_matches || 0;
+        var scope = data.scoreboard_scope || "all_time";
+        var seriesNote = data.series_footnote || "";
 
         $p1Name.textContent = p1;
         $p2Name.textContent = p2;
@@ -284,48 +342,60 @@
         $p2Model.style.display = m2 ? "" : "none";
         $p1Wins.textContent = wins[p1] || 0;
         $p2Wins.textContent = wins[p2] || 0;
-        $matchCount.textContent =
-          total + " match" + (total !== 1 ? "es" : "") + " played";
-
-        if (data.last_match) {
-          $lastResult.innerHTML =
-            "Last winner: <strong>" +
-            esc(data.last_match.winner) +
-            "</strong>";
-          $lastResult.style.display = "";
+        if (scope === "series" && seriesNote) {
+          $matchCount.textContent = seriesNote;
         } else {
-          $lastResult.style.display = "none";
+          $matchCount.textContent =
+            total + " match" + (total !== 1 ? "es" : "") + " played";
         }
       }
 
       function renderHistory(matches) {
         if (!matches || !matches.length) {
-          $historyPanel.style.display = "none";
+          $historyScroll.innerHTML =
+            '<div class="history-empty">No matches yet.</div>';
           return;
         }
-        $historyPanel.style.display = "";
-        var p1 = $p1Name.textContent || "Player 1";
-        var p2 = $p2Name.textContent || "Player 2";
 
         var html = "";
         for (var i = 0; i < matches.length; i++) {
           var m = matches[i];
           var winner = m.winner || "";
+          var rowP1 = (m.player1_name || "").trim();
+          var rowP2 = (m.player2_name || "").trim();
+          if (!rowP1 && !rowP2) {
+            var fb1 = $p1Name.textContent || "Player 1";
+            var fb2 = $p2Name.textContent || "Player 2";
+            if (m.winner_side === "p1") {
+              rowP1 = m.winner || fb1;
+              rowP2 = m.loser || fb2;
+            } else if (m.winner_side === "p2") {
+              rowP1 = m.loser || fb1;
+              rowP2 = m.winner || fb2;
+            } else {
+              rowP1 = fb1;
+              rowP2 = fb2;
+            }
+          }
           var winnerClass = "history-winner-other";
-          if (winner === p1) winnerClass = "history-winner-p1";
-          if (winner === p2) winnerClass = "history-winner-p2";
+          if (winner === rowP1) winnerClass = "history-winner-p1";
+          if (winner === rowP2) winnerClass = "history-winner-p2";
           var fmtLabel = displayBattleFormat(m.battle_format);
           var fmt = fmtLabel
             ? ' <span class="history-format">&middot; ' +
               esc(fmtLabel) +
               "</span>"
             : "";
+          var ctxLine = formatTournamentSeriesContext(m);
+          var ctxHtml = ctxLine
+            ? '<div class="history-context">' + ctxLine + "</div>"
+            : "";
           html +=
             '<div class="history-entry">' +
             '<div class="history-matchup">' +
-            esc(p1) +
+            esc(rowP1) +
             " vs " +
-            esc(p2) +
+            esc(rowP2) +
             fmt +
             "</div>" +
             "<div>Winner: " +
@@ -334,6 +404,7 @@
             '">' +
             esc(winner) +
             "</span></div>" +
+            ctxHtml +
             '<div class="history-meta">' +
             formatTime(m.timestamp) +
             " &middot; " +
@@ -357,6 +428,7 @@
         } catch (_) {}
       }
 
+      renderHistory([]);
       refresh();
       setInterval(refresh, 10000);
     </script>

@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=1280,height=720" />
+    <title>Thoughts — {{ stream_title }}</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        width: 1280px;
+        height: 720px;
+        overflow: hidden;
+        background: transparent;
+        font-family:
+          system-ui,
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          sans-serif;
+      }
+
+      .scene {
+        position: relative;
+        width: 1280px;
+        height: 720px;
+        overflow: hidden;
+      }
+
+      .thoughts-wrap {
+        position: absolute;
+        left: 4px;
+        right: 645px;
+        bottom: 5px;
+        z-index: 12;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+        pointer-events: none;
+      }
+
+      .thoughts-panel {
+        background: rgba(4, 10, 24, 0.72);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 10px;
+        backdrop-filter: blur(8px);
+        padding: 10px 12px;
+        height: 136px;
+        overflow: hidden;
+      }
+
+      .thoughts-title {
+        font-size: 12px;
+        letter-spacing: 1.2px;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.8);
+        margin-bottom: 6px;
+        font-weight: 700;
+      }
+
+      .thoughts-title.red {
+        color: #ff6b6b;
+      }
+
+      .thoughts-title.blue {
+        color: #74b9ff;
+      }
+
+      .thoughts-scroll {
+        height: 102px;
+        overflow-y: auto;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+      }
+
+      .thoughts-scroll::-webkit-scrollbar {
+        width: 0;
+        height: 0;
+        display: none;
+      }
+
+      .thought-line {
+        font-size: 12px;
+        line-height: 1.35;
+        color: rgba(255, 255, 255, 0.9);
+        margin-bottom: 6px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .thought-line .meta {
+        display: inline-block;
+        margin-right: 6px;
+        color: rgba(255, 255, 255, 0.55);
+        font-size: 11px;
+        font-weight: 600;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="scene">
+      <div class="thoughts-wrap">
+        <section class="thoughts-panel">
+          <div class="thoughts-title red" id="thoughts-title-p1">Player 1</div>
+          <div class="thoughts-scroll" id="thoughts-p1"></div>
+        </section>
+        <section class="thoughts-panel">
+          <div class="thoughts-title blue" id="thoughts-title-p2">Player 2</div>
+          <div class="thoughts-scroll" id="thoughts-p2"></div>
+        </section>
+      </div>
+    </div>
+    <script>
+      window.__THOUGHTS_FEED__ = {
+        hideBattleUi: {{ hide_battle_ui | tojson }},
+        syncHeightsIframeId: null,
+        panels: {
+          p1: "thoughts-p1",
+          p2: "thoughts-p2",
+          titleP1: "thoughts-title-p1",
+          titleP2: "thoughts-title-p2",
+        },
+        calloutIframeId: null,
+      };
+    </script>
+    <script src="/static/broadcast-thoughts-feed.js"></script>
+  </body>
+</html>

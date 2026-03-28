@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=1280,height=720" />
+    <title>{{ stream_title }}</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        width: 1280px;
+        height: 720px;
+        overflow: hidden;
+        background: #0b1020;
+        font-family:
+          system-ui,
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          sans-serif;
+      }
+
+      .scene {
+        position: relative;
+        width: 1280px;
+        height: 720px;
+        overflow: hidden;
+      }
+
+      .battle-frame {
+        position: absolute;
+        inset: 0;
+        width: 1280px;
+        height: 720px;
+        border: 0;
+        background: #0b1020;
+      }
+
+      .overlay-frame {
+        position: absolute;
+        inset: 0;
+        width: 1280px;
+        height: 720px;
+        border: 0;
+        background: transparent;
+        pointer-events: none;
+      }
+
+      /* Full-frame winner splash; above scoreboard overlay, below nothing critical */
+      .victory-frame {
+        position: absolute;
+        inset: 0;
+        width: 1280px;
+        height: 720px;
+        border: 0;
+        background: transparent;
+        pointer-events: none;
+        z-index: 14;
+      }
+
+      .stream-title {
+        padding: 8px 12px;
+        border-radius: 8px;
+        background: rgba(0, 0, 0, 0.55);
+        color: #fff;
+        font-size: 18px;
+        font-weight: 700;
+        letter-spacing: 0.2px;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+        pointer-events: none;
+        white-space: nowrap;
+      }
+
+      .top-left-bar {
+        position: absolute;
+        left: 16px;
+        top: 10px;
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        pointer-events: none;
+      }
+
+      .battle-format {
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: rgba(0, 0, 0, 0.48);
+        color: rgba(255, 255, 255, 0.9);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.2px;
+        pointer-events: none;
+      }
+
+      .thoughts-wrap {
+        position: absolute;
+        left: 4px;
+        right: 645px;
+        bottom: 5px;
+        z-index: 12;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+        pointer-events: none;
+      }
+
+      .thoughts-panel {
+        background: rgba(4, 10, 24, 0.72);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 10px;
+        backdrop-filter: blur(8px);
+        padding: 10px 12px;
+        height: 136px;
+        overflow: hidden;
+      }
+
+      .thoughts-title {
+        font-size: 12px;
+        letter-spacing: 1.2px;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.8);
+        margin-bottom: 6px;
+        font-weight: 700;
+      }
+
+      /* Match overlay scoreboard .player-name.red / .player-name.blue */
+      .thoughts-title.red {
+        color: #ff6b6b;
+      }
+
+      .thoughts-title.blue {
+        color: #74b9ff;
+      }
+
+      .thoughts-scroll {
+        height: 102px;
+        overflow-y: auto;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+      }
+
+      .thoughts-scroll::-webkit-scrollbar {
+        width: 0;
+        height: 0;
+        display: none;
+      }
+
+      .thought-line {
+        font-size: 12px;
+        line-height: 1.35;
+        color: rgba(255, 255, 255, 0.9);
+        margin-bottom: 6px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .thought-line .meta {
+        display: inline-block;
+        margin-right: 6px;
+        color: rgba(255, 255, 255, 0.55);
+        font-size: 11px;
+        font-weight: 600;
+      }
+    </style>
+    <script src="/static/format-utils.js"></script>
+  </head>
+
+  <body>
+    <div class="scene">
+      <div class="top-left-bar">
+        <div class="stream-title">{{ stream_title }}</div>
+        <div class="battle-format" id="battle-format-label">Format: --</div>
+      </div>
+      <iframe
+        class="battle-frame"
+        id="battle-frame"
+        src="{{ showdown_internal_url }}"
+        title="Pokémon Showdown"
+        allow="autoplay; fullscreen"
+        allowfullscreen
+      >
+      </iframe>
+      <iframe class="overlay-frame" src="/overlay" title="Scoreboard Overlay">
+      </iframe>
+      <iframe
+        class="victory-frame"
+        src="/victory"
+        title="Victory splash"
+        allow="autoplay"
+      ></iframe>
+      <div class="thoughts-wrap">
+        <section class="thoughts-panel">
+          <div class="thoughts-title red" id="thoughts-title-p1">Player 1</div>
+          <div class="thoughts-scroll" id="thoughts-p1"></div>
+        </section>
+        <section class="thoughts-panel">
+          <div class="thoughts-title blue" id="thoughts-title-p2">Player 2</div>
+          <div class="thoughts-scroll" id="thoughts-p2"></div>
+        </section>
+      </div>
+    </div>
+    <script>
+      window.__BATTLE_CORE__ = {
+        battleFrameId: "battle-frame",
+        formatLabelId: "battle-format-label",
+        internalUrl: "{{ showdown_internal_url }}",
+        localUrl: "{{ showdown_local_url }}",
+      };
+      window.__THOUGHTS_FEED__ = {
+        hideBattleUi: {{ hide_battle_ui | tojson }},
+        syncHeightsIframeId: "battle-frame",
+        panels: {
+          p1: "thoughts-p1",
+          p2: "thoughts-p2",
+          titleP1: "thoughts-title-p1",
+          titleP2: "thoughts-title-p2",
+        },
+        calloutIframeId: "battle-frame",
+      };
+    </script>
+    <script>
+      (function () {
+        function postAudioUnlock() {
+          var bf = document.getElementById("battle-frame");
+          if (bf && bf.contentWindow) {
+            try {
+              bf.contentWindow.postMessage({ type: "user_gesture_unlock" }, "*");
+            } catch (_e) {}
+          }
+          var vf = document.querySelector(".victory-frame");
+          if (vf && vf.contentWindow) {
+            try {
+              vf.contentWindow.postMessage({ type: "user_gesture_unlock" }, "*");
+            } catch (_e) {}
+          }
+        }
+        function runUnlock() {
+          postAudioUnlock();
+        }
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", runUnlock);
+        } else {
+          runUnlock();
+        }
+        window.addEventListener("load", runUnlock);
+        setTimeout(runUnlock, 300);
+        setTimeout(runUnlock, 1200);
+      })();
+    </script>
+    <script src="/static/broadcast-battle-core.js"></script>
+    <script src="/static/broadcast-thoughts-feed.js"></script>
+  </body>
+</html>

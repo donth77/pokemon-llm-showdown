@@ -1,0 +1,74 @@
+{% extends "manager/_base.html" %}
+{% from "manager/_macros.html" import duration_mins_secs %}
+{% set active_page = "" %}
+{% block title %}Series #{{ series.id }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>
+      <span class="text-normal">{{ series.player1_persona_label }}</span>
+      <span class="text-muted">vs</span>
+      <span class="text-normal">{{ series.player2_persona_label }}</span>
+    </h1>
+    <span class="text-muted">
+      Best of {{ series.best_of }} &middot; <code>{{ series.battle_format }}</code>
+      {% if series.tournament_id %}
+       &middot; <a href="/manager/tournaments/{{ series.tournament_id }}">Tournament{% if series.tournament_name %} - {{ series.tournament_name }}{% endif %}</a>
+      {% endif %}
+      &middot; Created <span data-local-ts="{% if series.created_at is not none %}{{ series.created_at }}{% endif %}">{{ series.created_at | timestamp_fmt }}</span>
+      &middot; Updated <span data-local-ts="{% if series.updated_at is not none %}{{ series.updated_at }}{% endif %}">{{ series.updated_at | timestamp_fmt }}</span>
+    </span>
+  </div>
+  <span class="badge badge-{{ series.status }}">{{ series.status }}</span>
+</div>
+
+<div class="series-score-hero">
+  <div class="series-player series-player--p1 {% if series.winner_side == 'p1' %}series-player--winner{% endif %}">
+    <div class="series-player-name">{{ series.player1_persona_label }}</div>
+    <div class="series-player-detail">{{ series.player1_provider }}/{{ series.player1_model }}</div>
+  </div>
+  <div class="series-score">
+    <span class="series-score-num">{{ series.player1_wins }}</span>
+    <span class="series-score-sep">&ndash;</span>
+    <span class="series-score-num">{{ series.player2_wins }}</span>
+  </div>
+  <div class="series-player series-player--p2 {% if series.winner_side == 'p2' %}series-player--winner{% endif %}">
+    <div class="series-player-name">{{ series.player2_persona_label }}</div>
+    <div class="series-player-detail">{{ series.player2_provider }}/{{ series.player2_model }}</div>
+  </div>
+</div>
+
+<section class="card">
+  <h2>Games</h2>
+  <table class="table">
+    <thead>
+      <tr><th>Game</th><th>Winner</th><th>Format</th><th>Duration</th><th>Status</th><th>Completed</th><th>Replay</th><th>Log</th></tr>
+    </thead>
+    <tbody>
+      {% for m in series.matches %}
+      <tr>
+        <td>{{ m.game_number }}</td>
+        <td class="{% if m.winner_side == 'p1' %}text-p1{% elif m.winner_side == 'p2' %}text-p2{% endif %}">
+          {% if m.winner == 'Draw' %}Draw{% elif m.winner_side == 'p1' %}{{ series.player1_persona_label }}{% elif m.winner_side == 'p2' %}{{ series.player2_persona_label }}{% else %}{{ m.winner | persona_battle_label }}{% endif %}
+        </td>
+        <td><code>{{ m.battle_format }}</code></td>
+        <td>{{ duration_mins_secs(m.duration) }}</td>
+        <td><span class="badge badge-{{ m.status }}">{{ m.status }}</span></td>
+        <td class="text-muted"><span data-local-ts="{% if m.completed_at is not none %}{{ m.completed_at }}{% endif %}">{{ m.completed_at | timestamp_fmt }}</span></td>
+        <td>
+          {% if m.replay_file %}
+          <a href="/replays/files/{{ m.replay_file }}" target="_blank">Replay</a>
+          {% else %}—{% endif %}
+        </td>
+        <td>
+          {% if m.log_file %}
+          <a href="/logs/files/{{ m.log_file }}" target="_blank">Log</a>
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

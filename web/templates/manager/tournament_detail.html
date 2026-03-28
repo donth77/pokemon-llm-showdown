@@ -1,0 +1,255 @@
+{% extends "manager/_base.html" %}
+{% from "manager/_macros.html" import tournament_trophy_icon %}
+{% set active_page = "tournaments" %}
+{% block title %}{{ tournament.name }}{% endblock %}
+
+{% block content %}
+<div class="tournament-detail">
+<div class="page-header">
+  <div>
+    <h1>{{ tournament.name }}</h1>
+    <span class="text-muted">{{ tournament.type | replace('_', ' ') | title }} &middot; <code>{{ tournament.battle_format }}</code> &middot; Bo{{ tournament.best_of }} &middot; Created <span data-local-ts="{% if tournament.created_at is not none %}{{ tournament.created_at }}{% endif %}">{{ tournament.created_at | timestamp_fmt }}</span> &middot; Updated <span data-local-ts="{% if tournament.updated_at is not none %}{{ tournament.updated_at }}{% endif %}">{{ tournament.updated_at | timestamp_fmt }}</span></span>
+  </div>
+  <div class="header-actions">
+    <span class="badge badge-{{ tournament.status }}">{{ tournament.status }}</span>
+    {% if tournament.status in ('pending', 'in_progress') %}
+    <button class="btn btn-danger btn-sm" onclick="cancelTournament()">Cancel</button>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Participants -->
+<section class="card">
+  <h2>Participants</h2>
+  <div class="participant-grid">
+    {% for e in tournament.entries %}
+    <div class="participant-card">
+      <div class="participant-seed">#{{ e.seed }}</div>
+      <div class="participant-info">
+        <strong>{{ e.display_name or e.persona_display_slug }}</strong>
+        <span class="text-muted">{{ e.provider }}/{{ e.model }}</span>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<!-- Round-Robin Standings -->
+{% if tournament.type == 'round_robin' %}
+<section class="card">
+  <h2>Standings</h2>
+  <table class="table" id="standings-table">
+    <thead>
+      <tr><th>Player</th><th>W</th><th>L</th><th>Series</th></tr>
+    </thead>
+    <tbody>
+      {% set ns = namespace(standings={}) %}
+      {% for e in tournament.entries %}
+        {% set _ = ns.standings.update({e.id: {'name': e.display_name or e.persona_display_slug, 'wins': 0, 'losses': 0, 'played': 0}}) %}
+      {% endfor %}
+      {% for s in tournament.series %}
+        {% if s.status == 'completed' %}
+          {% if s.winner_side == 'p1' and s.player1_entry_id %}
+            {% if ns.standings[s.player1_entry_id] is defined %}
+              {% set _ = ns.standings[s.player1_entry_id].update({'wins': ns.standings[s.player1_entry_id].wins + 1, 'played': ns.standings[s.player1_entry_id].played + 1}) %}
+            {% endif %}
+            {% if s.player2_entry_id and ns.standings[s.player2_entry_id] is defined %}
+              {% set _ = ns.standings[s.player2_entry_id].update({'losses': ns.standings[s.player2_entry_id].losses + 1, 'played': ns.standings[s.player2_entry_id].played + 1}) %}
+            {% endif %}
+          {% elif s.winner_side == 'p2' and s.player2_entry_id %}
+            {% if ns.standings[s.player2_entry_id] is defined %}
+              {% set _ = ns.standings[s.player2_entry_id].update({'wins': ns.standings[s.player2_entry_id].wins + 1, 'played': ns.standings[s.player2_entry_id].played + 1}) %}
+            {% endif %}
+            {% if s.player1_entry_id and ns.standings[s.player1_entry_id] is defined %}
+              {% set _ = ns.standings[s.player1_entry_id].update({'losses': ns.standings[s.player1_entry_id].losses + 1, 'played': ns.standings[s.player1_entry_id].played + 1}) %}
+            {% endif %}
+          {% endif %}
+        {% endif %}
+      {% endfor %}
+      {% for eid, st in ns.standings.items() %}
+      <tr>
+        <td>{{ st.name }}</td>
+        <td class="text-win">{{ st.wins }}</td>
+        <td>{{ st.losses }}</td>
+        <td class="text-muted">{{ st.played }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<!-- Bracket (Elimination) -->
+{% if tournament.type in ('single_elimination', 'double_elimination') %}
+<section class="card">
+  <h2>Bracket</h2>
+  <div class="bracket" id="bracket-view">
+    {% set max_round = namespace(val=0) %}
+    {% for s in tournament.series if s.bracket == 'winners' %}
+      {% if s.round_number and s.round_number > max_round.val %}
+        {% set max_round.val = s.round_number %}
+      {% endif %}
+    {% endfor %}
+    {% for rnd in range(1, max_round.val + 1) %}
+    {% set wb_from_end = max_round.val - rnd + 1 %}
+    {% if wb_from_end == 1 %}
+      {% set wb_label = ' (Winners final)' if tournament.type == 'double_elimination' else ' (Final)' %}
+    {% elif wb_from_end == 2 %}
+      {% set wb_label = ' (Semifinals)' %}
+    {% elif wb_from_end == 3 %}
+      {% set wb_label = ' (Quarterfinals)' %}
+    {% elif wb_from_end == 4 %}
+      {% set wb_label = ' (Round of 16)' %}
+    {% elif wb_from_end == 5 %}
+      {% set wb_label = ' (Round of 32)' %}
+    {% elif wb_from_end == 6 %}
+      {% set wb_label = ' (Round of 64)' %}
+    {% elif wb_from_end >= 7 %}
+      {% set wb_label = ' (Round of 128)' %}
+    {% endif %}
+    <div class="bracket-round">
+      <div class="bracket-round-label">Round {{ rnd }}{{ wb_label }}</div>
+      <div class="bracket-round-matches">
+        {% for s in tournament.series if s.bracket == 'winners' and s.round_number == rnd %}
+        <div class="bracket-match {% if s.status == 'completed' %}bracket-match--done{% endif %}">
+          <a href="/manager/series/{{ s.id }}" class="bracket-match-link">
+            <div class="bracket-player {% if s.winner_side == 'p1' %}bracket-player--winner{% endif %}">
+              <span class="bracket-player-label"><span class="bracket-player-name-text">{{ s.player1_persona_display or s.player1_persona or 'TBD' }}</span>{% if s.winner_side == 'p1' %}{{ tournament_trophy_icon() }}{% endif %}</span>
+              <span class="bracket-score">{{ s.player1_wins }}</span>
+            </div>
+            <div class="bracket-player {% if s.winner_side == 'p2' %}bracket-player--winner{% endif %}">
+              <span class="bracket-player-label"><span class="bracket-player-name-text">{{ s.player2_persona_display or s.player2_persona or 'TBD' }}</span>{% if s.winner_side == 'p2' %}{{ tournament_trophy_icon() }}{% endif %}</span>
+              <span class="bracket-score">{{ s.player2_wins }}</span>
+            </div>
+          </a>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+{% if tournament.type == 'double_elimination' %}
+<section class="card">
+  <h2>Losers Bracket</h2>
+  <div class="bracket" id="losers-bracket">
+    {% set lb_max = namespace(val=0) %}
+    {% for s in tournament.series if s.bracket == 'losers' %}
+      {% if s.round_number and s.round_number > lb_max.val %}
+        {% set lb_max.val = s.round_number %}
+      {% endif %}
+    {% endfor %}
+    {% for rnd in range(1, lb_max.val + 1) %}
+    <div class="bracket-round">
+      <div class="bracket-round-label">LB Round {{ rnd }}</div>
+      <div class="bracket-round-matches">
+        {% for s in tournament.series if s.bracket == 'losers' and s.round_number == rnd %}
+        <div class="bracket-match {% if s.status == 'completed' %}bracket-match--done{% endif %}">
+          <a href="/manager/series/{{ s.id }}" class="bracket-match-link">
+            <div class="bracket-player {% if s.winner_side == 'p1' %}bracket-player--winner{% endif %}">
+              <span class="bracket-player-label"><span class="bracket-player-name-text">{{ s.player1_persona_display or s.player1_persona or 'TBD' }}</span>{% if s.winner_side == 'p1' %}{{ tournament_trophy_icon() }}{% endif %}</span>
+              <span class="bracket-score">{{ s.player1_wins }}</span>
+            </div>
+            <div class="bracket-player {% if s.winner_side == 'p2' %}bracket-player--winner{% endif %}">
+              <span class="bracket-player-label"><span class="bracket-player-name-text">{{ s.player2_persona_display or s.player2_persona or 'TBD' }}</span>{% if s.winner_side == 'p2' %}{{ tournament_trophy_icon() }}{% endif %}</span>
+              <span class="bracket-score">{{ s.player2_wins }}</span>
+            </div>
+          </a>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="card">
+  <h2>Grand Finals</h2>
+  {% set gf = namespace(s=None) %}
+  {% for s in tournament.series if s.bracket == 'grand_finals' %}
+    {% set gf.s = s %}
+  {% endfor %}
+  {% if gf.s %}
+  <div class="bracket-match {% if gf.s.status == 'completed' %}bracket-match--done{% endif %}">
+    <a href="/manager/series/{{ gf.s.id }}" class="bracket-match-link">
+      <div class="bracket-player {% if gf.s.winner_side == 'p1' %}bracket-player--winner{% endif %}">
+        <span class="bracket-player-label"><span class="bracket-player-name-text">{{ gf.s.player1_persona_display or gf.s.player1_persona or 'TBD' }}</span>{% if gf.s.winner_side == 'p1' %}{{ tournament_trophy_icon() }}{% endif %}</span>
+        <span class="bracket-score">{{ gf.s.player1_wins }}</span>
+      </div>
+      <div class="bracket-player {% if gf.s.winner_side == 'p2' %}bracket-player--winner{% endif %}">
+        <span class="bracket-player-label"><span class="bracket-player-name-text">{{ gf.s.player2_persona_display or gf.s.player2_persona or 'TBD' }}</span>{% if gf.s.winner_side == 'p2' %}{{ tournament_trophy_icon() }}{% endif %}</span>
+        <span class="bracket-score">{{ gf.s.player2_wins }}</span>
+      </div>
+    </a>
+  </div>
+  {% else %}
+  <p class="text-muted">No grand finals series.</p>
+  {% endif %}
+</section>
+{% endif %}
+{% endif %}
+
+<!-- All Series -->
+<section class="card">
+  <h2>All Series</h2>
+  <table class="table" id="all-series-table">
+    <thead>
+      <tr><th>Round</th><th>Player 1</th><th>Score</th><th>Player 2</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+      {% for s in tournament.series %}
+      <tr
+        class="table-row-link"
+        tabindex="0"
+        role="link"
+        data-href="/manager/series/{{ s.id }}"
+        aria-label="Open series {{ s.id }}"
+      >
+        <td>
+          {% if s.bracket %}{{ s.bracket | title }} {% endif %}
+          R{{ s.round_number or '?' }}-{{ s.match_position or '?' }}
+        </td>
+        <td class="{% if s.winner_side == 'p1' %}text-win{% endif %}">
+          <span class="tournament-winner-cell"><span class="tournament-winner-cell-text">{{ s.player1_persona_display or s.player1_persona or 'TBD' }}</span>{% if s.winner_side == 'p1' %}{{ tournament_trophy_icon() }}{% endif %}</span>
+        </td>
+        <td>{{ s.player1_wins }} – {{ s.player2_wins }}</td>
+        <td class="{% if s.winner_side == 'p2' %}text-win{% endif %}">
+          <span class="tournament-winner-cell"><span class="tournament-winner-cell-text">{{ s.player2_persona_display or s.player2_persona or 'TBD' }}</span>{% if s.winner_side == 'p2' %}{{ tournament_trophy_icon() }}{% endif %}</span>
+        </td>
+        <td><span class="badge badge-{{ s.status }}">{{ s.status }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function cancelTournament() {
+  if (!confirm('Cancel this tournament and all pending matches?')) return;
+  await fetch('/api/manager/tournaments/{{ tournament.id }}/cancel', { method: 'POST' });
+  location.reload();
+}
+
+(function initAllSeriesRowNav() {
+  var table = document.getElementById('all-series-table');
+  if (!table) return;
+  function go(tr) {
+    var href = tr.getAttribute('data-href');
+    if (href) window.location.href = href;
+  }
+  table.querySelectorAll('tbody tr[data-href]').forEach(function (tr) {
+    tr.addEventListener('click', function () { go(tr); });
+    tr.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        go(tr);
+      }
+    });
+  });
+})();
+</script>
+{% endblock %}

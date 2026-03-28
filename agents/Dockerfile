@@ -7,4 +7,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD ["python", "-u", "orchestrator.py"]
+RUN python scripts/extract_showdown_data.py --output-dir /app/data
+
+CMD ["python", "-u", "queue_worker.py"]

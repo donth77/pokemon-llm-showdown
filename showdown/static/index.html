@@ -66,7 +66,7 @@
             "#mainmenu, #room-lobby, #room-, #room-battles, .chat-log-add, " +
             "ul.battle-userlist, .battle-log-add { display: none !important; } " +
             "body, .ps-room-opaque { background-image: none !important; background-color: #0b1020 !important; } " +
-            ".battle-log { height: 100% !important; width: 330px !important; background: #101728 !important; color: #d4d9e6 !important; border-left: 1px solid rgba(255,255,255,0.08) !important; scrollbar-width: none !important; -ms-overflow-style: none !important; } " +
+            ".battle-log { height: 55% !important; width: 330px !important; background: #101728 !important; color: #d4d9e6 !important; border-left: 1px solid rgba(255,255,255,0.08) !important; scrollbar-width: none !important; -ms-overflow-style: none !important; } " +
             ".battle-log::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none !important; } " +
             ".battle-log .inner, .battle-log .chat, .battle-log .battle-history, .battle-log .message-log { background: #101728 !important; color: #d4d9e6 !important; } " +
             ".battle-log div.battle-history, .battle-log div.battle-history small, .battle-log div.battle-history strong { font-family: 'Press Start 2P', 'VT323', 'Courier New', monospace !important; letter-spacing: 0.2px !important; font-size: 0.9em !important; line-height: 14px !important; } " +
@@ -312,6 +312,8 @@
               } catch (_unused) {}
             }
           }
+
+          window.__emitBattleActionEvents = emitBattleActionEvents;
 
           ws.addEventListener("message", function (evt) {
             try {
@@ -565,6 +567,39 @@
     <script>
       document.getElementById("loading-message").innerHTML +=
         " DONE<br />Loading client...";
+
+      // Wrap SockJS so we can intercept clean (unframed) messages.
+      // When SockJS uses non-WebSocket transports (XHR streaming/polling),
+      // the raw-WebSocket monkey-patch never fires. This ensures
+      // ingestProtocol and battle-action events work regardless of transport.
+      (function () {
+        var _OrigSockJS = window.SockJS;
+        if (!_OrigSockJS) return;
+        window.SockJS = function (url, reserved, options) {
+          var sjs = new _OrigSockJS(url, reserved, options);
+          sjs.addEventListener("message", function (evt) {
+            try {
+              var data = typeof evt.data === "string" ? evt.data : "";
+              if (
+                window.__psBattleLog &&
+                window.__psBattleLog.ingestProtocol
+              ) {
+                window.__psBattleLog.ingestProtocol(data);
+              }
+              if (window.__emitBattleActionEvents) {
+                window.__emitBattleActionEvents(data);
+              }
+            } catch (_) {}
+          });
+          return sjs;
+        };
+        window.SockJS.prototype = _OrigSockJS.prototype;
+        for (var k in _OrigSockJS) {
+          if (_OrigSockJS.hasOwnProperty(k)) {
+            window.SockJS[k] = _OrigSockJS[k];
+          }
+        }
+      })();
     </script>
 
     <script src="https://play.pokemonshowdown.com/js/client.js"></script>
@@ -673,6 +708,15 @@
         var P1_SPRITE = "/trainers/aggro.png";
         var P2_SPRITE = "/trainers/stall.png";
 
+        function normalizeTrainerSpriteUrl(url) {
+          var u = String(url || "").trim();
+          if (!u) return "";
+          if (u.indexOf("/static/trainers/") === 0) {
+            return "/trainers/" + u.slice("/static/trainers/".length);
+          }
+          return u;
+        }
+
         function findNearTrainersprite() {
           return (
             document.querySelector(".trainer.trainer-near .trainersprite") ||
@@ -716,6 +760,16 @@
           mo.observe(document.body, { childList: true, subtree: true });
         }
         setInterval(applyCustomTrainerSprites, 600);
+
+        window.addEventListener("message", function (event) {
+          var data = event && event.data;
+          if (!data || data.type !== "llm_trainer_sprites") return;
+          var n1 = normalizeTrainerSpriteUrl(data.player1_sprite_url);
+          var n2 = normalizeTrainerSpriteUrl(data.player2_sprite_url);
+          if (n1) P1_SPRITE = n1;
+          if (n2) P2_SPRITE = n2;
+          applyCustomTrainerSprites();
+        });
       })();
     </script>
     <script>
@@ -892,6 +946,9 @@
           mo.observe(document.body, { childList: true, subtree: true });
         }
         scheduleColorize(null);
+        setInterval(function () {
+          scheduleColorize(null);
+        }, 1500);
       })();
     </script>
     <script>
@@ -1121,6 +1178,21 @@
           }
         });
       })();
+    </script>
+    <script>
+      window.addEventListener("message", function (evt) {
+        var d = evt && evt.data;
+        if (!d || d.type !== "user_gesture_unlock") return;
+        if (window.AudioContext || window.webkitAudioContext) {
+          try {
+            var ctx = new (window.AudioContext || window.webkitAudioContext)();
+            if (ctx.state === "suspended") ctx.resume();
+          } catch (_) {}
+        }
+        if (window.BattleSound && typeof BattleSound.setMute === "function") {
+          BattleSound.setMute(false);
+        }
+      });
     </script>
   </body>
 </html>

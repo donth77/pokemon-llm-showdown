@@ -1,0 +1,81 @@
+{% extends "manager/_base.html" %}
+{% set active_page = "personas" %}
+{% block title %}New persona{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>New persona</h1>
+  <a href="/manager/personas" class="btn btn-secondary">Back</a>
+</div>
+
+<form class="card form-card" method="post" action="/manager/personas/new" enctype="multipart/form-data">
+  <h2>Identity</h2>
+  <div class="form-row">
+    <div class="form-group">
+      <label for="slug">Slug (filename)</label>
+      <input type="text" id="slug" name="slug" required pattern="[a-z0-9_-]+" placeholder="e.g. aggro" autocomplete="off" />
+    </div>
+    <div class="form-group">
+      <label for="name">Display name</label>
+      <input type="text" id="name" name="name" required placeholder="Damage Dan" />
+    </div>
+  </div>
+  <div class="form-row">
+    <div class="form-group">
+      <label for="abbreviation">Abbreviation (short name in prompts)</label>
+      <input type="text" id="abbreviation" name="abbreviation" placeholder="Dan" />
+    </div>
+    <div class="form-group">
+      <label for="description">Description (manager / UI)</label>
+      <input type="text" id="description" name="description" placeholder="One line summary" />
+    </div>
+  </div>
+
+  <h2 class="mt-1">Sprite</h2>
+  <p class="text-muted" style="margin-bottom: 12px">
+    Relative to <code>/static/trainers/</code> on the web service (same folder as Showdown <code>/trainers/</code>).
+    Leave empty to use <code>{slug}.png</code>.
+  </p>
+  <div class="form-row">
+    <div class="form-group">
+      <label for="sprite">Trainer image file (e.g. <code>aggro.png</code>)</label>
+      <input type="text" id="sprite" name="sprite" list="trainer-files" placeholder="aggro.png" autocomplete="off" />
+      <datalist id="trainer-files">
+        {% for f in trainer_files %}<option value="{{ f }}">{% endfor %}
+      </datalist>
+    </div>
+    <div class="form-group">
+      <label for="sprite-upload">Or upload (PNG / GIF / WebP)</label>
+      <input type="file" id="sprite-upload" name="sprite_file" accept=".png,.gif,.webp,image/png,image/gif,image/webp" />
+    </div>
+  </div>
+  <div class="form-group">
+    <label for="sprite_url">Optional full URL override</label>
+    <input type="url" id="sprite_url" name="sprite_url" placeholder="https://..." />
+  </div>
+
+  <h2 class="mt-1">Prompt body</h2>
+  <p class="text-muted" style="margin-bottom: 8px">
+    Use only <code>{player_name}</code> and <code>{opponent_name}</code> as placeholders (same as existing personas).
+  </p>
+  <div class="form-group">
+    <textarea id="body" name="body" class="code-editor" required rows="18"></textarea>
+  </div>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Create persona</button>
+    <a href="/manager/personas" class="btn btn-secondary">Cancel</a>
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var ta = document.getElementById('body');
+  if (ta && !ta.value) {
+    ta.value = 'You are a Pokémon battle AI named {player_name}.\nYour opponent is {opponent_name}.\n\n';
+  }
+})();
+</script>
+{% endblock %}

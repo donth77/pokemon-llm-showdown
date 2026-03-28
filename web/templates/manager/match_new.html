@@ -1,0 +1,155 @@
+{% extends "manager/_base.html" %}
+{% set active_page = "matches_new" %}
+{% block title %}New Match{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>New Match / Series</h1>
+</div>
+
+<form id="match-form" class="card form-card">
+  <div class="form-row">
+    <div class="form-group">
+      <label for="battle_format">Battle Format</label>
+      <select id="battle_format">
+        {% for fmt in battle_formats %}
+        <option value="{{ fmt }}">{{ fmt }}</option>
+        {% endfor %}
+      </select>
+      <input type="text" id="battle_format_custom" placeholder="Or type a custom format..." class="mt-1">
+    </div>
+    <div class="form-group">
+      <label for="match_type">Match Type</label>
+      <select id="match_type" onchange="toggleMatchType()">
+        <option value="single">Single Match</option>
+        <option value="multi">Multiple Matches</option>
+        <option value="series">Best-of-N Series</option>
+      </select>
+    </div>
+    <div class="form-group" id="count-group">
+      <label for="count">Count</label>
+      <input type="number" id="count" value="1" min="1" max="100">
+    </div>
+    <div class="form-group" id="bestof-group" style="display:none">
+      <label for="best_of">Best Of</label>
+      <select id="best_of">
+        <option value="3">Bo3</option>
+        <option value="5">Bo5</option>
+        <option value="7">Bo7</option>
+        <option value="9">Bo9</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="versus-config">
+    <div class="player-config">
+      <h3>Player 1</h3>
+      <div class="form-group">
+        <label>Provider</label>
+        <select id="p1_provider">
+          {% for p in providers %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Model</label>
+        <input type="text" id="p1_model" placeholder="e.g. claude-sonnet-4-20250514" required>
+      </div>
+      <div class="form-group">
+        <label>Persona</label>
+        <select id="p1_persona">
+          {% for p in personas %}<option value="{{ p.slug }}">{{ p.name }} ({{ p.slug }})</option>{% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <div class="versus-divider">VS</div>
+
+    <div class="player-config">
+      <h3>Player 2</h3>
+      <div class="form-group">
+        <label>Provider</label>
+        <select id="p2_provider">
+          {% for p in providers %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Model</label>
+        <input type="text" id="p2_model" placeholder="e.g. deepseek-chat" required>
+      </div>
+      <div class="form-group">
+        <label>Persona</label>
+        <select id="p2_persona">
+          {% for p in personas %}<option value="{{ p.slug }}">{{ p.name }} ({{ p.slug }})</option>{% endfor %}
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Create</button>
+  </div>
+
+  <div id="form-error" class="form-error" style="display:none"></div>
+  <div id="form-success" class="form-success" style="display:none"></div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleMatchType() {
+  const type = document.getElementById('match_type').value;
+  document.getElementById('count-group').style.display = type === 'multi' ? '' : 'none';
+  document.getElementById('bestof-group').style.display = type === 'series' ? '' : 'none';
+}
+
+document.getElementById('match-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errEl = document.getElementById('form-error');
+  const successEl = document.getElementById('form-success');
+  errEl.style.display = 'none';
+  successEl.style.display = 'none';
+
+  const customFmt = document.getElementById('battle_format_custom').value.trim();
+  const battle_format = customFmt || document.getElementById('battle_format').value;
+  const matchType = document.getElementById('match_type').value;
+
+  const body = {
+    battle_format,
+    player1_provider: document.getElementById('p1_provider').value,
+    player1_model: document.getElementById('p1_model').value.trim(),
+    player1_persona: document.getElementById('p1_persona').value,
+    player2_provider: document.getElementById('p2_provider').value,
+    player2_model: document.getElementById('p2_model').value.trim(),
+    player2_persona: document.getElementById('p2_persona').value,
+  };
+
+  if (matchType === 'series') {
+    body.best_of = parseInt(document.getElementById('best_of').value);
+  } else if (matchType === 'multi') {
+    body.count = parseInt(document.getElementById('count').value);
+  }
+
+  try {
+    const res = await fetch('/api/manager/matches', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to create match');
+    }
+    const data = await res.json();
+    if (data.type === 'series') {
+      successEl.innerHTML = `Series created! <a href="/manager/series/${data.series.id}">View series</a>`;
+    } else {
+      successEl.innerHTML = `${data.matches.length} match(es) queued. <a href="/manager">Go to dashboard</a>`;
+    }
+    successEl.style.display = 'block';
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.style.display = 'block';
+  }
+});
+</script>
+{% endblock %}

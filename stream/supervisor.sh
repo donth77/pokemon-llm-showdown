@@ -9,7 +9,6 @@ TWITCH_STREAM_KEY="${TWITCH_STREAM_KEY:?TWITCH_STREAM_KEY env var is required}"
 RTMP_URL="rtmp://live.twitch.tv/app/${TWITCH_STREAM_KEY}"
 DISPLAY="${DISPLAY:-:99}"
 STREAM_AUDIO_SOURCE="${STREAM_AUDIO_SOURCE:-pulse}"
-BATTLE_MUSIC_INPUT="${BATTLE_MUSIC_INPUT:-}"
 
 ffmpeg_cmd() {
     if [[ "${STREAM_AUDIO_SOURCE}" == "browser" ]]; then
@@ -26,23 +25,8 @@ ffmpeg_cmd() {
         return
     fi
 
-    if [[ "${STREAM_AUDIO_SOURCE}" == "music" && -n "${BATTLE_MUSIC_INPUT}" ]]; then
-        echo "[supervisor] Using battle music input: ${BATTLE_MUSIC_INPUT}"
-        ffmpeg \
-            -f x11grab -video_size 1280x720 -framerate 30 -i "${DISPLAY}" \
-            -stream_loop -1 -re -i "${BATTLE_MUSIC_INPUT}" \
-            -map 0:v:0 -map 1:a:0 \
-            -c:v libx264 -preset veryfast -b:v 2500k -maxrate 2500k -bufsize 5000k \
-            -g 60 -keyint_min 60 \
-            -c:a aac -b:a 128k -ar 44100 \
-            -f flv \
-            -pix_fmt yuv420p \
-            "${RTMP_URL}"
-        return
-    fi
-
-    if [[ "${STREAM_AUDIO_SOURCE}" == "music" && -z "${BATTLE_MUSIC_INPUT}" ]]; then
-        echo "[supervisor] STREAM_AUDIO_SOURCE=music but BATTLE_MUSIC_INPUT is empty; falling back to PulseAudio default source."
+    if [[ "${STREAM_AUDIO_SOURCE}" == "music" ]]; then
+        echo "[supervisor] STREAM_AUDIO_SOURCE=music is no longer supported; using PulseAudio default source."
     else
         echo "[supervisor] Using PulseAudio default source."
     fi

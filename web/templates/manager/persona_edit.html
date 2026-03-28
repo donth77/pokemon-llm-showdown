@@ -1,0 +1,75 @@
+{% extends "manager/_base.html" %}
+{% set active_page = "personas" %}
+{% block title %}Edit {{ p.slug }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Edit persona — <code>{{ p.slug }}</code></h1>
+  <div class="header-actions">
+    <a href="/manager/personas" class="btn btn-secondary">All personas</a>
+  </div>
+</div>
+
+<form class="card form-card" method="post" action="/manager/personas/{{ p.slug }}/edit" enctype="multipart/form-data">
+  <h2>Identity</h2>
+  <div class="form-row">
+    <div class="form-group">
+      <label for="name">Display name</label>
+      <input type="text" id="name" name="name" required value="{{ p.meta.get('name', '') }}" />
+    </div>
+    <div class="form-group">
+      <label for="abbreviation">Abbreviation</label>
+      <input type="text" id="abbreviation" name="abbreviation" value="{{ p.meta.get('abbreviation', '') }}" />
+    </div>
+  </div>
+  <div class="form-group">
+    <label for="description">Description</label>
+    <input type="text" id="description" name="description" value="{{ p.meta.get('description', '') }}" />
+  </div>
+
+  <h2 class="mt-1">Sprite</h2>
+  <div class="persona-edit-preview">
+    <img src="{{ p.sprite_url }}" alt="Sprite preview" width="96" height="96" loading="lazy" class="persona-card-sprite" />
+    <div class="text-muted" style="font-size: 0.85rem">Resolved URL: <code>{{ p.sprite_url }}</code></div>
+  </div>
+  <div class="form-row">
+    <div class="form-group">
+      <label for="sprite">Trainer image file</label>
+      <input type="text" id="sprite" name="sprite" list="trainer-files" value="{{ p.meta.get('sprite', '') }}" placeholder="{{ p.slug }}.png" autocomplete="off" />
+      <datalist id="trainer-files">
+        {% for f in trainer_files %}<option value="{{ f }}">{% endfor %}
+      </datalist>
+    </div>
+    <div class="form-group">
+      <label for="sprite_file">Upload replacement</label>
+      <input type="file" id="sprite_file" name="sprite_file" accept=".png,.gif,.webp,image/png,image/gif,image/webp" />
+    </div>
+  </div>
+  <div class="form-group">
+    <label for="sprite_url">Optional full URL override</label>
+    <input type="url" id="sprite_url" name="sprite_url" value="{{ p.meta.get('sprite_url', '') }}" />
+  </div>
+
+  <h2 class="mt-1">Prompt body</h2>
+  <div class="form-group">
+    <textarea id="body" name="body" class="code-editor" required rows="22">{{ p.body }}</textarea>
+  </div>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Save changes</button>
+    <a href="/manager/personas" class="btn btn-secondary">Cancel</a>
+  </div>
+</form>
+
+<form class="card form-card persona-delete-form" method="post" action="/manager/personas/{{ p.slug }}/delete" onsubmit="return window.confirm('Delete persona {{ p.slug }}? This cannot be undone.');">
+  <h2>Delete</h2>
+  <p class="text-muted"> Optional: delete the on-disk sprite if it lives under <code>/static/trainers/</code> (skipped for remote <code>sprite_url</code>).</p>
+  <div class="form-group persona-delete-options">
+    <label class="persona-delete-checkbox">
+      <input type="checkbox" name="delete_trainer_sprite" value="1" />
+      Delete local trainer image
+    </label>
+  </div>
+  <button type="submit" class="btn btn-danger">Delete persona</button>
+</form>
+{% endblock %}

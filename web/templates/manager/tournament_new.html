@@ -1,0 +1,139 @@
+{% extends "manager/_base.html" %}
+{% set active_page = "tournaments" %}
+{% block title %}New Tournament{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>New Tournament</h1>
+</div>
+
+<form id="tournament-form" class="card form-card">
+  <div class="form-group">
+    <label for="name">Tournament Name</label>
+    <input type="text" id="name" required placeholder="LLM Battle Royale">
+  </div>
+
+  <div class="form-row">
+    <div class="form-group">
+      <label for="type">Type</label>
+      <select id="type">
+        <option value="round_robin">Round Robin</option>
+        <option value="single_elimination">Single Elimination</option>
+        <option value="double_elimination">Double Elimination</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label for="battle_format">Battle Format</label>
+      <select id="battle_format">
+        {% for fmt in battle_formats %}
+        <option value="{{ fmt }}">{{ fmt }}</option>
+        {% endfor %}
+      </select>
+      <input type="text" id="battle_format_custom" placeholder="Or type a custom format..." class="mt-1">
+    </div>
+    <div class="form-group">
+      <label for="best_of">Best Of (per series)</label>
+      <select id="best_of">
+        <option value="1">Bo1</option>
+        <option value="3" selected>Bo3</option>
+        <option value="5">Bo5</option>
+        <option value="7">Bo7</option>
+        <option value="9">Bo9</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="form-group">
+    <label>Participants</label>
+    <div id="entries-container"></div>
+    <button type="button" class="btn btn-secondary mt-1" onclick="addEntry()">+ Add Participant</button>
+  </div>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Create Tournament</button>
+    <a href="/manager/tournaments" class="btn btn-secondary">Cancel</a>
+  </div>
+
+  <div id="form-error" class="form-error" style="display:none"></div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const providers = {{ providers | tojson }};
+const personas = {{ personas | tojson }};
+
+let entryCount = 0;
+
+function addEntry(defaults) {
+  entryCount++;
+  const d = defaults || {};
+  const container = document.getElementById('entries-container');
+  const div = document.createElement('div');
+  div.className = 'entry-row';
+  div.dataset.idx = entryCount;
+
+  div.innerHTML = `
+    <span class="entry-num">#${entryCount}</span>
+    <select name="provider" class="entry-provider">
+      ${providers.map(p => `<option value="${p}" ${d.provider===p?'selected':''}>${p}</option>`).join('')}
+    </select>
+    <input type="text" name="model" placeholder="Model ID (e.g. claude-sonnet-4-20250514)" value="${d.model||''}" required>
+    <select name="persona">
+      ${personas.map(p => `<option value="${p.slug}" ${d.persona===p.slug?'selected':''}>${p.name} (${p.slug})</option>`).join('')}
+    </select>
+    <input type="number" name="seed" value="${d.seed||entryCount}" min="1" style="width:60px" title="Seed">
+    <button type="button" class="btn btn-sm btn-danger" onclick="this.parentElement.remove()">×</button>
+  `;
+  container.appendChild(div);
+}
+
+// Start with 2 entries
+addEntry(); addEntry();
+
+document.getElementById('tournament-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errEl = document.getElementById('form-error');
+  errEl.style.display = 'none';
+
+  const customFmt = document.getElementById('battle_format_custom').value.trim();
+  const battle_format = customFmt || document.getElementById('battle_format').value;
+
+  const rows = document.querySelectorAll('.entry-row');
+  const entries = [];
+  for (const row of rows) {
+    entries.push({
+      provider: row.querySelector('[name=provider]').value,
+      model: row.querySelector('[name=model]').value.trim(),
+      persona_slug: row.querySelector('[name=persona]').value,
+      seed: parseInt(row.querySelector('[name=seed]').value) || entries.length + 1,
+    });
+  }
+
+  const body = {
+    name: document.getElementById('name').value.trim(),
+    type: document.getElementById('type').value,
+    battle_format,
+    best_of: parseInt(document.getElementById('best_of').value),
+    entries,
+  };
+
+  try {
+    const res = await fetch('/api/manager/tournaments', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to create tournament');
+    }
+    const t = await res.json();
+    location.href = `/manager/tournaments/${t.id}`;
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.style.display = 'block';
+  }
+});
+</script>
+{% endblock %}

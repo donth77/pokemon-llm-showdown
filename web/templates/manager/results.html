@@ -1,0 +1,115 @@
+{% extends "manager/_base.html" %}
+{% from "manager/_macros.html" import duration_mins_secs %}
+{% set active_page = "results" %}
+{% block title %}Results{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Results</h1>
+  <a href="/manager/results/stats" class="btn btn-secondary">View Analytics</a>
+</div>
+
+<h2 class="results-section-title">Match results</h2>
+{% if matches %}
+<table class="table">
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Winner</th>
+      <th>Loser</th>
+      <th>Format</th>
+      <th>P1 Model</th>
+      <th>P2 Model</th>
+      <th>Duration</th>
+      <th>Completed</th>
+      <th>Series</th>
+      <th>Replay</th>
+      <th>Log</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for m in matches %}
+    <tr>
+      <td class="text-muted">#{{ m.id }}</td>
+      <td class="{% if m.winner_side == 'p1' %}text-p1{% elif m.winner_side == 'p2' %}text-p2{% endif %}">{{ m.winner | persona_slug_only }}</td>
+      <td class="{% if m.winner_side == 'p1' %}text-p2{% elif m.winner_side == 'p2' %}text-p1{% endif %}">{{ m.loser | persona_slug_only }}</td>
+      <td><code>{{ m.battle_format }}</code></td>
+      <td class="text-muted">{{ m.player1_provider }}/{{ m.player1_model }}</td>
+      <td class="text-muted">{{ m.player2_provider }}/{{ m.player2_model }}</td>
+      <td>{{ duration_mins_secs(m.duration) }}</td>
+      <td class="text-muted"><span data-local-ts="{% if m.completed_at is not none %}{{ m.completed_at }}{% endif %}" data-local-ts-format="slash">{{ m.completed_at | timestamp_fmt_slash }}</span></td>
+      <td>
+        {% if m.series_id %}
+        <a href="/manager/series/{{ m.series_id }}">S#{{ m.series_id }}</a>
+        {% else %}—{% endif %}
+      </td>
+      <td>
+        {% if m.replay_file %}
+        <a href="/replays/files/{{ m.replay_file }}" target="_blank">Replay</a>
+        {% else %}—{% endif %}
+      </td>
+      <td>
+        {% if m.log_file %}
+        <a href="/logs/files/{{ m.log_file }}" target="_blank">Log</a>
+        {% else %}—{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty-state">
+  <p>No completed matches yet. Create some matches and let the queue worker run!</p>
+</div>
+{% endif %}
+
+<h2 class="results-section-title">Series results</h2>
+{% if series_results %}
+<table class="table">
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Player 1</th>
+      <th>Player 2</th>
+      <th>Score</th>
+      <th>Winner</th>
+      <th>Format</th>
+      <th>Status</th>
+      <th>Tournament</th>
+      <th>Updated</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for s in series_results %}
+    <tr>
+      <td class="text-muted"><a href="/manager/series/{{ s.id }}">S#{{ s.id }}</a></td>
+      <td class="text-p1">{{ s.player1_persona_display_slug or 'TBD' }}</td>
+      <td class="text-p2">{{ s.player2_persona_display_slug or 'TBD' }}</td>
+      <td class="text-muted">{{ s.player1_wins }}–{{ s.player2_wins }}</td>
+      <td>
+        {% if s.winner_side == 'p1' %}
+        <span class="text-p1">{{ s.player1_persona_display_slug or 'TBD' }}</span>
+        {% elif s.winner_side == 'p2' %}
+        <span class="text-p2">{{ s.player2_persona_display_slug or 'TBD' }}</span>
+        {% else %}
+        <span class="text-muted">—</span>
+        {% endif %}
+      </td>
+      <td><code>{{ s.battle_format }}</code> <span class="text-muted">Bo{{ s.best_of }}</span></td>
+      <td><span class="badge badge-{{ s.status }}">{{ s.status }}</span></td>
+      <td>
+        {% if s.tournament_id %}
+        <a href="/manager/tournaments/{{ s.tournament_id }}">{{ s.tournament_name or ('T#' ~ s.tournament_id) }}</a>
+        {% else %}
+        <span class="text-muted">—</span>
+        {% endif %}
+      </td>
+      <td class="text-muted"><span data-local-ts="{% if s.updated_at is not none %}{{ s.updated_at }}{% endif %}" data-local-ts-format="slash">{{ s.updated_at | timestamp_fmt_slash }}</span></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="text-muted">No completed or cancelled series yet.</p>
+{% endif %}
+{% endblock %}

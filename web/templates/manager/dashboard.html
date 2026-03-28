@@ -1,0 +1,263 @@
+{% extends "manager/_base.html" %}
+{% from "manager/_macros.html" import duration_mins_secs %}
+{% set active_page = "dashboard" %}
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Dashboard</h1>
+  <div class="header-actions">
+    <a href="/manager/tournaments/new" class="btn btn-primary">New Tournament</a>
+    <a href="/manager/matches/new" class="btn btn-secondary">New Match</a>
+  </div>
+</div>
+
+<div class="stat-cards">
+  <div class="stat-card">
+    <div class="stat-value" id="queue-depth">{{ queue_depth }}</div>
+    <div class="stat-label">Queued</div>
+  </div>
+  <div class="stat-card {% if running_match %}stat-card--active{% endif %}" id="dash-status-card">
+    <div class="stat-value" id="dash-status-value">{% if running_match %}Live{% else %}Idle{% endif %}</div>
+    <div class="stat-label">Status</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ recent_matches|length }}</div>
+    <div class="stat-label">Recent</div>
+  </div>
+</div>
+
+<section class="card" id="dashboard-running-card" data-showdown-base="{{ showdown_view_base }}"{% if not running_match %} hidden{% endif %}>
+  <h2>Currently Running</h2>
+  <div class="match-live">
+    <span class="badge badge-running">LIVE</span>
+    <strong class="text-p1" id="dash-running-p1">{% if running_match %}{{ running_match.player1_persona_label }}{% endif %}</strong>
+    <span class="match-vs">vs</span>
+    <strong class="text-p2" id="dash-running-p2">{% if running_match %}{{ running_match.player2_persona_label }}{% endif %}</strong>
+    <span class="text-muted" id="dash-running-format">{% if running_match %}{{ running_match.battle_format }}{% endif %}</span>
+  </div>
+  <p class="match-watch-links text-muted">
+    <a id="dash-showdown-link" {% if live_showdown_battle_url %}href="{{ live_showdown_battle_url }}"{% endif %} target="_blank" rel="noopener"{% if not live_showdown_battle_url %} hidden{% endif %}>Showdown</a>
+    <span id="dash-showdown-sep"{% if not live_showdown_battle_url %} hidden{% endif %}> · </span>
+    <a href="/broadcast" target="_blank" rel="noopener">Broadcast</a>
+  </p>
+</section>
+
+<section class="card">
+  <div class="card-header">
+    <h2>Upcoming</h2>
+  </div>
+  <div id="queue-upcoming-mount">
+    {% if queued_matches %}
+    <table class="table">
+      <thead>
+        <tr><th>#</th><th>Player 1</th><th>Player 2</th><th>Format</th><th>Game</th><th>Series</th></tr>
+      </thead>
+      <tbody>
+        {% for m in queued_matches %}
+        <tr>
+          <td class="text-muted">{{ loop.index }}</td>
+          <td class="text-p1">{{ m.player1_persona_label }}</td>
+          <td class="text-p2">{{ m.player2_persona_label }}</td>
+          <td><code>{{ m.battle_format }}</code></td>
+          <td>{{ m.game_number }}</td>
+          <td>
+            {% if m.series_id %}
+            <a href="/manager/series/{{ m.series_id }}">S#{{ m.series_id }}</a>
+            {% else %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="text-muted">No matches waiting in the queue.</p>
+    {% endif %}
+  </div>
+</section>
+
+{% if tournaments %}
+<section class="card">
+  <div class="card-header">
+    <h2>Recent Tournaments</h2>
+    <a href="/manager/tournaments" class="btn btn-sm">View All</a>
+  </div>
+  <table class="table">
+    <thead>
+      <tr><th>Name</th><th>Type</th><th>Format</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+      {% for t in tournaments %}
+      <tr>
+        <td><a href="/manager/tournaments/{{ t.id }}">{{ t.name }}</a></td>
+        <td>{{ t.type | replace('_', ' ') | title }}</td>
+        <td><code>{{ t.battle_format }}</code></td>
+        <td><span class="badge badge-{{ t.status }}">{{ t.status }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if recent_matches %}
+<section class="card">
+  <div class="card-header">
+    <h2>Recent Results</h2>
+    <a href="/manager/results" class="btn btn-sm">View All</a>
+  </div>
+  <table class="table">
+    <thead>
+      <tr><th>Winner</th><th>Loser</th><th>Format</th><th>Duration</th><th>Completed</th><th>Replay</th><th>Log</th></tr>
+    </thead>
+    <tbody>
+      {% for m in recent_matches %}
+      <tr>
+        <td class="{% if m.winner_side == 'p1' %}text-p1{% elif m.winner_side == 'p2' %}text-p2{% endif %}">{{ m.winner | persona_slug_only }}</td>
+        <td class="{% if m.winner_side == 'p1' %}text-p2{% elif m.winner_side == 'p2' %}text-p1{% endif %}">{{ m.loser | persona_slug_only }}</td>
+        <td><code>{{ m.battle_format }}</code></td>
+        <td>{{ duration_mins_secs(m.duration) }}</td>
+        <td class="text-muted"><span data-local-ts="{% if m.completed_at is not none %}{{ m.completed_at }}{% endif %}">{{ m.completed_at | timestamp_fmt }}</span></td>
+        <td>
+          {% if m.replay_file %}
+          <a href="/replays/files/{{ m.replay_file }}" target="_blank">Replay</a>
+          {% else %}—{% endif %}
+        </td>
+        <td>
+          {% if m.log_file %}
+          <a href="/logs/files/{{ m.log_file }}" target="_blank">Log</a>
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function renderUpcoming(rows) {
+    var mount = document.getElementById('queue-upcoming-mount');
+    if (!mount) return;
+    if (!rows.length) {
+      mount.innerHTML = '<p class="text-muted">No matches waiting in the queue.</p>';
+      return;
+    }
+    var body = rows.map(function (m, i) {
+      var seriesCell = m.series_id
+        ? '<a href="/manager/series/' + esc(String(m.series_id)) + '">S#' + esc(String(m.series_id)) + '</a>'
+        : '—';
+      return (
+        '<tr>' +
+        '<td class="text-muted">' + (i + 1) + '</td>' +
+        '<td class="text-p1">' + esc(m.player1_persona_label || '') + '</td>' +
+        '<td class="text-p2">' + esc(m.player2_persona_label || '') + '</td>' +
+        '<td><code>' + esc(m.battle_format || '') + '</code></td>' +
+        '<td>' + esc(String(m.game_number != null ? m.game_number : '')) + '</td>' +
+        '<td>' + seriesCell + '</td>' +
+        '</tr>'
+      );
+    }).join('');
+    mount.innerHTML =
+      '<table class="table"><thead><tr><th>#</th><th>Player 1</th><th>Player 2</th><th>Format</th><th>Game</th><th>Series</th></tr></thead><tbody>' +
+      body +
+      '</tbody></table>';
+  }
+
+  function normalizeBattleTag(tag) {
+    if (!tag) return null;
+    var t = String(tag).trim().replace(/^>+/, '').replace(/^\/+/, '');
+    if (!t) return null;
+    if (t.indexOf('battle-') !== 0) t = 'battle-' + t;
+    return t;
+  }
+
+  function applyRunningMatch(m) {
+    var card = document.getElementById('dashboard-running-card');
+    var statusCard = document.getElementById('dash-status-card');
+    var statusVal = document.getElementById('dash-status-value');
+    var p1 = document.getElementById('dash-running-p1');
+    var p2 = document.getElementById('dash-running-p2');
+    var fmt = document.getElementById('dash-running-format');
+    if (!card || !statusCard || !statusVal) return;
+    if (m) {
+      card.hidden = false;
+      statusCard.classList.add('stat-card--active');
+      statusVal.textContent = 'Live';
+      if (p1) p1.textContent = m.player1_persona_label || '';
+      if (p2) p2.textContent = m.player2_persona_label || '';
+      if (fmt) fmt.textContent = m.battle_format || '';
+    } else {
+      card.hidden = true;
+      statusCard.classList.remove('stat-card--active');
+      statusVal.textContent = 'Idle';
+      if (p1) p1.textContent = '';
+      if (p2) p2.textContent = '';
+      if (fmt) fmt.textContent = '';
+    }
+  }
+
+  function syncLiveBattleLink() {
+    var card = document.getElementById('dashboard-running-card');
+    var link = document.getElementById('dash-showdown-link');
+    var sep = document.getElementById('dash-showdown-sep');
+    if (!card || !link) return;
+    if (card.hidden) {
+      link.removeAttribute('href');
+      link.hidden = true;
+      if (sep) sep.hidden = true;
+      return;
+    }
+    var base = (card.dataset.showdownBase || '').replace(/\/$/, '');
+    if (!base) return;
+    fetch('/current_battle', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        var tag =
+          data && data.status === 'live' && data.battle_tag
+            ? normalizeBattleTag(data.battle_tag)
+            : null;
+        if (tag) {
+          link.href = base + '/' + tag;
+          link.hidden = false;
+          if (sep) sep.hidden = false;
+        } else {
+          link.removeAttribute('href');
+          link.hidden = true;
+          if (sep) sep.hidden = true;
+        }
+      })
+      .catch(function () {});
+  }
+
+  async function poll() {
+    try {
+      var depthR = await fetch('/api/manager/queue/depth');
+      var depthD = await depthR.json();
+      var el = document.getElementById('queue-depth');
+      if (el) el.textContent = depthD.depth;
+      var upR = await fetch('/api/manager/queue/upcoming?limit=50');
+      renderUpcoming(await upR.json());
+      var runR = await fetch('/api/manager/queue/running');
+      var running = runR.ok ? await runR.json() : null;
+      applyRunningMatch(running);
+      syncLiveBattleLink();
+    } catch (e) {}
+  }
+
+  setInterval(poll, 5000);
+  poll();
+})();
+</script>
+{% endblock %}

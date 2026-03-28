@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=1280,height=720" />
+    <title>Top bar — {{ stream_title }}</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        width: 1280px;
+        height: 720px;
+        overflow: hidden;
+        background: transparent;
+        font-family:
+          system-ui,
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          sans-serif;
+      }
+
+      .top-left-bar {
+        position: absolute;
+        left: 16px;
+        top: 10px;
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        pointer-events: none;
+      }
+
+      .stream-title {
+        padding: 8px 12px;
+        border-radius: 8px;
+        background: rgba(0, 0, 0, 0.55);
+        color: #fff;
+        font-size: 18px;
+        font-weight: 700;
+        letter-spacing: 0.2px;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+        white-space: nowrap;
+      }
+
+      .battle-format {
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: rgba(0, 0, 0, 0.48);
+        color: rgba(255, 255, 255, 0.9);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.2px;
+      }
+    </style>
+    <script src="/static/format-utils.js"></script>
+  </head>
+
+  <body>
+    <div class="top-left-bar">
+      <div class="stream-title">{{ stream_title }}</div>
+      <div class="battle-format" id="battle-format-label">Format: --</div>
+    </div>
+    <script>
+      const label = document.getElementById("battle-format-label");
+      async function refreshFormat() {
+        try {
+          const resp = await fetch("/current_battle", { cache: "no-store" });
+          const data = await resp.json();
+          if (label) {
+            label.textContent =
+              "Format: " + displayBattleFormat(data.battle_format);
+          }
+        } catch (_) {}
+      }
+      refreshFormat();
+      setInterval(refreshFormat, 3000);
+    </script>
+  </body>
+</html>

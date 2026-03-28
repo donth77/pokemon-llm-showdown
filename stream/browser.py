@@ -1,7 +1,7 @@
 """
-Launch Chromium in kiosk mode pointed at the overlay broadcast scene.
+Launch Chromium in kiosk mode pointed at the web service broadcast scene.
 
-The overlay `/broadcast` page embeds the Showdown battle view and renders
+The `/broadcast` page embeds the Showdown battle view and renders
 stream UI (title, scoreboard, thoughts).  Chromium is launched directly
 (not via Playwright) so that --kiosk reliably hides all browser chrome
 from the Xvfb display that FFmpeg captures.
@@ -22,10 +22,10 @@ _SHOWDOWN_BASE = f"http://{SHOWDOWN_HOST}:{SHOWDOWN_PORT}/"
 SHOWDOWN_URL = (
     f"{_SHOWDOWN_BASE}?hide_battle_ui=1" if HIDE_BATTLE_UI else _SHOWDOWN_BASE
 )
-OVERLAY_HOST = os.getenv("OVERLAY_HOST", "overlay")
-OVERLAY_PORT = int(os.getenv("OVERLAY_PORT", "8080"))
-OVERLAY_BASE = f"http://{OVERLAY_HOST}:{OVERLAY_PORT}"
-STREAM_VIEW_URL = os.getenv("STREAM_VIEW_URL", f"{OVERLAY_BASE}/broadcast")
+WEB_HOST = os.getenv("WEB_HOST") or os.getenv("OVERLAY_HOST", "web")
+WEB_PORT = int(os.getenv("WEB_PORT") or os.getenv("OVERLAY_PORT", "8080"))
+WEB_BASE = f"http://{WEB_HOST}:{WEB_PORT}"
+STREAM_VIEW_URL = os.getenv("STREAM_VIEW_URL", f"{WEB_BASE}/broadcast")
 
 
 def wait_for_http(url: str, name: str) -> None:
@@ -65,7 +65,7 @@ def find_chromium() -> str:
 
 def main() -> None:
     wait_for_http(SHOWDOWN_URL, "Showdown")
-    wait_for_http(f"{OVERLAY_BASE}/health", "Overlay")
+    wait_for_http(f"{WEB_BASE}/health", "Web")
     wait_for_http(STREAM_VIEW_URL, "Broadcast view")
 
     chromium = find_chromium()

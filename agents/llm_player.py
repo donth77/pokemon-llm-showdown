@@ -11,7 +11,7 @@ import asyncio
 import json
 import time
 import threading
-from typing import Literal
+from typing import Any, Literal
 
 import httpx
 import aiohttp
@@ -24,6 +24,16 @@ from poke_env.battle.pokemon import Pokemon
 from poke_env.battle.abstract_battle import AbstractBattle as Battle
 from poke_env.battle.pokemon_type import PokemonType
 from poke_env.battle.side_condition import SideCondition
+
+from pokedex import (
+    lookup_move as _pdex_lookup_move,
+    lookup_pokemon as _pdex_lookup_pokemon,
+    lookup_type_matchup as _pdex_lookup_type_matchup,
+    lookup_ability as _pdex_lookup_ability,
+    lookup_item as _pdex_lookup_item,
+    auto_enrich_battle_context,
+    gen_from_format,
+)
 
 Provider = Literal["anthropic", "deepseek", "openrouter"]
 
@@ -190,8 +200,8 @@ def _openrouter_battle_response_format(use_json_schema: bool) -> dict:
     }
 
 
-OVERLAY_HOST = os.getenv("OVERLAY_HOST", "overlay")
-OVERLAY_PORT = int(os.getenv("OVERLAY_PORT", "8080"))
+WEB_HOST = os.getenv("WEB_HOST") or os.getenv("OVERLAY_HOST", "web")
+WEB_PORT = int(os.getenv("WEB_PORT") or os.getenv("OVERLAY_PORT", "8080"))
 
 DEFAULT_PROVIDER: Provider = "anthropic"
 DEFAULT_MODEL_ID = (
@@ -213,6 +223,14 @@ _thoughts_lock = threading.Lock()
 # Hard ceiling: even if httpx read-timeout doesn't fire (e.g. keepalive bytes drip in),
 # abort the entire _completion coroutine after this many seconds.
 _LLM_TURN_TIMEOUT = float(os.getenv("LLM_TURN_TIMEOUT") or "150")
+
+_POKEDEX_TOOL_ENABLED = (os.getenv("POKEDEX_TOOL_ENABLED") or "").strip().lower() in (
+    "1", "true", "yes", "on",
+)
+_POKEDEX_AUTO_ENRICH = (os.getenv("POKEDEX_AUTO_ENRICH") or "").strip().lower() in (
+    "1", "true", "yes", "on",
+)
+_POKEDEX_MAX_LOOKUPS = int(os.getenv("POKEDEX_MAX_LOOKUPS") or "3")
 
 
 def _normalize_battle_tag(tag: str | None) -> str:
@@ -301,7 +319,7 @@ async def _post_thought_to_overlay(
     turn: int | None,
     battle_side: str | None = None,
 ) -> None:
-    url = f"http://{OVERLAY_HOST}:{OVERLAY_PORT}/thought"
+    url = f"http://{WEB_HOST}:{WEB_PORT}/thought"
     payload: dict[str, object] = {
         "player": player,
         "action": action,
@@ -319,7 +337,7 @@ async def _post_thought_to_overlay(
             ):
                 pass
     except Exception as e:
-        print(f"  [overlay] Failed to post thought: {e}", flush=True)
+        print(f"  [web] Failed to post thought: {e}", flush=True)
 
 
 def _pokemon_summary(pokemon: Pokemon, is_opponent: bool = False) -> str:
@@ -362,6 +380,14 @@ def _pokemon_summary(pokemon: Pokemon, is_opponent: bool = False) -> str:
     return "\n".join(parts)
 
 
+def _safe_move_attr(move: Move, name: str) -> Any:
+    """poke-env Move properties index movedex entries; missing/null fields (e.g. Gen 1) can raise."""
+    try:
+        return getattr(move, name)
+    except Exception:
+        return None
+
+
 def _move_summary(move: Move) -> str:
     accuracy = f"{move.accuracy}%" if move.accuracy is not True else "always hits"
     parts = [
@@ -372,18 +398,32 @@ def _move_summary(move: Move) -> str:
         parts[0] += f" | priority {move.priority}"
 
     extras = []
-    if move.boosts:
-        boost_parts = [f"{k}:{v:+d}" for k, v in move.boosts.items() if v != 0]
+    boosts = _safe_move_attr(move, "boosts")
+    if boosts:
+        boost_parts = [f"{k}:{v:+d}" for k, v in boosts.items() if v != 0]
         if boost_parts:
             extras.append(f"stat changes: {' '.join(boost_parts)}")
-    if move.heal:
-        extras.append(f"heals {move.heal * 100:.0f}%")
-    if move.recoil:
-        extras.append(f"recoil {abs(move.recoil) * 100:.0f}%")
-    if move.drain:
-        extras.append(f"drains {move.drain * 100:.0f}%")
-    if move.status:
-        extras.append(f"inflicts {move.status}")
+    heal = _safe_move_attr(move, "heal")
+    if heal:
+        try:
+            extras.append(f"heals {float(heal) * 100:.0f}%")
+        except (TypeError, ValueError):
+            pass
+    recoil = _safe_move_attr(move, "recoil")
+    if recoil:
+        try:
+            extras.append(f"recoil {abs(float(recoil)) * 100:.0f}%")
+        except (TypeError, ValueError):
+            pass
+    drain = _safe_move_attr(move, "drain")
+    if drain:
+        try:
+            extras.append(f"drains {float(drain) * 100:.0f}%")
+        except (TypeError, ValueError):
+            pass
+    status = _safe_move_attr(move, "status")
+    if status:
+        extras.append(f"inflicts {status}")
     secondary = getattr(move, "secondary", None)
     if secondary and isinstance(secondary, list):
         for sec in secondary:
@@ -393,8 +433,9 @@ def _move_summary(move: Move) -> str:
             if sec.get("boosts"):
                 b = " ".join(f"{k}:{v:+d}" for k, v in sec["boosts"].items())
                 extras.append(f"{chance}% {b}")
-    if move.self_boost:
-        sb_parts = [f"{k}:{v:+d}" for k, v in move.self_boost.items() if v != 0]
+    self_boost = _safe_move_attr(move, "self_boost")
+    if self_boost:
+        sb_parts = [f"{k}:{v:+d}" for k, v in self_boost.items() if v != 0]
         if sb_parts:
             extras.append(f"self: {' '.join(sb_parts)}")
     if extras:
@@ -801,6 +842,150 @@ def parse_llm_action(response_text: str, battle: Battle) -> str | None:
     return None
 
 
+_SUBMIT_ACTION_TOOL = {
+    "name": "submit_action",
+    "description": "Submit the selected Pokémon battle action.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "action_type": {
+                "type": "string",
+                "enum": ["move", "switch"],
+            },
+            "index": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "1-based index from the valid actions list.",
+            },
+            "reasoning": {
+                "type": "string",
+                "description": (
+                    "1-3 sentences explaining the action in the same voice and "
+                    "personality as your system instructions (first person)."
+                ),
+            },
+            "callout": {
+                "type": "string",
+                "description": (
+                    "Usually empty. Only on standout turns: short taunt, quip, "
+                    "or battle cry (otherwise omit or use empty string)."
+                ),
+            },
+        },
+        "required": ["action_type", "index", "reasoning"],
+        "additionalProperties": False,
+    },
+}
+
+_POKEDEX_TOOLS = [
+    {
+        "name": "pokedex_lookup_move",
+        "description": (
+            "Look up full details for a move: type, power, accuracy, effects, description."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "move_id": {
+                    "type": "string",
+                    "description": "Move identifier (e.g. 'thunderbolt', 'stealthrock').",
+                },
+            },
+            "required": ["move_id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "pokedex_lookup_pokemon",
+        "description": (
+            "Look up a Pokémon's base stats, typing, and abilities."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "species": {
+                    "type": "string",
+                    "description": "Species name (e.g. 'charizard', 'ferrothorn').",
+                },
+            },
+            "required": ["species"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "pokedex_lookup_type_matchup",
+        "description": (
+            "Check type effectiveness: attacking type vs one or two defending types."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "attacking_type": {
+                    "type": "string",
+                    "description": "Attacking type (e.g. 'Fire', 'Electric').",
+                },
+                "defending_types": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "One or two defending types (e.g. ['Grass', 'Steel']).",
+                },
+            },
+            "required": ["attacking_type", "defending_types"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "pokedex_lookup_ability",
+        "description": "Look up what an ability does.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ability_id": {
+                    "type": "string",
+                    "description": "Ability identifier (e.g. 'intimidate', 'drizzle').",
+                },
+            },
+            "required": ["ability_id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "pokedex_lookup_item",
+        "description": "Look up what a held item does.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "item_id": {
+                    "type": "string",
+                    "description": "Item identifier (e.g. 'choiceband', 'leftovers').",
+                },
+            },
+            "required": ["item_id"],
+            "additionalProperties": False,
+        },
+    },
+]
+
+
+def _dispatch_pokedex_tool(tool_name: str, tool_input: dict, gen: int) -> str:
+    """Execute a Pokédex tool call and return the result string."""
+    if tool_name == "pokedex_lookup_move":
+        return _pdex_lookup_move(tool_input.get("move_id", ""), gen)
+    if tool_name == "pokedex_lookup_pokemon":
+        return _pdex_lookup_pokemon(tool_input.get("species", ""), gen)
+    if tool_name == "pokedex_lookup_type_matchup":
+        return _pdex_lookup_type_matchup(
+            tool_input.get("attacking_type", ""),
+            tool_input.get("defending_types", []),
+            gen,
+        )
+    if tool_name == "pokedex_lookup_ability":
+        return _pdex_lookup_ability(tool_input.get("ability_id", ""))
+    if tool_name == "pokedex_lookup_item":
+        return _pdex_lookup_item(tool_input.get("item_id", ""))
+    return f"Unknown tool: {tool_name}"
+
+
 class LLMPlayer(Player):
     """
     A Pokémon battle agent powered by Claude.
@@ -843,6 +1028,18 @@ class LLMPlayer(Player):
         )
         self._turn_history: dict[str, list[dict]] = {}
         self._battle_side = battle_side if battle_side in ("p1", "p2") else None
+        self._current_gen: int = 8
+
+        pdex_flags = []
+        if _POKEDEX_TOOL_ENABLED and self._provider == "anthropic":
+            pdex_flags.append(f"tool_calling (max {_POKEDEX_MAX_LOOKUPS} lookups/turn)")
+        if _POKEDEX_AUTO_ENRICH:
+            pdex_flags.append("auto_enrich")
+        if pdex_flags:
+            print(
+                f"  [{self.username}] Pokédex enabled: {', '.join(pdex_flags)}",
+                flush=True,
+            )
 
     def _create_llm_client(self) -> Anthropic | OpenAI:
         if self._provider == "anthropic":
@@ -889,58 +1086,75 @@ class LLMPlayer(Player):
 
     async def _anthropic_completion(self, messages: list[dict]) -> str:
         client = self._llm_client
+        use_pokedex = _POKEDEX_TOOL_ENABLED and self._provider == "anthropic"
+        gen = self._current_gen
 
         def _request() -> str:
-            response = client.messages.create(
-                model=self._model_id,
-                max_tokens=_LLM_MAX_OUTPUT_TOKENS,
-                system=self._system_prompt,
-                messages=messages,
-                tools=[
-                    {
-                        "name": "submit_action",
-                        "description": "Submit the selected Pokémon battle action.",
-                        "input_schema": {
-                            "type": "object",
-                            "properties": {
-                                "action_type": {
-                                    "type": "string",
-                                    "enum": ["move", "switch"],
-                                },
-                                "index": {
-                                    "type": "integer",
-                                    "minimum": 1,
-                                    "description": "1-based index from the valid actions list.",
-                                },
-                                "reasoning": {
-                                    "type": "string",
-                                    "description": (
-                                        "1-3 sentences explaining the action in the same voice and "
-                                        "personality as your system instructions (first person)."
-                                    ),
-                                },
-                                "callout": {
-                                    "type": "string",
-                                    "description": (
-                                        "Usually empty. Only on standout turns: short taunt, quip, "
-                                        "or battle cry (otherwise omit or use empty string)."
-                                    ),
-                                },
-                            },
-                            "required": ["action_type", "index", "reasoning"],
-                            "additionalProperties": False,
-                        },
-                    }
-                ],
-                tool_choice={"type": "tool", "name": "submit_action"},
-            )
-            for block in response.content:
-                if (
-                    getattr(block, "type", None) == "tool_use"
-                    and getattr(block, "name", None) == "submit_action"
-                ):
-                    payload = getattr(block, "input", {})
-                    return json.dumps(payload)
+            tools = list(_POKEDEX_TOOLS) + [_SUBMIT_ACTION_TOOL] if use_pokedex else [_SUBMIT_ACTION_TOOL]
+            tool_choice = {"type": "auto"} if use_pokedex else {"type": "tool", "name": "submit_action"}
+            conv = list(messages)
+            lookups_done = 0
+
+            for _ in range(_POKEDEX_MAX_LOOKUPS + 2):
+                response = client.messages.create(
+                    model=self._model_id,
+                    max_tokens=_LLM_MAX_OUTPUT_TOKENS,
+                    system=self._system_prompt,
+                    messages=conv,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                )
+
+                tool_use_blocks = [
+                    b for b in response.content
+                    if getattr(b, "type", None) == "tool_use"
+                ]
+
+                submit_block = next(
+                    (b for b in tool_use_blocks if b.name == "submit_action"),
+                    None,
+                )
+                if submit_block:
+                    return json.dumps(getattr(submit_block, "input", {}))
+
+                pokedex_block = next(
+                    (b for b in tool_use_blocks if b.name.startswith("pokedex_")),
+                    None,
+                )
+                if not pokedex_block or not use_pokedex:
+                    return ""
+
+                result_text = _dispatch_pokedex_tool(
+                    pokedex_block.name,
+                    getattr(pokedex_block, "input", {}),
+                    gen,
+                )
+                lookups_done += 1
+                print(
+                    f"  [{self.username}] Pokédex lookup #{lookups_done}: "
+                    f"{pokedex_block.name}({getattr(pokedex_block, 'input', {})}) "
+                    f"-> {result_text[:120]}",
+                    flush=True,
+                )
+
+                conv.append({"role": "assistant", "content": response.content})
+                conv.append({
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": pokedex_block.id,
+                        "content": result_text,
+                    }],
+                })
+
+                if lookups_done >= _POKEDEX_MAX_LOOKUPS:
+                    tool_choice = {"type": "tool", "name": "submit_action"}
+                    print(
+                        f"  [{self.username}] Pokédex lookup limit reached "
+                        f"({_POKEDEX_MAX_LOOKUPS}), forcing submit_action",
+                        flush=True,
+                    )
+
             return ""
 
         return await asyncio.to_thread(_request)
@@ -1057,10 +1271,26 @@ class LLMPlayer(Player):
         raise ValueError(f"Unsupported provider: {self._provider}")
 
     async def choose_move(self, battle: Battle) -> str:
+        fmt = getattr(battle, "format", None) or getattr(battle, "battle_format", "") or ""
+        if fmt:
+            self._current_gen = gen_from_format(str(fmt))
+
         state_text = format_battle_state(battle)
         callout_context = self._callout_context_text(battle)
         if callout_context:
             state_text = f"{state_text}\n\n{callout_context}"
+
+        if _POKEDEX_AUTO_ENRICH:
+            enrich = auto_enrich_battle_context(battle, gen=self._current_gen)
+            if enrich:
+                note_count = enrich.count("\n")
+                print(
+                    f"  [{self.username}] Pokédex auto-enrich: "
+                    f"{note_count} notes injected",
+                    flush=True,
+                )
+                state_text = f"{state_text}\n\n{enrich}"
+
         history = self._get_history(battle.battle_tag)
 
         history.append({"role": "user", "content": state_text})
@@ -1112,6 +1342,8 @@ class LLMPlayer(Player):
                     f"reasoning={rp_show!r}{co_part}",
                     flush=True,
                 )
+                if self._turn_delay_seconds > 0:
+                    await asyncio.sleep(self._turn_delay_seconds)
                 _append_thought(
                     battle_tag=battle.battle_tag,
                     player=self.username,
@@ -1128,8 +1360,6 @@ class LLMPlayer(Player):
                     turn=getattr(battle, "turn", None),
                     battle_side=self._battle_side,
                 )
-                if self._turn_delay_seconds > 0:
-                    await asyncio.sleep(self._turn_delay_seconds)
                 kind, idx = action.split(":")
                 idx = int(idx)
                 if kind == "move":

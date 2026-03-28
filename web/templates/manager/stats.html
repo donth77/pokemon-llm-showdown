@@ -1,0 +1,270 @@
+{% extends "manager/_base.html" %}
+{% set active_page = "stats" %}
+{% block title %}Analytics{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Analytics</h1>
+</div>
+
+<!-- Model Performance -->
+<section class="card">
+  <h2>Model Performance</h2>
+  {% if stats.model_stats %}
+  <div class="stats-chart-wrap"><canvas id="chart-models" aria-label="Model wins and losses"></canvas></div>
+  <table class="table">
+    <thead>
+      <tr><th>Model</th><th>Wins</th><th>Losses</th><th>Total</th><th>Win Rate</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for model, s in stats.model_stats.items() %}
+      <tr>
+        <td><strong>{{ model }}</strong></td>
+        <td class="text-win">{{ s.wins }}</td>
+        <td class="text-loss">{{ s.losses }}</td>
+        <td class="text-muted">{{ s.total }}</td>
+        <td>{{ s.win_rate }}%</td>
+        <td>
+          <div class="bar-container">
+            <div class="bar bar-win" style="width: {{ s.win_rate }}%"></div>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="text-muted">No data yet. Complete some matches to see model stats.</p>
+  {% endif %}
+</section>
+
+<!-- Persona Performance -->
+<section class="card">
+  <h2>Persona Performance</h2>
+  <p class="text-muted stats-h2-note">
+    Rows use each match’s stored persona <strong>slug</strong> (e.g. <code>aggro</code>), not Showdown login or bracket copy labels.
+    Several tournament entries with the same persona share one row; wins/losses from all of them add up.
+  </p>
+  {% if stats.persona_stats %}
+  <div class="stats-chart-wrap"><canvas id="chart-personas" aria-label="Persona wins and losses"></canvas></div>
+  <table class="table">
+    <thead>
+      <tr><th>Persona</th><th>Wins</th><th>Losses</th><th>Total</th><th>Win Rate</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for persona, s in stats.persona_stats.items() %}
+      <tr>
+        <td><strong>{{ persona }}</strong></td>
+        <td class="text-win">{{ s.wins }}</td>
+        <td class="text-loss">{{ s.losses }}</td>
+        <td class="text-muted">{{ s.total }}</td>
+        <td>{{ s.win_rate }}%</td>
+        <td>
+          <div class="bar-container">
+            <div class="bar bar-win" style="width: {{ s.win_rate }}%"></div>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="text-muted">No data yet.</p>
+  {% endif %}
+</section>
+
+<!-- Head to Head -->
+<section class="card">
+  <h2>Head-to-Head</h2>
+  <p class="text-muted stats-h2-note">Counts are from player 1 vs player 2 sides (same ordering as queued matches).</p>
+
+  <h3 class="stats-subsection-title">By model</h3>
+  {% if stats.head_to_head %}
+  <table class="table">
+    <thead>
+      <tr><th>Model (P1)</th><th>Model (P2)</th><th>P1 wins</th><th>P2 wins</th><th>Total</th></tr>
+    </thead>
+    <tbody>
+      {% for h in stats.head_to_head %}
+      <tr>
+        <td><strong>{{ h.model1 }}</strong></td>
+        <td><strong>{{ h.model2 }}</strong></td>
+        <td class="{% if h.model1_wins > h.model2_wins %}text-win{% endif %}">{{ h.model1_wins }}</td>
+        <td class="{% if h.model2_wins > h.model1_wins %}text-win{% endif %}">{{ h.model2_wins }}</td>
+        <td class="text-muted">{{ h.total }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="text-muted">No model head-to-head data yet.</p>
+  {% endif %}
+
+  <h3 class="stats-subsection-title">By persona pairing</h3>
+  <p class="text-muted stats-h2-note">Pairings use slugs as stored on the match (e.g. mirror tournaments are <code>aggro</code> vs <code>aggro</code>).</p>
+  {% if stats.head_to_head_personas %}
+  <table class="table">
+    <thead>
+      <tr><th>Persona (P1)</th><th>Persona (P2)</th><th>P1 wins</th><th>P2 wins</th><th>Total</th></tr>
+    </thead>
+    <tbody>
+      {% for h in stats.head_to_head_personas %}
+      <tr>
+        <td><strong>{{ h.persona1 or '—' }}</strong></td>
+        <td><strong>{{ h.persona2 or '—' }}</strong></td>
+        <td class="{% if h.persona1_wins > h.persona2_wins %}text-win{% endif %}">{{ h.persona1_wins }}</td>
+        <td class="{% if h.persona2_wins > h.persona1_wins %}text-win{% endif %}">{{ h.persona2_wins }}</td>
+        <td class="text-muted">{{ h.total }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="text-muted">No persona pairing data yet.</p>
+  {% endif %}
+
+  <h3 class="stats-subsection-title">By model and persona</h3>
+  {% if stats.head_to_head_model_persona %}
+  <table class="table table-stats-lineup">
+    <thead>
+      <tr>
+        <th>Model (P1)</th>
+        <th>Persona (P1)</th>
+        <th>Model (P2)</th>
+        <th>Persona (P2)</th>
+        <th>P1 wins</th>
+        <th>P2 wins</th>
+        <th>Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for h in stats.head_to_head_model_persona %}
+      <tr>
+        <td><strong>{{ h.model1 }}</strong></td>
+        <td class="text-muted">{{ h.persona1 or '—' }}</td>
+        <td><strong>{{ h.model2 }}</strong></td>
+        <td class="text-muted">{{ h.persona2 or '—' }}</td>
+        <td class="{% if h.model1_wins > h.model2_wins %}text-win{% endif %}">{{ h.model1_wins }}</td>
+        <td class="{% if h.model2_wins > h.model1_wins %}text-win{% endif %}">{{ h.model2_wins }}</td>
+        <td class="text-muted">{{ h.total }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="text-muted">No model/persona matchup data yet.</p>
+  {% endif %}
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js" crossorigin="anonymous"></script>
+<script>
+(function () {
+  var winCol = "#22c55e";
+  var lossCol = "#ef4444";
+  var gridCol = "#1e293b";
+  var tickCol = "#94a3b8";
+  var font = { family: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', size: 12 };
+
+  function rowsFromDict(d) {
+    if (!d || typeof d !== "object") return [];
+    return Object.keys(d)
+      .map(function (label) {
+        var s = d[label];
+        return {
+          label: String(label),
+          wins: Number(s.wins) || 0,
+          losses: Number(s.losses) || 0,
+          total: Number(s.total) || 0,
+          win_rate: Number(s.win_rate) || 0,
+        };
+      })
+      .sort(function (a, b) {
+        return b.total - a.total || a.label.localeCompare(b.label);
+      });
+  }
+
+  function makeStackedHBar(canvasId, rows) {
+    var el = document.getElementById(canvasId);
+    if (!el || !rows.length || typeof Chart === "undefined") return;
+
+    var n = rows.length;
+    var wrap = el.closest(".stats-chart-wrap");
+    var h = Math.min(560, Math.max(160, n * 36 + 48));
+    if (wrap) wrap.style.height = h + "px";
+    new Chart(el, {
+      type: "bar",
+      data: {
+        labels: rows.map(function (r) {
+          return r.label;
+        }),
+        datasets: [
+          {
+            label: "Wins",
+            data: rows.map(function (r) {
+              return r.wins;
+            }),
+            backgroundColor: winCol,
+            borderWidth: 0,
+            borderRadius: 4,
+            borderSkipped: false,
+          },
+          {
+            label: "Losses",
+            data: rows.map(function (r) {
+              return r.losses;
+            }),
+            backgroundColor: lossCol,
+            borderWidth: 0,
+            borderRadius: 4,
+            borderSkipped: false,
+          },
+        ],
+      },
+      options: {
+        indexAxis: "y",
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            labels: { color: tickCol, font: font },
+          },
+          tooltip: {
+            callbacks: {
+              footer: function (items) {
+                if (!items.length) return "";
+                var i = items[0].dataIndex;
+                var r = rows[i];
+                return "Win rate: " + r.win_rate + "% · Total: " + r.total;
+              },
+            },
+          },
+        },
+        scales: {
+          x: {
+            stacked: true,
+            grid: { color: gridCol },
+            ticks: { color: tickCol, font: font, precision: 0 },
+          },
+          y: {
+            stacked: true,
+            grid: { display: false },
+            ticks: {
+              color: tickCol,
+              font: font,
+              autoSkip: false,
+            },
+          },
+        },
+      },
+    });
+  }
+
+  var modelStats = {{ stats.model_stats | tojson }};
+  var personaStats = {{ stats.persona_stats | tojson }};
+  makeStackedHBar("chart-models", rowsFromDict(modelStats));
+  makeStackedHBar("chart-personas", rowsFromDict(personaStats));
+})();
+</script>
+{% endblock %}

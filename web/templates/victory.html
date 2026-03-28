@@ -260,6 +260,28 @@
       var $name = document.getElementById("splash-name");
       var $sub = document.getElementById("splash-sub");
       var $victorySfx = document.getElementById("victory-sfx");
+
+      window.addEventListener("message", function (evt) {
+        var d = evt && evt.data;
+        if (!d || d.type !== "user_gesture_unlock") return;
+        if (!$victorySfx) return;
+        $victorySfx.muted = true;
+        var p = $victorySfx.play();
+        if (p && typeof p.then === "function") {
+          p.then(function () {
+            $victorySfx.pause();
+            $victorySfx.currentTime = 0;
+            $victorySfx.muted = false;
+          }).catch(function () {
+            $victorySfx.muted = false;
+          });
+        } else {
+          $victorySfx.pause();
+          $victorySfx.currentTime = 0;
+          $victorySfx.muted = false;
+        }
+      });
+
       var victoryVisibleMs = parseInt(
         document.body.getAttribute("data-victory-visible-ms") || "30000",
         10
@@ -275,7 +297,7 @@
       var lastTotalMatches = -1;
       var hideTimer = null;
       var showDelayTimer = null;
-      var VICTORY_SHOW_DELAY_MS = 3000;
+      var VICTORY_SHOW_DELAY_MS = 4000;
 
       function stopVictorySfx() {
         if (!$victorySfx) return;

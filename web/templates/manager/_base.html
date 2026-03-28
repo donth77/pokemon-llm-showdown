@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+{% from "manager/_macros.html" import lucide_trophy_svg %}
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Manager{% endblock %} — Pokémon LLM Showdown</title>
+  <link rel="stylesheet" href="/static/manager.css">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <nav class="sidebar" id="manager-sidebar">
+    <div class="sidebar-brand">
+      <div class="sidebar-brand-text">
+        <h2>LLM Showdown</h2>
+        <span class="sidebar-subtitle">Tournament Manager</span>
+      </div>
+      {# Pokeball: SVG Repo (CC0) https://www.svgrepo.com/svg/420929/pokeball-pokemon-catch #}
+      <div class="sidebar-brand-pokeball" aria-hidden="true">
+        <svg class="sidebar-pokeball" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="32" height="32" aria-hidden="true">
+          <path fill="currentColor" d="M450.46,256.09C449.35,175.17,399.81,102.71,324,73.79,247.59,44.67,157.49,69,105.82,132.13,54.4,195,46.61,285.58,88.49,355.68c41.8,69.95,123.74,106,203.55,91.63,91-16.37,156.14-98.12,158.35-189.14A20.16,20.16,0,0,0,450.46,256.09ZM119.05,174.38C152.76,118,220.23,87,285,99.43c69.4,13.29,120.43,70.47,128.83,139H318.41c-8.26-27.36-32-48-62.62-48-29.65,0-55.15,20.65-63.11,48H97.74A158,158,0,0,1,119.05,174.38ZM286.13,256.1c-2,38.75-60.67,39.4-60.67,0S284.17,217.33,286.13,256.1Zm24,149.79C246.85,428.58,175,408.74,132.3,356.82a157.53,157.53,0,0,1-34.57-83H192.6c7.91,27.39,33.7,48,63.19,48,30.67,0,54.36-20.68,62.62-48h95.45C406.61,333,367.54,385.32,310.14,405.89Z"/>
+        </svg>
+      </div>
+    </div>
+    <ul class="sidebar-nav">
+      <li><a href="/manager" class="{% if active_page == 'dashboard' %}active{% endif %}" data-sidebar-label="Dashboard"><svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg><span class="sidebar-label">Dashboard</span></a></li>
+      <li><a href="/manager/tournaments" class="{% if active_page == 'tournaments' %}active{% endif %}" data-sidebar-label="Tournaments">{{ lucide_trophy_svg(width=20, height=20, svg_class='nav-icon') }}<span class="sidebar-label">Tournaments</span></a></li>
+      <li><a href="/manager/matches/new" class="{% if active_page == 'matches_new' %}active{% endif %}" data-sidebar-label="New Match"><svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/><path d="M12 8v8"/></svg><span class="sidebar-label">New Match</span></a></li>
+      <li><a href="/manager/results" class="{% if active_page == 'results' %}active{% endif %}" data-sidebar-label="Results"><svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg><span class="sidebar-label">Results</span></a></li>
+      <li><a href="/manager/results/stats" class="{% if active_page == 'stats' %}active{% endif %}" data-sidebar-label="Analytics"><svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg><span class="sidebar-label">Analytics</span></a></li>
+      <li class="sidebar-divider"></li>
+      <li><a href="/manager/personas" class="{% if active_page == 'personas' %}active{% endif %}" data-sidebar-label="Personas"><svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span class="sidebar-label">Personas</span></a></li>
+      <li><a href="/manager/config" class="{% if active_page == 'config' %}active{% endif %}" data-sidebar-label="Config"><svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg><span class="sidebar-label">Config</span></a></li>
+      <li class="sidebar-divider"></li>
+      <li><a href="/broadcast" target="_blank" rel="noopener noreferrer" data-sidebar-label="Broadcast"><svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714Z"/></svg><span class="sidebar-label">Broadcast</span></a></li>
+      <li><a href="/replays" target="_blank" rel="noopener noreferrer" data-sidebar-label="Replays"><svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18"/><path d="M3 7.5h4"/><path d="M3 12h4"/><path d="M3 16.5h4"/></svg><span class="sidebar-label">Replays</span></a></li>
+    </ul>
+    <div class="sidebar-footer">
+      <button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-controls="manager-sidebar" aria-expanded="true" title="Collapse sidebar" data-title-expanded="Collapse sidebar" data-title-collapsed="Expand sidebar">
+        <svg class="sidebar-toggle-chevron" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+      </button>
+    </div>
+  </nav>
+
+  <main class="content">
+    {% block content %}{% endblock %}
+  </main>
+
+  <script src="/static/manager.js"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>
