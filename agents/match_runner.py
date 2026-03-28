@@ -277,6 +277,8 @@ def write_current_battle_state(
     player1_persona: PersonaDefinition | None = None,
     player2_persona: PersonaDefinition | None = None,
     series_snapshot: dict | None = None,
+    tourney_context: dict | None = None,
+    manager_match_id: int | None = None,
 ) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     payload: dict = {
@@ -300,6 +302,21 @@ def write_current_battle_state(
         payload["series_best_of"] = series_snapshot["best_of"]
         payload["series_player1_wins"] = series_snapshot["player1_wins"]
         payload["series_player2_wins"] = series_snapshot["player2_wins"]
+    if tourney_context:
+        for key in (
+            "tournament_name",
+            "tournament_type",
+            "series_bracket",
+            "series_round_number",
+            "series_match_position",
+            "tournament_max_winners_round",
+            "game_number",
+        ):
+            val = tourney_context.get(key)
+            if val is not None:
+                payload[key] = val
+    if manager_match_id is not None:
+        payload["match_id"] = manager_match_id
     CURRENT_BATTLE_FILE.write_text(json.dumps(payload))
 
 
@@ -422,6 +439,8 @@ async def run_single_match(
     player1_account_name: str | None = None,
     player2_account_name: str | None = None,
     series_snapshot: dict | None = None,
+    tourney_context: dict | None = None,
+    manager_match_id: int | None = None,
 ) -> MatchResult:
     """
     Run a single battle and return the result.
@@ -509,6 +528,8 @@ async def run_single_match(
             player1_persona=p1_persona,
             player2_persona=p2_persona,
             series_snapshot=series_snapshot,
+            tourney_context=tourney_context,
+            manager_match_id=manager_match_id,
         )
         clear_thoughts_state()
         await _post_thoughts_clear()
@@ -534,6 +555,8 @@ async def run_single_match(
                     player1_persona=p1_persona,
                     player2_persona=p2_persona,
                     series_snapshot=series_snapshot,
+                    tourney_context=tourney_context,
+                    manager_match_id=manager_match_id,
                 )
                 print(f"Live battle detected: {live_battle_tag}", flush=True)
             await asyncio.sleep(0.3)
@@ -575,6 +598,8 @@ async def run_single_match(
             player1_persona=p1_persona,
             player2_persona=p2_persona,
             series_snapshot=series_snapshot,
+            tourney_context=tourney_context,
+            manager_match_id=manager_match_id,
         )
         clear_thoughts_state()
         await _post_thoughts_clear()
@@ -600,6 +625,8 @@ async def run_single_match(
             player1_persona=p1_persona,
             player2_persona=p2_persona,
             series_snapshot=series_snapshot,
+            tourney_context=tourney_context,
+            manager_match_id=manager_match_id,
         )
         clear_thoughts_state()
         await _post_thoughts_clear()

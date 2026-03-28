@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS tournaments (
     status      TEXT    NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed', 'cancelled')),
     battle_format TEXT  NOT NULL,
     best_of     INTEGER NOT NULL DEFAULT 1,
+    single_elim_bracket TEXT,
     created_at  REAL    NOT NULL,
     updated_at  REAL    NOT NULL
 );
@@ -161,6 +162,24 @@ async def _migrate_sqlite_columns() -> None:
         await db.commit()
 
 
+async def _migrate_tournament_columns() -> None:
+    """Add columns missing from older tournaments table."""
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        cur = await db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='tournaments'"
+        )
+        if not await cur.fetchone():
+            await db.commit()
+            return
+        cur = await db.execute("PRAGMA table_info(tournaments)")
+        have = {r[1] for r in await cur.fetchall()}
+        if "single_elim_bracket" not in have:
+            await db.execute(
+                "ALTER TABLE tournaments ADD COLUMN single_elim_bracket TEXT"
+            )
+        await db.commit()
+
+
 async def init_db() -> None:
     """Create tables if they don't exist and stamp the schema version."""
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -175,6 +194,7 @@ async def init_db() -> None:
             )
         await db.commit()
     await _migrate_sqlite_columns()
+    await _migrate_tournament_columns()
 
 
 def _now() -> float:
@@ -285,13 +305,20 @@ async def create_tournament(
     battle_format: str,
     best_of: int = 1,
     entries: list[dict[str, Any]],
+    single_elim_bracket: str | None = None,
 ) -> dict:
     now = _now()
+    # Column name legacy: also applies to double elimination (winners bracket layout).
+    seb: str | None = None
+    if type in ("single_elimination", "double_elimination"):
+        x = (single_elim_bracket or "compact").strip().lower()
+        seb = x if x in ("compact", "power_of_two") else "compact"
     async with _db() as db:
         cur = await db.execute(
-            """INSERT INTO tournaments (name, type, status, battle_format, best_of, created_at, updated_at)
-               VALUES (?, ?, 'pending', ?, ?, ?, ?)""",
-            (name, type, battle_format, best_of, now, now),
+            """INSERT INTO tournaments (name, type, status, battle_format, best_of,
+                single_elim_bracket, created_at, updated_at)
+               VALUES (?, ?, 'pending', ?, ?, ?, ?, ?)""",
+            (name, type, battle_format, best_of, seb, now, now),
         )
         tid = cur.lastrowid
         for i, e in enumerate(entries):
@@ -644,6 +671,39 @@ async def get_match(match_id: int) -> dict | None:
         return dict(row) if row else None
 
 
+async def enrich_match_row_with_series_tournament(m: dict) -> dict:
+    """Attach tournament + bracket columns (for overlays / current_battle live JSON)."""
+    out = dict(m)
+    mid = m.get("id")
+    if mid is None:
+        return out
+    async with _db() as db:
+        cur = await db.execute(
+            """SELECT t.name AS tournament_name, t.type AS tournament_type,
+                      s.bracket AS series_bracket, s.round_number AS series_round_number,
+                      s.match_position AS series_match_position,
+                      wbmax.max_wr AS tournament_max_winners_round
+               FROM matches m2
+               LEFT JOIN tournaments t ON m2.tournament_id = t.id
+               LEFT JOIN series s ON m2.series_id = s.id
+               LEFT JOIN (
+                 SELECT tournament_id, MAX(round_number) AS max_wr
+                 FROM series
+                 WHERE bracket = 'winners' AND tournament_id IS NOT NULL
+                 GROUP BY tournament_id
+               ) wbmax ON m2.tournament_id = wbmax.tournament_id
+               WHERE m2.id = ?""",
+            (mid,),
+        )
+        row = await cur.fetchone()
+        if not row:
+            return out
+        for key, val in dict(row).items():
+            if val is not None:
+                out[key] = val
+    return out
+
+
 async def list_matches(
     *,
     status: str | None = None,
@@ -774,6 +834,56 @@ async def abandon_series_after_failed_match(series_id: int) -> None:
 # Scoreboard / stats queries (replace results.json)
 # ---------------------------------------------------------------------------
 
+_VICTORY_TOURNEY_TIME_EPS = 20.0
+
+
+async def _enrich_victory_context(db: aiosqlite.Connection, m: dict) -> dict:
+    """Add victory_tournament_clinched / victory_series_clinched for splash labels."""
+    out = dict(m)
+    mid = m.get("id")
+    sid = m.get("series_id")
+    series_clinched = False
+    if mid is not None and sid is not None:
+        cur = await db.execute(
+            """SELECT id FROM matches WHERE series_id = ? AND status = 'completed'
+               ORDER BY completed_at DESC, id DESC LIMIT 1""",
+            (sid,),
+        )
+        row = await cur.fetchone()
+        series_clinched = row is not None and int(row[0]) == int(mid)
+    out["victory_series_clinched"] = series_clinched
+
+    tournament_clinched = False
+    tid = m.get("tournament_id")
+    if series_clinched and tid is not None:
+        cur = await db.execute(
+            "SELECT status, updated_at FROM tournaments WHERE id = ?",
+            (tid,),
+        )
+        row = await cur.fetchone()
+        if row and row[0] == "completed":
+            m_done = m.get("timestamp")
+            t_updated = row[1]
+            if m_done is not None and t_updated is not None:
+                tournament_clinched = (
+                    abs(float(t_updated) - float(m_done)) <= _VICTORY_TOURNEY_TIME_EPS
+                )
+            if not tournament_clinched:
+                if m.get("series_bracket") == "grand_finals":
+                    tournament_clinched = True
+                elif m.get("tournament_type") == "single_elimination":
+                    bracket = m.get("series_bracket")
+                    rn = m.get("series_round_number")
+                    mx = m.get("tournament_max_winners_round")
+                    if bracket == "winners" and rn is not None and mx is not None:
+                        try:
+                            tournament_clinched = int(rn) == int(mx)
+                        except (TypeError, ValueError):
+                            pass
+    out["victory_tournament_clinched"] = tournament_clinched
+    return out
+
+
 async def get_scoreboard_data(recent_count: int = 10) -> dict:
     """Return data shaped like the old results.json for the stream scoreboard."""
     async with _db() as db:
@@ -791,13 +901,15 @@ async def get_scoreboard_data(recent_count: int = 10) -> dict:
         wins = {r["winner"]: r["cnt"] for r in await wins_cur.fetchall()}
 
         recent_cur = await db.execute(
-            """SELECT m.winner, m.loser, m.winner_side, m.completed_at AS timestamp,
+            """SELECT m.id, m.winner, m.loser, m.winner_side, m.completed_at AS timestamp,
                       m.battle_format, m.duration,
                       m.series_id, m.tournament_id, m.game_number,
                       t.name AS tournament_name,
+                      t.type AS tournament_type,
                       s.bracket AS series_bracket,
                       s.round_number AS series_round_number,
                       s.match_position AS series_match_position,
+                      wbmax.max_wr AS tournament_max_winners_round,
                       CASE m.winner_side
                         WHEN 'p1' THEN m.winner
                         WHEN 'p2' THEN m.loser
@@ -811,11 +923,19 @@ async def get_scoreboard_data(recent_count: int = 10) -> dict:
                FROM matches m
                LEFT JOIN tournaments t ON m.tournament_id = t.id
                LEFT JOIN series s ON m.series_id = s.id
+               LEFT JOIN (
+                 SELECT tournament_id, MAX(round_number) AS max_wr
+                 FROM series
+                 WHERE bracket = 'winners' AND tournament_id IS NOT NULL
+                 GROUP BY tournament_id
+               ) wbmax ON m.tournament_id = wbmax.tournament_id
                WHERE m.status = 'completed'
                ORDER BY m.completed_at DESC LIMIT ?""",
             (recent_count,),
         )
         recent_matches = [dict(r) for r in await recent_cur.fetchall()]
+        if recent_matches:
+            recent_matches[0] = await _enrich_victory_context(db, recent_matches[0])
 
     return {
         "total_matches": total_matches,
@@ -846,8 +966,79 @@ async def list_queued_matches(*, limit: int = 50) -> list[dict]:
     cap = max(1, min(int(limit), 200))
     async with _db() as db:
         cur = await db.execute(
-            """SELECT * FROM matches WHERE status = 'queued'
-               ORDER BY queued_at ASC LIMIT ?""",
+            """SELECT m.*, t.name AS tournament_name,
+                      t.type AS tournament_type,
+                      s.bracket AS series_bracket,
+                      s.round_number AS series_round_number,
+                      s.match_position AS series_match_position,
+                      wbmax.max_wr AS tournament_max_winners_round
+               FROM matches m
+               LEFT JOIN tournaments t ON m.tournament_id = t.id
+               LEFT JOIN series s ON m.series_id = s.id
+               LEFT JOIN (
+                 SELECT tournament_id, MAX(round_number) AS max_wr
+                 FROM series
+                 WHERE bracket = 'winners' AND tournament_id IS NOT NULL
+                 GROUP BY tournament_id
+               ) wbmax ON m.tournament_id = wbmax.tournament_id
+               WHERE m.status = 'queued'
+               ORDER BY m.queued_at ASC LIMIT ?""",
+            (cap,),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def list_tournament_series_pending_opponent(*, limit: int = 24) -> list[dict]:
+    """
+    Tournament series with exactly one player slotted and no queued/running games yet.
+
+    Matches are only inserted once both sides are known; until then the bracket still
+    has a known vs TBD pairing that clients (overlay ticker) may want to show.
+    """
+    cap = max(1, min(int(limit), 100))
+    async with _db() as db:
+        cur = await db.execute(
+            """
+            SELECT s.*, t.name AS tournament_name,
+                   t.type AS tournament_type,
+                   wbmax.max_wr AS tournament_max_winners_round
+            FROM series s
+            LEFT JOIN tournaments t ON s.tournament_id = t.id
+            LEFT JOIN (
+              SELECT tournament_id, MAX(round_number) AS max_wr
+              FROM series
+              WHERE bracket = 'winners' AND tournament_id IS NOT NULL
+              GROUP BY tournament_id
+            ) wbmax ON s.tournament_id = wbmax.tournament_id
+            WHERE s.tournament_id IS NOT NULL
+              AND s.status IN ('pending', 'in_progress')
+              AND (
+                (
+                  IFNULL(TRIM(s.player1_provider), '') != ''
+                  AND IFNULL(TRIM(s.player2_provider), '') = ''
+                )
+                OR (
+                  IFNULL(TRIM(s.player2_provider), '') != ''
+                  AND IFNULL(TRIM(s.player1_provider), '') = ''
+                )
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM matches m
+                WHERE m.series_id = s.id AND m.status IN ('queued', 'running')
+              )
+            ORDER BY
+              s.tournament_id,
+              CASE s.bracket
+                WHEN 'winners' THEN 0
+                WHEN 'losers' THEN 1
+                WHEN 'grand_finals' THEN 2
+                ELSE 3
+              END,
+              IFNULL(s.round_number, 0),
+              IFNULL(s.match_position, 0),
+              s.id
+            LIMIT ?
+            """,
             (cap,),
         )
         return [dict(r) for r in await cur.fetchall()]
@@ -886,6 +1077,16 @@ async def get_stats() -> dict:
             model_stats[m]["total"] += r["total"]
         for v in model_stats.values():
             v["win_rate"] = round(v["wins"] / v["total"] * 100, 1) if v["total"] else 0
+        model_stats = dict(
+            sorted(
+                model_stats.items(),
+                key=lambda kv: (
+                    -float(kv[1].get("win_rate") or 0),
+                    -int(kv[1].get("total") or 0),
+                    str(kv[0]),
+                ),
+            )
+        )
 
         # Head-to-head matrix
         h2h_cur = await db.execute(
@@ -958,6 +1159,16 @@ async def get_stats() -> dict:
         for v in persona_stats.values():
             v["losses"] = v["total"] - v["wins"]
             v["win_rate"] = round(v["wins"] / v["total"] * 100, 1) if v["total"] else 0
+        persona_stats = dict(
+            sorted(
+                persona_stats.items(),
+                key=lambda kv: (
+                    -float(kv[1].get("win_rate") or 0),
+                    -int(kv[1].get("total") or 0),
+                    str(kv[0]),
+                ),
+            )
+        )
 
     return {
         "model_stats": model_stats,

@@ -92,6 +92,23 @@
         font-weight: 700;
         letter-spacing: 0.2px;
         pointer-events: none;
+        white-space: nowrap;
+      }
+
+      .tournament-info-pill {
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: rgba(0, 0, 0, 0.48);
+        color: rgba(200, 220, 255, 0.95);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.2px;
+        pointer-events: none;
+        max-width: min(520px, calc(100vw - 480px));
+        white-space: normal;
+        line-height: 1.35;
+        text-align: left;
       }
 
       .thoughts-wrap {
@@ -164,7 +181,7 @@
         font-weight: 600;
       }
     </style>
-    <script src="/static/format-utils.js"></script>
+    <script src="/static/format-utils.js?v={{ cache_bust }}"></script>
   </head>
 
   <body>
@@ -172,6 +189,11 @@
       <div class="top-left-bar">
         <div class="stream-title">{{ stream_title }}</div>
         <div class="battle-format" id="battle-format-label">Format: --</div>
+        <div
+          class="tournament-info-pill"
+          id="broadcast-tournament-label"
+          hidden
+        ></div>
       </div>
       <iframe
         class="battle-frame"
@@ -205,6 +227,7 @@
       window.__BATTLE_CORE__ = {
         battleFrameId: "battle-frame",
         formatLabelId: "battle-format-label",
+        tournamentLabelId: "broadcast-tournament-label",
         internalUrl: "{{ showdown_internal_url }}",
         localUrl: "{{ showdown_local_url }}",
       };
@@ -249,7 +272,7 @@
         setTimeout(runUnlock, 1200);
       })();
     </script>
-    <script src="/static/broadcast-battle-core.js"></script>
-    <script src="/static/broadcast-thoughts-feed.js"></script>
+    <script src="/static/broadcast-battle-core.js?v={{ cache_bust }}"></script>
+    <script src="/static/broadcast-thoughts-feed.js?v={{ cache_bust }}"></script>
   </body>
 </html>

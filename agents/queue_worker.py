@@ -71,6 +71,26 @@ def _merge_series_snapshot_into_current_battle(snapshot: dict) -> None:
         print(f"[queue] Could not merge series into current_battle: {e}", flush=True)
 
 
+def _tourney_context_from_match(match: dict) -> dict | None:
+    """Fields for current_battle.json / formatTournamentMatchContextLine (flat keys)."""
+    if not match.get("tournament_id"):
+        return None
+    out: dict = {}
+    for key in (
+        "tournament_name",
+        "tournament_type",
+        "series_bracket",
+        "series_round_number",
+        "series_match_position",
+        "tournament_max_winners_round",
+        "game_number",
+    ):
+        val = match.get(key)
+        if val is not None:
+            out[key] = val
+    return out
+
+
 async def _fetch_next_match(session: aiohttp.ClientSession) -> dict | None:
     """Get the next queued match from the manager API."""
     try:
@@ -190,6 +210,7 @@ async def main() -> None:
             if sid:
                 series_snapshot = await _fetch_series_snapshot(session, int(sid))
 
+            tourney_ctx = _tourney_context_from_match(match)
             result = await run_single_match(
                 battle_format=match["battle_format"],
                 player1_provider=match["player1_provider"],
@@ -201,6 +222,8 @@ async def main() -> None:
                 player1_account_name=_optional_showdown_account(match, "player1_showdown_account"),
                 player2_account_name=_optional_showdown_account(match, "player2_showdown_account"),
                 series_snapshot=series_snapshot,
+                tourney_context=tourney_ctx,
+                manager_match_id=int(match_id),
             )
 
             if result.error:

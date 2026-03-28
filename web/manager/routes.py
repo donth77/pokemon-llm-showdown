@@ -24,6 +24,7 @@ from . import (
     tournament_logic,
 )
 from .env_registry import ENV_REGISTRY, REGISTRY_BY_KEY, categories_in_order
+from .provider_model_validate import validate_provider_model
 
 router = APIRouter()
 templates = Jinja2Templates(directory="templates")
@@ -78,6 +79,13 @@ SHOWDOWN_VIEW_BASE = os.getenv("SHOWDOWN_VIEW_BASE", "http://localhost:8000").rs
 _SHOWDOWN_USERNAME_MAX = 18
 
 ALLOWED_PROVIDERS = ["anthropic", "deepseek", "openrouter"]
+
+
+def _require_provider_model_pair(label: str, provider: str, model: str) -> None:
+    try:
+        validate_provider_model(provider, model, field_label=label)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
 
 BATTLE_FORMATS = [
     "gen9randombattle",
@@ -219,6 +227,29 @@ def _battle_name_for_persona_slug(slug: str | None) -> str:
     return str(slug)
 
 
+def _persona_yaml_stream_name(persona_slug: str | None) -> str:
+    """Human-facing name from persona front matter (stream overlay; no slug, no compact battle id)."""
+    if not persona_slug:
+        return ""
+    for p in _scan_personas():
+        if p["slug"] == persona_slug:
+            n = (p.get("name") or "").strip()
+            return n or str(persona_slug).replace("_", " ").title()
+    return str(persona_slug).replace("_", " ").title()
+
+
+def _stream_label_from_persona_and_display(persona_slug: str, display_slug: str) -> str:
+    """YAML name plus optional tournament index (e.g. damage dan roster slot 4 → 'Damage Dan 4')."""
+    yaml_name = _persona_yaml_stream_name(persona_slug)
+    if not display_slug or display_slug == persona_slug:
+        return yaml_name
+    if display_slug.startswith(persona_slug) and len(display_slug) > len(persona_slug):
+        rest = display_slug[len(persona_slug) :]
+        if rest.isdigit():
+            return f"{yaml_name} {rest}".strip()
+    return yaml_name
+
+
 def _battle_mirror_suffix(base: str, n: int) -> str:
     """Match agents Showdown naming when the same persona faces itself (DamageDan1 vs DamageDan2)."""
     suffix = str(n)
@@ -260,18 +291,34 @@ async def _resolve_persona_pair_labels(
     ds1 = p1s or ""
     ds2 = p2s or ""
 
+    e1: int | None = None
+    e2: int | None = None
+    tid: int | None = None
+    if series_id is not None:
+        sm = await db.get_series_bracket_meta(series_id)
+        if sm:
+            e1, e2, tid = sm[0], sm[1], sm[2]
+
+    emap: dict[int, str] | None = None
+    if tid is not None and (e1 is not None or e2 is not None):
+        emap = await db.tournament_entry_display_slug_map(tid)
+
+    used_map = False
+    if emap is not None and p1s and p2s and e1 is not None and e2 is not None:
+        ds1 = emap.get(int(e1), p1s)
+        ds2 = emap.get(int(e2), p2s)
+        used_map = True
+        b1 = _numbered_battle_name_for_tournament_slot(b1, p1s, ds1)
+        b2 = _numbered_battle_name_for_tournament_slot(b2, p2s, ds2)
+    elif emap is not None:
+        if p1s and e1 is not None:
+            ds1 = emap.get(int(e1), p1s)
+            b1 = _numbered_battle_name_for_tournament_slot(b1, p1s, ds1)
+        if p2s and e2 is not None:
+            ds2 = emap.get(int(e2), p2s)
+            b2 = _numbered_battle_name_for_tournament_slot(b2, p2s, ds2)
+
     if p1s and p2s:
-        used_map = False
-        if series_id is not None:
-            sm = await db.get_series_bracket_meta(series_id)
-            tid = sm[2] if sm else None
-            if tid is not None and sm[0] is not None and sm[1] is not None:
-                emap = await db.tournament_entry_display_slug_map(tid)
-                ds1 = emap.get(int(sm[0]), p1s)
-                ds2 = emap.get(int(sm[1]), p2s)
-                used_map = True
-                b1 = _numbered_battle_name_for_tournament_slot(b1, p1s, ds1)
-                b2 = _numbered_battle_name_for_tournament_slot(b2, p2s, ds2)
         if not used_map and p1s == p2s:
             ds1 = f"{p1s}1"
             ds2 = f"{p2s}2"
@@ -282,6 +329,8 @@ async def _resolve_persona_pair_labels(
     dash2 = "TBD" if not p2s else f"{b2} ({ds2})"
     slug1 = "TBD" if not p1s else f"{ds1} ({b1})"
     slug2 = "TBD" if not p2s else f"{ds2} ({b2})"
+    stream1 = "TBD" if not p1s else _stream_label_from_persona_and_display(p1s, ds1)
+    stream2 = "TBD" if not p2s else _stream_label_from_persona_and_display(p2s, ds2)
     return {
         "dash1": dash1,
         "dash2": dash2,
@@ -289,7 +338,47 @@ async def _resolve_persona_pair_labels(
         "slug2": slug2,
         "ds1": ds1,
         "ds2": ds2,
+        "stream1": stream1,
+        "stream2": stream2,
     }
+
+
+def _queue_player_label_after_persona(
+    persona_label: str, provider: str | None, model: str | None
+) -> str:
+    """If no persona slug, fall back to provider/model so queue UI still names the side."""
+    if persona_label != "TBD":
+        return persona_label
+    p, m = (provider or "").strip(), (model or "").strip()
+    if m and p:
+        return f"{p}/{m}"
+    if m:
+        return m
+    if p:
+        return p
+    return "TBD"
+
+
+def _queue_stream_or_fallback(
+    stream: str, dash: str, provider: str | None, model: str | None
+) -> str:
+    """Stream overlay label: YAML name when known; else same model/provider fallback as dash labels."""
+    if stream != "TBD":
+        return stream
+    return _queue_player_label_after_persona(dash, provider, model)
+
+
+def _apply_tournament_opponent_tbd_labels(d: dict) -> None:
+    tid = d.get("tournament_id")
+    if tid is None:
+        return
+    l1, l2 = d["player1_persona_label"], d["player2_persona_label"]
+    if l1 != "TBD" and l2 == "TBD":
+        d["player2_persona_label"] = "Opponent TBD"
+        d["player2_stream_label"] = "Opponent TBD"
+    elif l2 != "TBD" and l1 == "TBD":
+        d["player1_persona_label"] = "Opponent TBD"
+        d["player1_stream_label"] = "Opponent TBD"
 
 
 async def _enrich_series_api_payload(s: dict) -> dict:
@@ -350,6 +439,15 @@ async def api_create_tournament(request: Request):
         raise HTTPException(400, "Tournament name is required")
     if t_type not in ("round_robin", "single_elimination", "double_elimination"):
         raise HTTPException(400, f"Invalid tournament type: {t_type}")
+    single_elim_bracket: str | None = None
+    if t_type in ("single_elimination", "double_elimination"):
+        seb = (body.get("single_elim_bracket") or "compact").strip().lower()
+        if seb not in ("compact", "power_of_two"):
+            raise HTTPException(
+                400,
+                "single_elim_bracket must be 'compact' or 'power_of_two'",
+            )
+        single_elim_bracket = seb
     if not fmt:
         raise HTTPException(400, "Battle format is required")
     if len(entries) < 2:
@@ -360,9 +458,15 @@ async def api_create_tournament(request: Request):
     for i, e in enumerate(entries):
         if not e.get("provider") or not e.get("model") or not e.get("persona_slug"):
             raise HTTPException(400, f"Entry {i+1} missing provider, model, or persona_slug")
+        _require_provider_model_pair(f"Entry {i + 1}", e["provider"], e["model"])
 
     tournament = await db.create_tournament(
-        name=name, type=t_type, battle_format=fmt, best_of=best_of, entries=entries,
+        name=name,
+        type=t_type,
+        battle_format=fmt,
+        best_of=best_of,
+        entries=entries,
+        single_elim_bracket=single_elim_bracket,
     )
     await tournament_logic.generate_bracket(tournament)
     return await db.get_tournament(tournament["id"])
@@ -406,6 +510,9 @@ async def api_create_series(request: Request):
         if not body.get(f"{side}_provider") or not body.get(f"{side}_model") or not body.get(f"{side}_persona"):
             raise HTTPException(400, f"{side} provider, model, and persona are required")
 
+    _require_provider_model_pair("Player 1", body["player1_provider"], body["player1_model"])
+    _require_provider_model_pair("Player 2", body["player2_provider"], body["player2_model"])
+
     series = await db.create_series(
         best_of=best_of,
         battle_format=fmt,
@@ -442,6 +549,9 @@ async def api_create_matches(request: Request):
     for side in ("player1", "player2"):
         if not body.get(f"{side}_provider") or not body.get(f"{side}_model") or not body.get(f"{side}_persona"):
             raise HTTPException(400, f"{side} provider, model, and persona are required")
+
+    _require_provider_model_pair("Player 1", body["player1_provider"], body["player1_model"])
+    _require_provider_model_pair("Player 2", body["player2_provider"], body["player2_model"])
 
     # best_of > 0 means create a series; count is ignored
     if best_of > 0:
@@ -504,6 +614,7 @@ async def api_queue_next():
         ) from None
     if not m:
         raise HTTPException(404, "No queued matches")
+    m = await db.enrich_match_row_with_series_tournament(m)
     a1, a2 = await showdown_accounts.showdown_accounts_for_match(m)
     if a1 and a2:
         m["player1_showdown_account"] = a1
@@ -529,19 +640,73 @@ async def _enrich_queued_match_for_ui(m: dict) -> dict:
         p2=d.get("player2_persona"),
         series_id=int(sid) if sid is not None else None,
     )
-    d["player1_persona_label"] = labs["dash1"]
-    d["player2_persona_label"] = labs["dash2"]
+    d["player1_persona_label"] = _queue_player_label_after_persona(
+        labs["dash1"], d.get("player1_provider"), d.get("player1_model")
+    )
+    d["player2_persona_label"] = _queue_player_label_after_persona(
+        labs["dash2"], d.get("player2_provider"), d.get("player2_model")
+    )
+    d["player1_stream_label"] = _queue_stream_or_fallback(
+        labs["stream1"], labs["dash1"], d.get("player1_provider"), d.get("player1_model")
+    )
+    d["player2_stream_label"] = _queue_stream_or_fallback(
+        labs["stream2"], labs["dash2"], d.get("player2_provider"), d.get("player2_model")
+    )
+    _apply_tournament_opponent_tbd_labels(d)
+    return d
+
+
+async def _enrich_pending_series_row_for_ui(s: dict) -> dict:
+    """Shape a partial tournament series like a queue row for ticker / dashboard."""
+    sid = s.get("id")
+    labs = await _resolve_persona_pair_labels(
+        p1=s.get("player1_persona"),
+        p2=s.get("player2_persona"),
+        series_id=int(sid) if sid is not None else None,
+    )
+    d: dict = {
+        "pending_slot": True,
+        "series_id": sid,
+        "tournament_id": s.get("tournament_id"),
+        "tournament_name": s.get("tournament_name"),
+        "series_bracket": s.get("bracket"),
+        "series_round_number": s.get("round_number"),
+        "series_match_position": s.get("match_position"),
+        "tournament_max_winners_round": s.get("tournament_max_winners_round"),
+        "battle_format": s.get("battle_format"),
+        "game_number": None,
+        "status": "pending_opponent",
+        "player1_persona_label": _queue_player_label_after_persona(
+            labs["dash1"], s.get("player1_provider"), s.get("player1_model")
+        ),
+        "player2_persona_label": _queue_player_label_after_persona(
+            labs["dash2"], s.get("player2_provider"), s.get("player2_model")
+        ),
+    }
+    d["player1_stream_label"] = _queue_stream_or_fallback(
+        labs["stream1"], labs["dash1"], s.get("player1_provider"), s.get("player1_model")
+    )
+    d["player2_stream_label"] = _queue_stream_or_fallback(
+        labs["stream2"], labs["dash2"], s.get("player2_provider"), s.get("player2_model")
+    )
+    _apply_tournament_opponent_tbd_labels(d)
     return d
 
 
 @router.get("/api/manager/queue/upcoming", response_class=JSONResponse)
 async def api_queue_upcoming(limit: int = 50):
+    cap = max(1, min(int(limit), 200))
+    slot_cap = max(1, min(24, cap))
     try:
-        raw = await db.list_queued_matches(limit=limit)
+        raw = await db.list_queued_matches(limit=cap)
+        pending_rows = await db.list_tournament_series_pending_opponent(limit=slot_cap)
     except Exception:
         _log.exception("GET /api/manager/queue/upcoming failed")
         raise HTTPException(500, detail="queue_upcoming_failed") from None
-    return [await _enrich_queued_match_for_ui(m) for m in raw]
+    out: list[dict] = [await _enrich_queued_match_for_ui(m) for m in raw]
+    for row in pending_rows:
+        out.append(await _enrich_pending_series_row_for_ui(row))
+    return out
 
 
 @router.get("/api/manager/queue/running", response_class=JSONResponse)
@@ -711,6 +876,7 @@ async def page_tournament_detail(request: Request, tid: int):
     t = await db.get_tournament(tid)
     if not t:
         raise HTTPException(404, "Tournament not found")
+    tournament_logic.annotate_series_tournament_champion_winner_side(t)
     return templates.TemplateResponse(
         request=request,
         name="manager/tournament_detail.html",

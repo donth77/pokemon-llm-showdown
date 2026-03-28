@@ -19,7 +19,7 @@ import requests
 from anthropic import Anthropic
 from openai import BadRequestError, OpenAI
 from poke_env.player import Player
-from poke_env.battle.move import Move
+from poke_env.battle.move import Move, SPECIAL_MOVES
 from poke_env.battle.pokemon import Pokemon
 from poke_env.battle.abstract_battle import AbstractBattle as Battle
 from poke_env.battle.pokemon_type import PokemonType
@@ -34,6 +34,32 @@ from pokedex import (
     auto_enrich_battle_context,
     gen_from_format,
 )
+from provider_model_validate import validate_provider_model
+
+
+def _patch_poke_env_pseudo_move_entries() -> None:
+    """Gen 1 requests use Showdown pseudo-move id fight (asleep/frozen); some poke-env
+    releases omit it from Move.entry, so Move.__init__ hits max_pp → ValueError."""
+    if getattr(Move, "_llm_showdown_entry_patch", False):
+        return
+    _orig = Move.entry.fget
+
+    def _entry(self):  # noqa: ANN001
+        if self._id in {"fight", "recharge"}:
+            return {
+                "pp": 1,
+                "type": "normal",
+                "category": "Special",
+                "accuracy": 1,
+                "flags": [],
+            }
+        return _orig(self)
+
+    Move.entry = property(_entry)  # type: ignore[assignment]
+    Move._llm_showdown_entry_patch = True  # type: ignore[attr-defined]
+
+
+_patch_poke_env_pseudo_move_entries()
 
 Provider = Literal["anthropic", "deepseek", "openrouter"]
 
@@ -204,11 +230,6 @@ WEB_HOST = os.getenv("WEB_HOST") or os.getenv("OVERLAY_HOST", "web")
 WEB_PORT = int(os.getenv("WEB_PORT") or os.getenv("OVERLAY_PORT", "8080"))
 
 DEFAULT_PROVIDER: Provider = "anthropic"
-DEFAULT_MODEL_ID = (
-    os.getenv("ANTHROPIC_MODEL")
-    or os.getenv("DEEPSEEK_MODEL")
-    or "claude-sonnet-4-20250514"
-)
 DEFAULT_TURN_DELAY_SECONDS = float(os.getenv("TURN_DELAY_SECONDS") or "0")
 # Cap on model output per turn (tool JSON or chat JSON). Verbose personas need headroom.
 _LLM_MAX_OUTPUT_TOKENS = int(
@@ -394,8 +415,13 @@ def _move_summary(move: Move) -> str:
         f"{move.id}: {move.type} | power {move.base_power} | {accuracy}",
         f"  PP: {move.current_pp}/{move.max_pp} | category: {move.category}",
     ]
-    if move.priority != 0:
-        parts[0] += f" | priority {move.priority}"
+    # Pseudo-moves (e.g. gen1 "recharge") omit movedex keys like "priority".
+    try:
+        prio = int(move.priority)
+    except Exception:
+        prio = 0
+    if prio != 0:
+        parts[0] += f" | priority {prio}"
 
     extras = []
     boosts = _safe_move_attr(move, "boosts")
@@ -1000,14 +1026,28 @@ class LLMPlayer(Player):
         system_prompt: str | None = None,
         opponent_name: str | None = None,
         opponent_account_name: str | None = None,
-        model_id: str = DEFAULT_MODEL_ID,
+        model_id: str = "",
         turn_delay_seconds: float | None = None,
         battle_side: str | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
+        # Gen 1 only: Showdown sends pseudo-move id "fight" (frozen/asleep Fight button).
+        # poke-env's SPECIAL_MOVES usually omits it until upstream releases; add when needed.
+        _fmt = kwargs.get("battle_format")
+        if _fmt is not None and gen_from_format(str(_fmt)) == 1:
+            SPECIAL_MOVES.add("fight")
         self._provider = provider
-        self._model_id = model_id
+        raw_mid = (model_id or "").strip()
+        if not raw_mid:
+            raise ValueError(
+                f"Empty model_id for LLMPlayer (provider={provider!r}, "
+                f"user={getattr(self, 'username', '?')!r}). Set model in the manager."
+            )
+        validate_provider_model(
+            provider, raw_mid, field_label=getattr(self, "username", "player"),
+        )
+        self._model_id = raw_mid
         self._llm_client = self._create_llm_client()
         self._turn_delay_seconds = (
             DEFAULT_TURN_DELAY_SECONDS

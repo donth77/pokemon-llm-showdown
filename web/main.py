@@ -32,6 +32,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Pokémon LLM Showdown — Web", lifespan=lifespan)
 app.include_router(manager_router)
 templates = Jinja2Templates(directory="templates")
+_BOOT_TS = str(int(time.time()))
+templates.env.globals["cache_bust"] = _BOOT_TS
 
 REPLAY_DIR = Path("/replays")
 LOG_DIR = Path("/logs")
@@ -50,7 +52,17 @@ def _positive_int_env(name: str, default: int) -> int:
         return default
 
 
+def _non_negative_int_env(name: str, default: int) -> int:
+    raw = os.getenv(name, str(default)).strip()
+    try:
+        v = int(raw, 10)
+        return v if v >= 0 else default
+    except ValueError:
+        return default
+
+
 VICTORY_MODAL_MS = _positive_int_env("VICTORY_MODAL_SECONDS", 30) * 1000
+VICTORY_SHOW_DELAY_MS = _non_negative_int_env("VICTORY_SHOW_DELAY_SECONDS", 4) * 1000
 
 MAX_THOUGHTS_PER_PLAYER = 80
 _thought_store: dict[str, list[dict]] = {}
@@ -93,6 +105,39 @@ def _load_current_battle_state() -> dict:
     except Exception:
         pass
     return {}
+
+
+# Merged into /current_battle when ``match_id`` is set (broadcast tournament pill).
+_CURRENT_BATTLE_TOURNEY_KEYS = (
+    "tournament_name",
+    "tournament_type",
+    "series_bracket",
+    "series_round_number",
+    "series_match_position",
+    "tournament_max_winners_round",
+    "game_number",
+)
+
+
+async def _hydrate_current_battle_tournament(state: dict) -> dict:
+    """Fill tournament overlay fields from SQLite so the broadcast pill works even if
+    the agents container wrote an older current_battle.json shape."""
+    mid = state.get("match_id")
+    if mid is None:
+        return state
+    try:
+        mid_int = int(mid)
+    except (TypeError, ValueError):
+        return state
+    mrow = await db.get_match(mid_int)
+    if not mrow:
+        return state
+    enriched = await db.enrich_match_row_with_series_tournament(mrow)
+    for key in _CURRENT_BATTLE_TOURNEY_KEYS:
+        v = enriched.get(key)
+        if v is not None:
+            state[key] = v
+    return state
 
 
 def _display_model_id(model_id: str | None) -> str:
@@ -225,6 +270,7 @@ async def get_victory_splash(request: Request):
         context={
             "request": request,
             "victory_modal_ms": VICTORY_MODAL_MS,
+            "victory_show_delay_ms": VICTORY_SHOW_DELAY_MS,
         },
     )
 
@@ -319,9 +365,15 @@ async def get_current_battle():
     if not STATE_FILE.exists():
         return {"status": "idle", "battle_tag": None}
     try:
-        return json.loads(STATE_FILE.read_text())
+        data = json.loads(STATE_FILE.read_text())
     except Exception:
         return {"status": "error", "battle_tag": None}
+    if isinstance(data, dict) and data.get("match_id") is not None:
+        try:
+            data = await _hydrate_current_battle_tournament(data)
+        except Exception:
+            pass
+    return data
 
 
 @app.get("/health")

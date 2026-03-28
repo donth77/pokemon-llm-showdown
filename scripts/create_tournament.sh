@@ -24,6 +24,7 @@ NAME=""
 TYPE="round_robin"
 FORMAT="gen9randombattle"
 BEST_OF=3
+SINGLE_ELIM_BRACKET=""
 PLAYERS=()
 
 while [[ $# -gt 0 ]]; do
@@ -34,6 +35,7 @@ Create a tournament via POST /api/manager/tournaments.
 
 Required: --name, at least two --player entries
 Optional: --type round_robin|single_elimination|double_elimination, --format, --best-of, --url
+         --single-elim-bracket compact|power_of_two (single/double elim winners bracket; default compact)
 
 Each --player: provider/model/persona (for openrouter models with slashes, see script header).
 
@@ -46,6 +48,7 @@ EOF
     --format)   FORMAT="$2"; shift 2 ;;
     --best-of)  BEST_OF="$2"; shift 2 ;;
     --player)   PLAYERS+=("$2"); shift 2 ;;
+    --single-elim-bracket) SINGLE_ELIM_BRACKET="$2"; shift 2 ;;
     --url)      WEB_URL="$2"; shift 2 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
@@ -87,13 +90,23 @@ EOF
 done
 ENTRIES+="]"
 
+SEB_JSON=""
+if [[ ( "$TYPE" == "single_elimination" || "$TYPE" == "double_elimination" ) && -n "$SINGLE_ELIM_BRACKET" ]]; then
+  if [[ "$SINGLE_ELIM_BRACKET" != "compact" && "$SINGLE_ELIM_BRACKET" != "power_of_two" ]]; then
+    echo "Error: --single-elim-bracket must be compact or power_of_two." >&2
+    exit 1
+  fi
+  SEB_JSON=",
+  \"single_elim_bracket\": \"$SINGLE_ELIM_BRACKET\""
+fi
+
 PAYLOAD=$(cat <<EOF
 {
   "name": "$NAME",
   "type": "$TYPE",
   "battle_format": "$FORMAT",
   "best_of": $BEST_OF,
-  "entries": $ENTRIES
+  "entries": $ENTRIES$SEB_JSON
 }
 EOF
 )

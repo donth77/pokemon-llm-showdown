@@ -115,6 +115,26 @@
         animation: label-glow 2s ease-in-out infinite;
       }
 
+      .label.tournament-champ {
+        color: rgba(255, 236, 180, 0.95);
+        text-shadow:
+          0 0 20px rgba(255, 200, 80, 0.55),
+          0 0 40px rgba(218, 165, 32, 0.35);
+        animation: label-glow-gold 2s ease-in-out infinite;
+      }
+
+      @keyframes label-glow-gold {
+        0%,
+        100% {
+          opacity: 0.88;
+          filter: brightness(1);
+        }
+        50% {
+          opacity: 1;
+          filter: brightness(1.15);
+        }
+      }
+
       @keyframes label-glow {
         0%,
         100% {
@@ -197,6 +217,37 @@
         animation: shine 2.5s linear infinite;
       }
 
+      .winner-name.tournament-champ {
+        text-shadow:
+          0 0 32px rgba(255, 215, 0, 0.75),
+          0 0 72px rgba(255, 160, 40, 0.45),
+          0 4px 28px rgba(0, 0, 0, 0.9);
+        background: linear-gradient(
+          125deg,
+          #fffef5 0%,
+          #ffe066 18%,
+          #ffd700 35%,
+          #ffb700 50%,
+          #ffd700 62%,
+          #fff8dc 78%,
+          #ffec80 100%
+        );
+        background-size: 220% auto;
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+        animation: shine-gold 2.4s linear infinite;
+      }
+
+      @keyframes shine-gold {
+        0% {
+          background-position: 0% center;
+        }
+        100% {
+          background-position: 220% center;
+        }
+      }
+
       @keyframes shine {
         0% {
           background-position: 0% center;
@@ -211,6 +262,31 @@
         font-size: 13px;
         color: rgba(255, 255, 255, 0.45);
         letter-spacing: 0.06em;
+        max-width: 880px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        line-height: 1.4;
+      }
+
+      .sub .sub-battle-format {
+        color: rgba(255, 255, 255, 0.78);
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+      }
+
+      .sub .sub-tourney {
+        color: rgba(200, 220, 255, 0.88);
+        font-size: 12px;
+        font-weight: 500;
+        letter-spacing: 0.05em;
+      }
+
+      .sub .sub-vs {
+        font-size: 13px;
+        color: rgba(255, 255, 255, 0.5);
       }
 
       .winner-sprite {
@@ -230,7 +306,10 @@
       }
     </style>
   </head>
-  <body data-victory-visible-ms="{{ victory_modal_ms }}">
+  <body
+    data-victory-visible-ms="{{ victory_modal_ms }}"
+    data-victory-show-delay-ms="{{ victory_show_delay_ms }}"
+  >
     <div id="splash" aria-live="polite">
       <div class="burst"></div>
       <div class="burst"></div>
@@ -239,7 +318,11 @@
         <div class="label" id="splash-label">Winner</div>
         <img class="winner-sprite" id="splash-sprite" alt="" />
         <div class="winner-name" id="splash-name"></div>
-        <div class="sub" id="splash-sub"></div>
+        <div class="sub" id="splash-sub">
+          <div class="sub-battle-format" id="splash-format" hidden></div>
+          <div class="sub-tourney" id="splash-tourney" hidden></div>
+          <div class="sub-vs" id="splash-vs" hidden></div>
+        </div>
       </div>
     </div>
 
@@ -252,13 +335,17 @@
       <source src="/static/audio/victory.mp3" type="audio/mpeg" />
     </audio>
 
-    <script src="/static/format-utils.js"></script>
+    <script src="/static/vendor/confetti.min.js?v={{ cache_bust }}"></script>
+    <script src="/static/format-utils.js?v={{ cache_bust }}"></script>
     <script>
       var $splash = document.getElementById("splash");
       var $label = document.getElementById("splash-label");
       var $sprite = document.getElementById("splash-sprite");
       var $name = document.getElementById("splash-name");
       var $sub = document.getElementById("splash-sub");
+      var $splashFmt = document.getElementById("splash-format");
+      var $splashTourney = document.getElementById("splash-tourney");
+      var $splashVs = document.getElementById("splash-vs");
       var $victorySfx = document.getElementById("victory-sfx");
 
       window.addEventListener("message", function (evt) {
@@ -290,14 +377,26 @@
         victoryVisibleMs = 30000;
       }
 
-      // Two-poll bootstrap: the first /scoreboard response may already include a
-      // match posted during load (e.g. curl test). Compare 2nd poll to 1st to
-      // detect an increase; after that use lastTotalMatches only.
-      var firstPollTotal = null;
-      var lastTotalMatches = -1;
+      var victoryShowDelayMs = parseInt(
+        document.body.getAttribute("data-victory-show-delay-ms") || "4000",
+        10
+      );
+      if (!Number.isFinite(victoryShowDelayMs) || victoryShowDelayMs < 0) {
+        victoryShowDelayMs = 4000;
+      }
+
+      // Track the latest completed match by id + timestamp. Relying only on
+      // total_counts missed updates when the first successful poll happened after
+      // a completion, or when count and last_match were briefly inconsistent.
+      var lastMatchFingerprint = null;
       var hideTimer = null;
       var showDelayTimer = null;
-      var VICTORY_SHOW_DELAY_MS = 4000;
+
+      function fingerprintLastMatch(m) {
+        if (!m || m.id == null) return "";
+        var ts = m.timestamp != null ? m.timestamp : "";
+        return String(m.id) + ":" + String(ts);
+      }
 
       function stopVictorySfx() {
         if (!$victorySfx) return;
@@ -320,6 +419,30 @@
         bursts.forEach(function (el) {
           var clone = el.cloneNode(true);
           el.parentNode.replaceChild(clone, el);
+        });
+      }
+
+      function runTournamentConfetti() {
+        if (typeof confetti !== "function") return;
+        var w = window.innerWidth || 1280;
+        var h = window.innerHeight || 720;
+        var positions = [
+          { x: w * 0.5, y: h * 0.36 },
+          { x: w * 0.2, y: h * 0.26 },
+          { x: w * 0.8, y: h * 0.26 },
+          { x: w * 0.34, y: h * 0.5 },
+          { x: w * 0.66, y: h * 0.5 },
+        ];
+        positions.forEach(function (pos, i) {
+          setTimeout(function () {
+            confetti({
+              position: pos,
+              count: 100,
+              size: 1.15,
+              velocity: 240,
+              fade: true,
+            });
+          }, i * 180);
         });
       }
 
@@ -365,10 +488,15 @@
           $sprite.removeAttribute("src");
         }
 
-        $label.textContent = isDraw ? "Match result" : "Winner";
+        var isTournamentChamp =
+          !isDraw && match && match.victory_tournament_clinched;
+        $label.textContent = victorySplashTitleLabel(match, isDraw);
+        $label.className = "label" + (isTournamentChamp ? " tournament-champ" : "");
         $name.className = "winner-name";
         if (isDraw) {
           $name.classList.add("draw");
+        } else if (isTournamentChamp) {
+          $name.classList.add("tournament-champ");
         } else if (winner === p1) {
           $name.classList.add("p1");
         } else if (winner === p2) {
@@ -376,15 +504,43 @@
         }
         $name.textContent = winner;
 
-        var parts = [];
+        var fmtLine = "";
         if (match && match.battle_format) {
           var fmt = displayBattleFormat(match.battle_format);
-          if (fmt && fmt !== "--") parts.push(fmt);
+          if (fmt && fmt !== "--") fmtLine = fmt;
         }
-        if (p1 && p2) {
-          parts.push(p1 + " vs " + p2);
+        if (fmtLine && $splashFmt) {
+          $splashFmt.textContent = fmtLine;
+          $splashFmt.hidden = false;
+        } else if ($splashFmt) {
+          $splashFmt.textContent = "";
+          $splashFmt.hidden = true;
         }
-        $sub.textContent = parts.length ? parts.join(" · ") : "";
+
+        var tourneyLine = match ? formatTournamentMatchContextLine(match) : "";
+        if (tourneyLine && $splashTourney) {
+          $splashTourney.textContent = tourneyLine;
+          $splashTourney.hidden = false;
+        } else if ($splashTourney) {
+          $splashTourney.textContent = "";
+          $splashTourney.hidden = true;
+        }
+
+        if (p1 && p2 && $splashVs) {
+          $splashVs.textContent = p1 + " vs " + p2;
+          $splashVs.hidden = false;
+        } else if ($splashVs) {
+          $splashVs.textContent = "";
+          $splashVs.hidden = true;
+        }
+
+        if ($sub) {
+          var anyMeta =
+            ($splashFmt && !$splashFmt.hidden) ||
+            ($splashTourney && !$splashTourney.hidden) ||
+            ($splashVs && !$splashVs.hidden);
+          $sub.style.display = anyMeta ? "" : "none";
+        }
 
         showDelayTimer = setTimeout(function () {
           showDelayTimer = null;
@@ -393,6 +549,13 @@
           void $splash.offsetWidth;
           $splash.classList.add("visible");
           playVictorySfx();
+          if (
+            match &&
+            match.victory_tournament_clinched &&
+            (match.winner || "") !== "Draw"
+          ) {
+            runTournamentConfetti();
+          }
 
           hideTimer = setTimeout(function () {
             stopVictorySfx();
@@ -402,45 +565,36 @@
               hideTimer = null;
             }, 500);
           }, victoryVisibleMs);
-        }, VICTORY_SHOW_DELAY_MS);
+        }, victoryShowDelayMs);
       }
 
       async function tick() {
         try {
           var resp = await fetch("/scoreboard", { cache: "no-store" });
+          if (!resp.ok) return;
           var data = await resp.json();
-          var total = data.total_matches || 0;
           var p1 = data.player1_name || "Player 1";
           var p2 = data.player2_name || "Player 2";
+          var lm = data.last_match;
+          var fp = fingerprintLastMatch(lm);
 
-          if (firstPollTotal === null) {
-            firstPollTotal = total;
+          if (lastMatchFingerprint === null) {
+            lastMatchFingerprint = fp;
             return;
           }
-          if (lastTotalMatches < 0) {
-            if (total > firstPollTotal && data.last_match) {
-              showVictory(
-                data.last_match,
-                p1,
-                p2,
-                data.player1_sprite_url,
-                data.player2_sprite_url
-              );
-            }
-            lastTotalMatches = total;
-            return;
-          }
-          if (total > lastTotalMatches && data.last_match) {
-            lastTotalMatches = total;
+          if (fp && fp !== lastMatchFingerprint) {
+            lastMatchFingerprint = fp;
             showVictory(
-              data.last_match,
+              lm,
               p1,
               p2,
               data.player1_sprite_url,
               data.player2_sprite_url
             );
           }
-        } catch (_) {}
+        } catch (err) {
+          console.warn("[victory] scoreboard poll failed:", err);
+        }
       }
 
       tick();

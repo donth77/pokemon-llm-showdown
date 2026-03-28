@@ -219,6 +219,13 @@ ENV_REGISTRY: tuple[EnvVarDef, ...] = (
         "web",
     ),
     EnvVarDef(
+        "VICTORY_SHOW_DELAY_SECONDS",
+        "Web",
+        "Delay after scoreboard updates before showing the victory splash (seconds; 0 = immediate).",
+        "4",
+        "web",
+    ),
+    EnvVarDef(
         "SHOWDOWN_HOST",
         "Network",
         "Showdown hostname on Docker network.",

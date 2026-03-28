@@ -8,7 +8,7 @@
 <div class="page-header">
   <div>
     <h1>{{ tournament.name }}</h1>
-    <span class="text-muted">{{ tournament.type | replace('_', ' ') | title }} &middot; <code>{{ tournament.battle_format }}</code> &middot; Bo{{ tournament.best_of }} &middot; Created <span data-local-ts="{% if tournament.created_at is not none %}{{ tournament.created_at }}{% endif %}">{{ tournament.created_at | timestamp_fmt }}</span> &middot; Updated <span data-local-ts="{% if tournament.updated_at is not none %}{{ tournament.updated_at }}{% endif %}">{{ tournament.updated_at | timestamp_fmt }}</span></span>
+    <span class="text-muted">{{ tournament.type | replace('_', ' ') | title }}{% if tournament.type == 'single_elimination' or tournament.type == 'double_elimination' %} &middot; {% if tournament.single_elim_bracket == 'power_of_two' %}Power-of-2 winners bracket{% else %}Compact winners bracket{% endif %}{% endif %} &middot; <code>{{ tournament.battle_format }}</code> &middot; Bo{{ tournament.best_of }} &middot; Created <span data-local-ts="{% if tournament.created_at is not none %}{{ tournament.created_at }}{% endif %}">{{ tournament.created_at | timestamp_fmt }}</span> &middot; Updated <span data-local-ts="{% if tournament.updated_at is not none %}{{ tournament.updated_at }}{% endif %}">{{ tournament.updated_at | timestamp_fmt }}</span></span>
   </div>
   <div class="header-actions">
     <span class="badge badge-{{ tournament.status }}">{{ tournament.status }}</span>
@@ -80,7 +80,7 @@
 {% endif %}
 
 <!-- Bracket (Elimination) -->
-{% if tournament.type in ('single_elimination', 'double_elimination') %}
+{% if tournament.type == 'single_elimination' or tournament.type == 'double_elimination' %}
 <section class="card">
   <h2>Bracket</h2>
   <div class="bracket" id="bracket-view">
@@ -113,12 +113,12 @@
         {% for s in tournament.series if s.bracket == 'winners' and s.round_number == rnd %}
         <div class="bracket-match {% if s.status == 'completed' %}bracket-match--done{% endif %}">
           <a href="/manager/series/{{ s.id }}" class="bracket-match-link">
-            <div class="bracket-player {% if s.winner_side == 'p1' %}bracket-player--winner{% endif %}">
-              <span class="bracket-player-label"><span class="bracket-player-name-text">{{ s.player1_persona_display or s.player1_persona or 'TBD' }}</span>{% if s.winner_side == 'p1' %}{{ tournament_trophy_icon() }}{% endif %}</span>
+            <div class="bracket-player {% if s._champ_ws == 'p1' %}bracket-player--champion{% elif s.winner_side == 'p1' and s.status == 'completed' %}bracket-player--round-winner{% endif %}">
+              <span class="bracket-player-label"><span class="bracket-player-name-text">{{ s.player1_persona_display or s.player1_persona or 'TBD' }}</span>{% if s._champ_ws == 'p1' %}{{ tournament_trophy_icon() }}{% endif %}</span>
               <span class="bracket-score">{{ s.player1_wins }}</span>
             </div>
-            <div class="bracket-player {% if s.winner_side == 'p2' %}bracket-player--winner{% endif %}">
-              <span class="bracket-player-label"><span class="bracket-player-name-text">{{ s.player2_persona_display or s.player2_persona or 'TBD' }}</span>{% if s.winner_side == 'p2' %}{{ tournament_trophy_icon() }}{% endif %}</span>
+            <div class="bracket-player {% if s._champ_ws == 'p2' %}bracket-player--champion{% elif s.winner_side == 'p2' and s.status == 'completed' %}bracket-player--round-winner{% endif %}">
+              <span class="bracket-player-label"><span class="bracket-player-name-text">{{ s.player2_persona_display or s.player2_persona or 'TBD' }}</span>{% if s._champ_ws == 'p2' %}{{ tournament_trophy_icon() }}{% endif %}</span>
               <span class="bracket-score">{{ s.player2_wins }}</span>
             </div>
           </a>
@@ -147,12 +147,12 @@
         {% for s in tournament.series if s.bracket == 'losers' and s.round_number == rnd %}
         <div class="bracket-match {% if s.status == 'completed' %}bracket-match--done{% endif %}">
           <a href="/manager/series/{{ s.id }}" class="bracket-match-link">
-            <div class="bracket-player {% if s.winner_side == 'p1' %}bracket-player--winner{% endif %}">
-              <span class="bracket-player-label"><span class="bracket-player-name-text">{{ s.player1_persona_display or s.player1_persona or 'TBD' }}</span>{% if s.winner_side == 'p1' %}{{ tournament_trophy_icon() }}{% endif %}</span>
+            <div class="bracket-player {% if s._champ_ws == 'p1' %}bracket-player--champion{% elif s.winner_side == 'p1' and s.status == 'completed' %}bracket-player--round-winner{% endif %}">
+              <span class="bracket-player-label"><span class="bracket-player-name-text">{{ s.player1_persona_display or s.player1_persona or 'TBD' }}</span>{% if s._champ_ws == 'p1' %}{{ tournament_trophy_icon() }}{% endif %}</span>
               <span class="bracket-score">{{ s.player1_wins }}</span>
             </div>
-            <div class="bracket-player {% if s.winner_side == 'p2' %}bracket-player--winner{% endif %}">
-              <span class="bracket-player-label"><span class="bracket-player-name-text">{{ s.player2_persona_display or s.player2_persona or 'TBD' }}</span>{% if s.winner_side == 'p2' %}{{ tournament_trophy_icon() }}{% endif %}</span>
+            <div class="bracket-player {% if s._champ_ws == 'p2' %}bracket-player--champion{% elif s.winner_side == 'p2' and s.status == 'completed' %}bracket-player--round-winner{% endif %}">
+              <span class="bracket-player-label"><span class="bracket-player-name-text">{{ s.player2_persona_display or s.player2_persona or 'TBD' }}</span>{% if s._champ_ws == 'p2' %}{{ tournament_trophy_icon() }}{% endif %}</span>
               <span class="bracket-score">{{ s.player2_wins }}</span>
             </div>
           </a>
@@ -173,12 +173,12 @@
   {% if gf.s %}
   <div class="bracket-match {% if gf.s.status == 'completed' %}bracket-match--done{% endif %}">
     <a href="/manager/series/{{ gf.s.id }}" class="bracket-match-link">
-      <div class="bracket-player {% if gf.s.winner_side == 'p1' %}bracket-player--winner{% endif %}">
-        <span class="bracket-player-label"><span class="bracket-player-name-text">{{ gf.s.player1_persona_display or gf.s.player1_persona or 'TBD' }}</span>{% if gf.s.winner_side == 'p1' %}{{ tournament_trophy_icon() }}{% endif %}</span>
+      <div class="bracket-player {% if gf.s._champ_ws == 'p1' %}bracket-player--champion{% elif gf.s.winner_side == 'p1' and gf.s.status == 'completed' %}bracket-player--round-winner{% endif %}">
+        <span class="bracket-player-label"><span class="bracket-player-name-text">{{ gf.s.player1_persona_display or gf.s.player1_persona or 'TBD' }}</span>{% if gf.s._champ_ws == 'p1' %}{{ tournament_trophy_icon() }}{% endif %}</span>
         <span class="bracket-score">{{ gf.s.player1_wins }}</span>
       </div>
-      <div class="bracket-player {% if gf.s.winner_side == 'p2' %}bracket-player--winner{% endif %}">
-        <span class="bracket-player-label"><span class="bracket-player-name-text">{{ gf.s.player2_persona_display or gf.s.player2_persona or 'TBD' }}</span>{% if gf.s.winner_side == 'p2' %}{{ tournament_trophy_icon() }}{% endif %}</span>
+      <div class="bracket-player {% if gf.s._champ_ws == 'p2' %}bracket-player--champion{% elif gf.s.winner_side == 'p2' and gf.s.status == 'completed' %}bracket-player--round-winner{% endif %}">
+        <span class="bracket-player-label"><span class="bracket-player-name-text">{{ gf.s.player2_persona_display or gf.s.player2_persona or 'TBD' }}</span>{% if gf.s._champ_ws == 'p2' %}{{ tournament_trophy_icon() }}{% endif %}</span>
         <span class="bracket-score">{{ gf.s.player2_wins }}</span>
       </div>
     </a>
@@ -210,12 +210,12 @@
           {% if s.bracket %}{{ s.bracket | title }} {% endif %}
           R{{ s.round_number or '?' }}-{{ s.match_position or '?' }}
         </td>
-        <td class="{% if s.winner_side == 'p1' %}text-win{% endif %}">
-          <span class="tournament-winner-cell"><span class="tournament-winner-cell-text">{{ s.player1_persona_display or s.player1_persona or 'TBD' }}</span>{% if s.winner_side == 'p1' %}{{ tournament_trophy_icon() }}{% endif %}</span>
+        <td class="{% if s._champ_ws == 'p1' %}text-tournament-champion{% elif s.winner_side == 'p1' %}text-series-win{% endif %}">
+          <span class="tournament-winner-cell"><span class="tournament-winner-cell-text">{{ s.player1_persona_display or s.player1_persona or 'TBD' }}</span>{% if s._champ_ws == 'p1' %}{{ tournament_trophy_icon() }}{% endif %}</span>
         </td>
         <td>{{ s.player1_wins }} – {{ s.player2_wins }}</td>
-        <td class="{% if s.winner_side == 'p2' %}text-win{% endif %}">
-          <span class="tournament-winner-cell"><span class="tournament-winner-cell-text">{{ s.player2_persona_display or s.player2_persona or 'TBD' }}</span>{% if s.winner_side == 'p2' %}{{ tournament_trophy_icon() }}{% endif %}</span>
+        <td class="{% if s._champ_ws == 'p2' %}text-tournament-champion{% elif s.winner_side == 'p2' %}text-series-win{% endif %}">
+          <span class="tournament-winner-cell"><span class="tournament-winner-cell-text">{{ s.player2_persona_display or s.player2_persona or 'TBD' }}</span>{% if s._champ_ws == 'p2' %}{{ tournament_trophy_icon() }}{% endif %}</span>
         </td>
         <td><span class="badge badge-{{ s.status }}">{{ s.status }}</span></td>
       </tr>

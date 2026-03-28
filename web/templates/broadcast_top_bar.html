@@ -52,25 +52,56 @@
         font-size: 12px;
         font-weight: 700;
         letter-spacing: 0.2px;
+        white-space: nowrap;
+      }
+
+      .tournament-info-pill {
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: rgba(0, 0, 0, 0.48);
+        color: rgba(200, 220, 255, 0.95);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.2px;
+        max-width: min(520px, calc(100vw - 480px));
+        white-space: normal;
+        line-height: 1.35;
+        text-align: left;
       }
     </style>
-    <script src="/static/format-utils.js"></script>
+    <script src="/static/format-utils.js?v={{ cache_bust }}"></script>
   </head>
 
   <body>
     <div class="top-left-bar">
       <div class="stream-title">{{ stream_title }}</div>
       <div class="battle-format" id="battle-format-label">Format: --</div>
+      <div
+        class="tournament-info-pill"
+        id="broadcast-tournament-label"
+        hidden
+      ></div>
     </div>
     <script>
       const label = document.getElementById("battle-format-label");
+      const tourneyLabel = document.getElementById("broadcast-tournament-label");
       async function refreshFormat() {
         try {
           const resp = await fetch("/current_battle", { cache: "no-store" });
           const data = await resp.json();
           if (label) {
-            label.textContent =
-              "Format: " + displayBattleFormat(data.battle_format);
+            label.textContent = formatBroadcastFormatLabel(data);
+          }
+          if (tourneyLabel) {
+            var line = formatTournamentMatchContextLine(data);
+            if (line) {
+              tourneyLabel.textContent = line;
+              tourneyLabel.hidden = false;
+            } else {
+              tourneyLabel.textContent = "";
+              tourneyLabel.hidden = true;
+            }
           }
         } catch (_) {}
       }

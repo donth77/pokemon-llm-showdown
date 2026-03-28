@@ -2,9 +2,6 @@
 
 Two **LLM-powered agents** face off on a local **Pokémon Showdown** server. Use the **manager** (UI at `/manager`, JSON API, and CLI scripts) to queue matches and tournaments, then **inspect outcomes** — replays, logs, results, and **stats** — to **compare providers, models, personas, and formats**. **Live streaming is optional:** run `showdown`, `web`, and `agents` only when you just want battles and analysis. Add the **`stream`** service for headless Twitch (Xvfb + Chromium + FFmpeg), or **compose the same pages in OBS** (see **Streaming with OBS** below). Each agent can use its own provider, model, and persona, with live reasoning, callouts, and broadcast overlays when you stream.
 
-<!-- TODO: Add a screenshot or GIF of the /broadcast scene here -->
-<!-- Example: ![Broadcast Scene](docs/broadcast-screenshot.png) -->
-
 ## Architecture
 
 ```
@@ -27,7 +24,7 @@ docker-compose.yml
 | Area | Technologies |
 | --- | --- |
 | **Agents** | Python 3.11, [poke-env](https://github.com/hsahovic/poke-env), asyncio, **aiohttp**, Anthropic SDK, OpenAI-compatible SDK (DeepSeek / OpenRouter). Optional **Pokédex** layer in `agents/pokedex.py`; move/ability/item text built into the image via `agents/scripts/extract_showdown_data.py`. |
-| **Web** | Python 3.11, **FastAPI**, **Uvicorn**, **Starlette**, **Jinja2**, **aiosqlite** (WAL, async connections via `async with aiosqlite.connect` in `web/manager/db.py`). |
+| **Web** | Python 3.11, **FastAPI**, **Uvicorn**, **Starlette**, **Jinja2**, **aiosqlite** (WAL + foreign keys via the `_db()` connection helper in `web/manager/db.py`). |
 | **Showdown** | Node 20, upstream [pokemon-showdown](https://github.com/smogon/pokemon-showdown) (cloned at image build). |
 | **Stream** | Python 3.11, **Playwright** (Chromium), **Xvfb**, **FFmpeg**, PulseAudio. |
 | **Persistence** | Docker named volumes: SQLite on `manager-data` (`/manager-data/manager.db`) for tournaments / series / matches / queue; legacy `/data/results.json` on `web-data` if used; replays, logs, and live JSON state on their own volumes. |
@@ -134,7 +131,7 @@ Each player is assigned a **persona** — a markdown file that defines the agent
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/donth77/ai-pkmn-showdown.git && cd ai-pkmn-showdown
+git clone https://github.com/donth77/pokemon-llm-showdown.git && cd pokemon-llm-showdown
 
 # 2. Configure environment
 cp .env.example .env
@@ -228,8 +225,8 @@ Your opponent is {opponent_name}.
 ```
 
 The prompt body supports two template variables (interpolated via Python `str.format()`):
-- `{player_name}` — the player's Showdown display name (derived from model + persona)
-- `{opponent_name}` — the opponent's persona abbreviation
+- `{player_name}` — the player's Showdown login name: normally the **persona display `name`** from YAML (spaces stripped), with a numeric suffix if both sides would collide; optional manager **Showdown account overrides** replace that pair when set.
+- `{opponent_name}` — the opponent's persona **abbreviation** (YAML front matter).
 
 In the Manager (or CLI), pick persona **slugs** that match the filename without `.md`.
 
@@ -403,7 +400,7 @@ Key environment variables (see `.env.example` for the full list). Under Docker C
 | `VICTORY_MODAL_SECONDS` | No | `30` | Victory splash duration (seconds) |
 | `STREAM_TITLE` | No | *(compose default)* | Headline on the broadcast page (`web` service) |
 | `PERSONAS_DIR` | No | `/personas` | In the `web` container, mount of `agents/personas` for manager persona list + `/manager/personas` editor (`docker-compose.yml`) |
-| `MANAGER_HOST_ENV_FILE` | No | *(empty)* | In the `web` container, path to the mounted host `.env` (Compose sets this to `/app/host.env` with `./.env:/app/host.env`) so `/manager/config` can read/write keys listed in `web/manager/env_registry.py` |
+| `MANAGER_HOST_ENV_FILE` | No | `/app/host.env` *(via `docker-compose.yml`)* | In the `web` container, path to the mounted host `.env` (`./.env:/app/host.env` in Compose) so `/manager/config` can read/write keys listed in `web/manager/env_registry.py`. Without Compose, leave unset unless you mount a file at the path you configure. |
 
 </details>
 

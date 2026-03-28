@@ -13,6 +13,9 @@
   const battleFormatLabel = cfg.formatLabelId
     ? document.getElementById(cfg.formatLabelId)
     : null;
+  const tournamentInfoLabel = cfg.tournamentLabelId
+    ? document.getElementById(cfg.tournamentLabelId)
+    : null;
 
   const isLocal =
     window.location.hostname === "localhost" ||
@@ -69,9 +72,15 @@
   }
 
   async function refreshBattleTarget() {
+    let data;
     try {
       const resp = await fetch("/current_battle", { cache: "no-store" });
-      const data = await resp.json();
+      data = await resp.json();
+    } catch (_) {
+      return;
+    }
+
+    try {
       lastTrainerSpriteUrls.p1 = String(
         data.player1_sprite_url || "",
       ).trim();
@@ -79,21 +88,38 @@
         data.player2_sprite_url || "",
       ).trim();
       postTrainerSpritesToBattleFrame();
+    } catch (_) {}
+
+    try {
       if (battleFormatLabel) {
-        battleFormatLabel.textContent = `Format: ${displayBattleFormat(data.battle_format)}`;
+        battleFormatLabel.textContent =
+          typeof formatBroadcastFormatLabel === "function"
+            ? formatBroadcastFormatLabel(data)
+            : `Format: ${displayBattleFormat(data.battle_format)}`;
       }
-      maybeReloadBetweenMatches(data.status);
-      if (data.status === "live" && data.battle_tag) {
-        const tag = normalizeBattleTag(data.battle_tag);
-        if (tag && tag !== currentBattleTag) {
-          currentBattleTag = tag;
-          const u = new URL(stableBase);
-          u.searchParams.set("_", String(Date.now()));
-          battleFrame.src = `${u.toString()}#${tag}`;
+      if (tournamentInfoLabel) {
+        if (typeof formatTournamentMatchContextLine === "function") {
+          const tourneyLine = formatTournamentMatchContextLine(data);
+          if (tourneyLine) {
+            tournamentInfoLabel.textContent = tourneyLine;
+            tournamentInfoLabel.hidden = false;
+          } else {
+            tournamentInfoLabel.textContent = "";
+            tournamentInfoLabel.hidden = true;
+          }
         }
       }
-    } catch (_) {
-      // keep current view
+    } catch (_) {}
+
+    maybeReloadBetweenMatches(data.status);
+    if (data.status === "live" && data.battle_tag) {
+      const tag = normalizeBattleTag(data.battle_tag);
+      if (tag && tag !== currentBattleTag) {
+        currentBattleTag = tag;
+        const u = new URL(stableBase);
+        u.searchParams.set("_", String(Date.now()));
+        battleFrame.src = `${u.toString()}#${tag}`;
+      }
     }
   }
 

@@ -29,7 +29,7 @@ Four Docker services on a shared bridge network (`battle-net`):
 ## Tech Stack
 
 - **Agents:** Python 3.11, poke-env, asyncio, **aiohttp**, Anthropic SDK, OpenAI-compatible SDK (DeepSeek / OpenRouter), optional Pokédex data layer (`agents/pokedex.py`)
-- **Web:** Python 3.11, **FastAPI**, **Uvicorn**, **Starlette**, **Jinja2**, **aiosqlite** (async SQLite). App code under `web/`; tournament/match persistence and API in `web/manager/` (`db.py`, `routes.py`, `tournament_logic.py`, `env_registry.py`, `env_host_file.py` for `/manager/config`)
+- **Web:** Python 3.11, **FastAPI**, **Uvicorn**, **Starlette**, **Jinja2**, **aiosqlite** (async SQLite). App code under `web/`; tournament/match persistence and API in `web/manager/` (`db.py`, `routes.py`, `tournament_logic.py`, `env_registry.py`, `env_host_file.py`, `personas_store.py`, `showdown_accounts.py`)
 - **Showdown:** Node 20, upstream [pokemon-showdown](https://github.com/smogon/pokemon-showdown) repo
 - **Stream:** Python 3.11, Playwright (Chromium), Xvfb, FFmpeg, PulseAudio
 - **Infra:** Docker Compose v2, bridge network, named volumes; `web` mounts `./agents/personas` at `PERSONAS_DIR` (default `/personas`) for manager persona metadata and editing. Optional: `./.env` → `/app/host.env` with `MANAGER_HOST_ENV_FILE=/app/host.env` so `/manager/config` can edit the project env file (restart stack to apply to all services)
@@ -118,7 +118,7 @@ docker compose down
 - **Python style:** Type hints throughout (`str | None`, dataclasses). No automated linter config committed, but `.ruff_cache/` is gitignored (ruff is used informally).
 - **One folder per service:** Each has its own `Dockerfile` and `requirements.txt`. No monorepo package manager.
 - **Async I/O:** aiohttp for non-blocking HTTP in agents; FastAPI async routes + WebSocket fanout in web.
-- **SQLite (web):** Use **`async with _db() as db:`** in `web/manager/db.py`. `_db()` is an `@asynccontextmanager` around **`async with aiosqlite.connect(...)`**. Do **not** `await aiosqlite.connect()` and then `async with` the same `Connection`: aiosqlite starts a worker thread on connect/`__aenter__`, and doing both triggers `RuntimeError: threads can only be started once`. See `tournament_logic.py` for `async with db._db()`.
+- **SQLite (web):** Use **`async with _db() as db:`** in `web/manager/db.py` (the bound name `db` is the **connection**, despite the name). `_db()` is an `@asynccontextmanager` around **`async with aiosqlite.connect(...)`** and sets WAL + `foreign_keys`. Do **not** `await aiosqlite.connect()` and then `async with` the same `Connection`: aiosqlite starts a worker thread on connect/`__aenter__`, and doing both triggers `RuntimeError: threads can only be started once`. See `tournament_logic.py` for `async with db._db() as conn:` (same helper via the `db` module).
 - **LLM output format:** Structured JSON with `action_type`, `index`, `reasoning`, optional `callout` — defined in `ACTION_FORMAT_INSTRUCTIONS` in `match_runner.py` (appended to persona prompts in `build_system_prompt`).
 - **Pokédex data layer:** `agents/pokedex.py` provides lookup functions for moves, species, abilities, items, and type matchups. Move/species/type data comes from poke-env `GenData`; item/ability/move text descriptions are extracted from Showdown's upstream repo at build time by `agents/scripts/extract_showdown_data.py` into `/app/data/*.json`.
 - **Inter-service state:** JSON files on shared Docker volumes plus SQLite on `manager-data` are the integration contract between agents and web.
@@ -127,7 +127,7 @@ docker compose down
 
 ## Personas
 
-Persona files live in `agents/personas/*.md`. Each has YAML front matter (`name`, `abbreviation`, `description`) and a free-form prompt body. The slug is the filename without `.md`.
+Persona files live in `agents/personas/*.md`. Each has YAML front matter (`name`, `abbreviation`, `description`) and a free-form prompt body. The slug is the filename without `.md`. Showdown usernames default from **`name`** (see `_make_player_name` in `match_runner.py`), not from the LLM model id.
 
 Built-in personas: `aggro` (Damage Dan — hyper-offense) and `stall` (Stall Stella — defensive).
 
@@ -172,7 +172,7 @@ Data layer: `agents/pokedex.py` — lookup functions return formatted strings. `
 
 ## Gotchas
 
-- **Gen 1 (and similar) battle formats:** poke-env’s `Move` helpers (e.g. `.heal`) assume movedex fractions exist; Gen 1 moves like **Recover** can have `null` entries and crash inside poke-env. `agents/llm_player.py` `_move_summary` uses **`_safe_move_attr`** so optional move metadata is skipped instead of aborting the turn.
+- **Gen 1 (and similar) battle formats:** poke-env’s `Move` helpers (e.g. `.heal`) assume movedex fractions exist; Gen 1 moves like **Recover** can have `null` entries and crash inside poke-env. `agents/llm_player.py` `_move_summary` uses **`_safe_move_attr`** so optional move metadata is skipped instead of aborting the turn. **Gen 1 asleep/frozen:** Showdown sends a pseudo-move id **`fight`** (the client “Fight” action, not in the movedex). Older poke-env builds raise `ValueError: Unknown move: fight` when parsing the request because `Move.__init__` reads `max_pp` → `entry`. **`_patch_poke_env_pseudo_move_entries()`** in `llm_player.py` (runs at import) wraps `Move.entry` with synthetic data for **`fight`** and **`recharge`**, matching newer upstream poke-env; `SPECIAL_MOVES.add("fight")` in `LLMPlayer` alone does not fix that parse path.
 - **`/manager/config`:** Unauthenticated like the rest of `/manager`. When the host `.env` is mounted writable, anyone who can reach the web port can change API keys and stream settings. Restrict network access. Saving only updates the file; restart or recreate containers (`docker compose up -d`, `scripts/restart_stack.sh`) so `agents` and `stream` see new values.
 - **Bind-mount `./.env`:** Create the host file before the first `docker compose up` (`cp .env.example .env`). If `.env` is missing, Docker can create a **directory** named `.env`, which breaks Compose env substitution and the Config page mount.
 - **Queue worker:** The agents container runs `queue_worker.py` by default. Match count and battle format come from the manager API / SQLite queue, not from env vars.

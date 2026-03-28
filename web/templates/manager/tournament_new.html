@@ -43,6 +43,21 @@
     </div>
   </div>
 
+  <div class="form-group" id="single-elim-bracket-wrap" style="display: none">
+    <label for="single_elim_bracket">Winners bracket layout</label>
+    <select id="single_elim_bracket">
+      <option value="compact" selected>
+        Compact — everyone plays round 1 when possible (e.g. 6 players → 3 games)
+      </option>
+      <option value="power_of_two">
+        Power of 2 — pad to the next 2^n slot tree (classic first-round byes)
+      </option>
+    </select>
+    <p class="text-muted text-small mt-1">
+      Applies to the <strong>winners bracket</strong> in single and double elimination. Ignored for round robin.
+    </p>
+  </div>
+
   <div class="form-group">
     <label>Participants</label>
     <div id="entries-container"></div>
@@ -59,6 +74,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/provider-model-validate.js"></script>
 <script>
 const providers = {{ providers | tojson }};
 const personas = {{ personas | tojson }};
@@ -78,7 +94,7 @@ function addEntry(defaults) {
     <select name="provider" class="entry-provider">
       ${providers.map(p => `<option value="${p}" ${d.provider===p?'selected':''}>${p}</option>`).join('')}
     </select>
-    <input type="text" name="model" placeholder="Model ID (e.g. claude-sonnet-4-20250514)" value="${d.model||''}" required>
+    <input type="text" name="model" placeholder="e.g. claude-haiku-4-5-20251001" value="${d.model||''}" required>
     <select name="persona">
       ${personas.map(p => `<option value="${p.slug}" ${d.persona===p.slug?'selected':''}>${p.name} (${p.slug})</option>`).join('')}
     </select>
@@ -91,6 +107,16 @@ function addEntry(defaults) {
 // Start with 2 entries
 addEntry(); addEntry();
 
+function syncSingleElimBracketVisibility() {
+  const type = document.getElementById('type').value;
+  const wrap = document.getElementById('single-elim-bracket-wrap');
+  if (!wrap) return;
+  const show = type === 'single_elimination' || type === 'double_elimination';
+  wrap.style.display = show ? '' : 'none';
+}
+document.getElementById('type').addEventListener('change', syncSingleElimBracketVisibility);
+syncSingleElimBracketVisibility();
+
 document.getElementById('tournament-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const errEl = document.getElementById('form-error');
@@ -101,22 +127,35 @@ document.getElementById('tournament-form').addEventListener('submit', async (e) 
 
   const rows = document.querySelectorAll('.entry-row');
   const entries = [];
-  for (const row of rows) {
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const prov = row.querySelector('[name=provider]').value;
+    const mod = row.querySelector('[name=model]').value.trim();
+    const chk = validateProviderModel(prov, mod, 'Entry ' + (i + 1));
+    if (!chk.ok) {
+      errEl.textContent = chk.message;
+      errEl.style.display = 'block';
+      return;
+    }
     entries.push({
-      provider: row.querySelector('[name=provider]').value,
-      model: row.querySelector('[name=model]').value.trim(),
+      provider: prov,
+      model: mod,
       persona_slug: row.querySelector('[name=persona]').value,
       seed: parseInt(row.querySelector('[name=seed]').value) || entries.length + 1,
     });
   }
 
+  const typeVal = document.getElementById('type').value;
   const body = {
     name: document.getElementById('name').value.trim(),
-    type: document.getElementById('type').value,
+    type: typeVal,
     battle_format,
     best_of: parseInt(document.getElementById('best_of').value),
     entries,
   };
+  if (typeVal === 'single_elimination' || typeVal === 'double_elimination') {
+    body.single_elim_bracket = document.getElementById('single_elim_bracket').value;
+  }
 
   try {
     const res = await fetch('/api/manager/tournaments', {
@@ -126,7 +165,9 @@ document.getElementById('tournament-form').addEventListener('submit', async (e) 
     });
     if (!res.ok) {
       const err = await res.json();
-      throw new Error(err.detail || 'Failed to create tournament');
+      const d = err.detail;
+      const msg = typeof d === 'string' ? d : Array.isArray(d) ? d.map(x => x.msg || x).join(' ') : 'Failed to create tournament';
+      throw new Error(msg || 'Failed to create tournament');
     }
     const t = await res.json();
     location.href = `/manager/tournaments/${t.id}`;

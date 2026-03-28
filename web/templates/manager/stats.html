@@ -41,10 +41,6 @@
 <!-- Persona Performance -->
 <section class="card">
   <h2>Persona Performance</h2>
-  <p class="text-muted stats-h2-note">
-    Rows use each match’s stored persona <strong>slug</strong> (e.g. <code>aggro</code>), not Showdown login or bracket copy labels.
-    Several tournament entries with the same persona share one row; wins/losses from all of them add up.
-  </p>
   {% if stats.persona_stats %}
   <div class="stats-chart-wrap"><canvas id="chart-personas" aria-label="Persona wins and losses"></canvas></div>
   <table class="table">
@@ -101,7 +97,6 @@
   {% endif %}
 
   <h3 class="stats-subsection-title">By persona pairing</h3>
-  <p class="text-muted stats-h2-note">Pairings use slugs as stored on the match (e.g. mirror tournaments are <code>aggro</code> vs <code>aggro</code>).</p>
   {% if stats.head_to_head_personas %}
   <table class="table">
     <thead>
@@ -181,7 +176,9 @@
         };
       })
       .sort(function (a, b) {
-        return b.total - a.total || a.label.localeCompare(b.label);
+        if (b.win_rate !== a.win_rate) return b.win_rate - a.win_rate;
+        if (b.total !== a.total) return b.total - a.total;
+        return a.label.localeCompare(b.label);
       });
   }
 

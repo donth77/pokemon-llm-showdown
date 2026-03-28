@@ -164,7 +164,15 @@
         '<td class="text-p1">' + esc(m.player1_persona_label || '') + '</td>' +
         '<td class="text-p2">' + esc(m.player2_persona_label || '') + '</td>' +
         '<td><code>' + esc(m.battle_format || '') + '</code></td>' +
-        '<td>' + esc(String(m.game_number != null ? m.game_number : '')) + '</td>' +
+        '<td>' +
+          esc(
+            m.pending_slot
+              ? '—'
+              : m.game_number != null
+                ? String(m.game_number)
+                : '',
+          ) +
+        '</td>' +
         '<td>' + seriesCell + '</td>' +
         '</tr>'
       );

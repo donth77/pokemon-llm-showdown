@@ -559,12 +559,21 @@ input:focus, select:focus { outline: none; border-color: var(--primary); }
 .text-muted { color: var(--text-muted); }
 .text-win { color: var(--win-color); font-weight: 600; }
 
-/* Tournament detail: champion / series winner highlights (gold vs global green win) */
-.tournament-detail .bracket-player--winner {
+/* Tournament detail: true champion (gold + trophy) vs bracket/series win (green) */
+.tournament-detail .bracket-player--champion {
   color: var(--tournament-winner-gold);
 }
-.tournament-detail .text-win {
+.tournament-detail .bracket-player--round-winner {
+  color: var(--win-color);
+  font-weight: 600;
+}
+.tournament-detail .text-tournament-champion {
   color: var(--tournament-winner-gold);
+  font-weight: 600;
+}
+.tournament-detail .text-series-win {
+  color: var(--win-color);
+  font-weight: 600;
 }
 .text-loss { color: var(--danger); font-weight: 600; }
 .text-p1 { color: var(--p1-color); font-weight: 600; }

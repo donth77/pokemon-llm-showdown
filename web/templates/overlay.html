@@ -31,7 +31,10 @@
         display: flex;
         flex-direction: column;
         gap: 12px;
-        max-height: 690px;
+        width: 310px;
+        max-width: 310px;
+        max-height: 688px;
+        align-items: stretch;
       }
 
       .scoreboard {
@@ -122,13 +125,12 @@
         border: 2px solid rgba(255, 255, 255, 0.15);
         border-radius: 12px;
         padding: 12px 16px;
-        min-width: 280px;
-        max-width: 310px;
-        height: 450px;
+        min-width: 0;
+        min-height: 300px;
         backdrop-filter: blur(8px);
         display: flex;
         flex-direction: column;
-        flex: 0 0 auto;
+        flex: 1 1 0;
         overflow: hidden;
       }
 
@@ -176,20 +178,14 @@
         font-weight: 400;
       }
 
-      .history-winner {
+      .history-mark-l {
+        color: #ff6b6b;
         font-weight: 600;
       }
 
-      .history-winner-p1 {
-        color: #ff6b6b;
-      }
-
-      .history-winner-p2 {
-        color: #74b9ff;
-      }
-
-      .history-winner-other {
+      .history-mark-w {
         color: #51cf66;
+        font-weight: 600;
       }
 
       .history-meta {
@@ -212,6 +208,131 @@
         text-align: center;
         padding: 24px 8px;
         line-height: 1.5;
+      }
+
+      .ticker-bar {
+        flex: 0 0 auto;
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        width: 100%;
+        background: rgba(0, 0, 0, 0.75);
+        border: 2px solid rgba(255, 255, 255, 0.15);
+        border-radius: 12px;
+        padding: 10px 12px 12px;
+        backdrop-filter: blur(8px);
+      }
+
+      /* `hidden` must win over `display: flex` above (author CSS beats UA [hidden]). */
+      .ticker-bar[hidden] {
+        display: none !important;
+      }
+
+      .ticker-label {
+        flex: 0 0 auto;
+        display: block;
+        text-align: center;
+        padding: 0 0 8px;
+        margin: 0;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.6);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        white-space: nowrap;
+      }
+
+      .ticker-viewport {
+        flex: 0 0 auto;
+        width: 100%;
+        min-width: 0;
+        margin-top: 10px;
+        min-height: 2.5em;
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        /* Fade only the right edge so the start of the line is fully readable */
+        mask-image: linear-gradient(
+          90deg,
+          #000 0,
+          #000 calc(100% - 16px),
+          transparent
+        );
+        -webkit-mask-image: linear-gradient(
+          90deg,
+          #000 0,
+          #000 calc(100% - 16px),
+          transparent
+        );
+      }
+
+      .ticker-viewport.is-static {
+        mask-image: none;
+        -webkit-mask-image: none;
+        justify-content: center;
+      }
+
+      .ticker-viewport.is-static .ticker-track {
+        animation: none !important;
+        transform: none !important;
+      }
+
+      .ticker-track {
+        display: flex;
+        flex-direction: row;
+        flex-wrap: nowrap;
+        align-items: center;
+        width: max-content;
+        flex-shrink: 0;
+        will-change: transform;
+        transform: translateX(0);
+        animation: ticker-marquee linear infinite;
+        animation-delay: 2s;
+        animation-fill-mode: backwards;
+      }
+
+      .ticker-group {
+        display: flex;
+        flex-direction: row;
+        flex-wrap: nowrap;
+        align-items: center;
+        flex-shrink: 0;
+        padding: 0 20px;
+        font-size: 12px;
+        font-weight: 500;
+        line-height: 1.35;
+        color: rgba(255, 255, 255, 0.88);
+        white-space: nowrap;
+        letter-spacing: 0.01em;
+      }
+
+      .ticker-group .ticker-sep {
+        color: rgba(255, 255, 255, 0.35);
+        padding: 0 0.35em;
+      }
+
+      @keyframes ticker-marquee {
+        0% {
+          transform: translateX(0);
+        }
+        100% {
+          transform: translateX(-50%);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .ticker-track {
+          animation: none !important;
+          transform: none !important;
+        }
+
+        .ticker-viewport {
+          mask-image: none;
+          -webkit-mask-image: none;
+          justify-content: center;
+        }
       }
     </style>
   </head>
@@ -240,9 +361,24 @@
         <h2>Recent Matches</h2>
         <div class="history-scroll" id="history-scroll"></div>
       </div>
+
+      <div
+        class="ticker-bar"
+        id="ticker-bar"
+        role="region"
+        aria-label="Upcoming matches"
+      >
+        <span class="ticker-label">Up next</span>
+        <div class="ticker-viewport" id="ticker-viewport">
+          <div class="ticker-track" id="ticker-track" aria-hidden="true">
+            <span class="ticker-group" id="ticker-g1"></span>
+            <span class="ticker-group" id="ticker-g2"></span>
+          </div>
+        </div>
+      </div>
     </div>
 
-    <script src="/static/format-utils.js"></script>
+    <script src="/static/format-utils.js?v={{ cache_bust }}"></script>
     <script>
       function formatDuration(secs) {
         if (!secs || secs <= 0) return "--";
@@ -274,42 +410,64 @@
           .replace(/>/g, "&gt;");
       }
 
-      function titleCaseBracketToken(b) {
-        if (!b) return "";
-        return String(b)
-          .split("_")
-          .filter(Boolean)
-          .map(function (w) {
-            return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
-          })
-          .join(" ");
-      }
-
-      /** Tournament name + series slot (S#, bracket, R/M, optional Gn) for scoreboard history. */
-      function formatTournamentSeriesContext(m) {
-        var bits = [];
-        var tname = m.tournament_name;
-        if (tname != null && String(tname).trim()) {
-          bits.push(esc(String(tname).trim()));
+      function formatTournamentStageLabel(m) {
+        var bracket = m.series_bracket;
+        var rn = m.series_round_number;
+        var maxWb = m.tournament_max_winners_round;
+        if (bracket === "grand_finals") {
+          return "Grand Finals";
         }
-        var sid = m.series_id;
-        if (sid != null && sid !== "") {
-          var n = Number(sid);
-          if (Number.isFinite(n) && n > 0) {
-            var segs = ["S#" + n];
-            var brk = titleCaseBracketToken(m.series_bracket);
-            if (brk) segs.push(brk);
-            var rn = m.series_round_number;
-            var mp = m.series_match_position;
-            if (rn != null && rn !== "") segs.push("R" + rn);
-            if (mp != null && mp !== "") segs.push("M" + mp);
-            var gn = m.game_number;
-            if (gn != null && Number(gn) > 1) segs.push("G" + gn);
-            bits.push(esc(segs.join(" · ")));
+        if (
+          bracket === "winners" &&
+          rn != null &&
+          rn !== "" &&
+          maxWb != null &&
+          maxWb !== ""
+        ) {
+          var r = Number(rn);
+          var mx = Number(maxWb);
+          if (Number.isFinite(r) && Number.isFinite(mx) && mx > 0) {
+            if (r === mx) {
+              return "Finals";
+            }
+            /* "Semifinals" only when there is a real penultimate round (3+ WB rounds) */
+            if (r === mx - 1 && mx >= 3) {
+              return "Semifinals";
+            }
           }
         }
-        if (!bits.length) return "";
-        return bits.join(" · ");
+        return "";
+      }
+
+      function buildTournamentContextSegments(m, escaper) {
+        var escFn = escaper || function (x) { return x; };
+        var stage = formatTournamentStageLabel(m);
+        var rn = m.series_round_number;
+        var mp = m.series_match_position;
+        var gn = m.game_number;
+        var segs = [];
+        if (stage) {
+          segs.push(escFn(stage));
+        } else if (rn != null && rn !== "") {
+          segs.push("R" + escFn(String(rn)));
+        }
+        if (mp != null && mp !== "") {
+          segs.push("M" + escFn(String(mp)));
+        }
+        if (gn != null && Number(gn) > 1) {
+          segs.push("G" + escFn(String(gn)));
+        }
+        return segs;
+      }
+
+      /** Tournament · stage · M# (HTML); empty if not a tournament match. */
+      function formatHistoryTournamentContext(m) {
+        var tname = m.tournament_name;
+        if (tname == null || !String(tname).trim()) return "";
+        var name = esc(String(tname).trim());
+        var segs = buildTournamentContextSegments(m, esc);
+        if (!segs.length) return name;
+        return name + " - " + segs.join(" · ");
       }
 
       var $p1Name = document.getElementById("p1-name");
@@ -321,6 +479,98 @@
       var $matchCount = document.getElementById("match-count");
       var $historyPanel = document.getElementById("history-panel");
       var $historyScroll = document.getElementById("history-scroll");
+      var $tickerVp = document.getElementById("ticker-viewport");
+      var $tickerTrack = document.getElementById("ticker-track");
+      var $tickerG1 = document.getElementById("ticker-g1");
+      var $tickerG2 = document.getElementById("ticker-g2");
+      var tickerQueuedCount = 0;
+
+      function formatUpcomingMatchLine(m) {
+        var a =
+          String(m.player1_stream_label || m.player1_persona_label || "").trim() ||
+          "TBD";
+        var b =
+          String(m.player2_stream_label || m.player2_persona_label || "").trim() ||
+          "TBD";
+        var head = a + " vs " + b;
+        var tname = m.tournament_name;
+        if (tname == null || !String(tname).trim()) {
+          return head;
+        }
+        var tnm = String(tname).trim();
+        var segs = buildTournamentContextSegments(m, function (x) { return x; });
+        if (!segs.length) {
+          return head + " · " + tnm;
+        }
+        return head + " · " + tnm + " - " + segs.join(" · ");
+      }
+
+      function syncTickerScroll() {
+        if (
+          !$tickerVp ||
+          !$tickerTrack ||
+          !$tickerG1 ||
+          !$tickerG2
+        ) {
+          return;
+        }
+        if (tickerQueuedCount === 0) {
+          $tickerVp.classList.add("is-static");
+          $tickerTrack.style.animationDuration = "";
+          $tickerTrack.style.transform = "";
+          $tickerG2.style.display = "none";
+          return;
+        }
+        var reduce =
+          window.matchMedia &&
+          window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        if (reduce) {
+          $tickerVp.classList.add("is-static");
+          $tickerTrack.style.animationDuration = "";
+          $tickerTrack.style.transform = "";
+          $tickerG2.style.display = "none";
+          return;
+        }
+        /*
+         * Always run the duplicated marquee when there is queued content (unless reduced motion).
+         * Width-based overflow checks flipped after font/layout/reflow and permanently added
+         * is-static + hid g2, which killed CSS infinite animation mid-session.
+         */
+        $tickerVp.classList.remove("is-static");
+        $tickerG2.style.display = "";
+        var full = $tickerTrack.scrollWidth;
+        var half = full > 0 ? full / 2 : 0;
+        if (!half) {
+          $tickerVp.classList.add("is-static");
+          $tickerTrack.style.animationDuration = "";
+          $tickerTrack.style.transform = "";
+          $tickerG2.style.display = "none";
+          return;
+        }
+        /* Slower crawl; ~half a viewport width per ~7s at the low end */
+        var sec = Math.max(42, Math.min(140, half / 22));
+        $tickerTrack.style.animationDuration = sec + "s";
+      }
+
+      function renderUpcomingTicker(matches) {
+        var n = matches && matches.length ? matches.length : 0;
+        tickerQueuedCount = n;
+        if (n === 0) {
+          $tickerG1.textContent = "No matches queued.";
+          $tickerG2.textContent = "";
+        } else {
+          var parts = [];
+          for (var i = 0; i < matches.length; i++) {
+            parts.push(formatUpcomingMatchLine(matches[i]));
+          }
+          var line = parts.join("  |  ");
+          $tickerG1.textContent = line;
+          $tickerG2.textContent = line;
+        }
+        requestAnimationFrame(function () {
+          requestAnimationFrame(syncTickerScroll);
+        });
+      }
 
       function renderScoreboard(data) {
         var p1 = data.player1_name || "Player 1";
@@ -377,16 +627,18 @@
               rowP2 = fb2;
             }
           }
-          var winnerClass = "history-winner-other";
-          if (winner === rowP1) winnerClass = "history-winner-p1";
-          if (winner === rowP2) winnerClass = "history-winner-p2";
-          var fmtLabel = displayBattleFormat(m.battle_format);
-          var fmt = fmtLabel
-            ? ' <span class="history-format">&middot; ' +
-              esc(fmtLabel) +
-              "</span>"
-            : "";
-          var ctxLine = formatTournamentSeriesContext(m);
+          var p1Mark = "";
+          var p2Mark = "";
+          if (winner) {
+            if (winner === rowP1) {
+              p1Mark = ' <span class="history-mark-w">(W)</span>';
+              p2Mark = ' <span class="history-mark-l">(L)</span>';
+            } else if (winner === rowP2) {
+              p1Mark = ' <span class="history-mark-l">(L)</span>';
+              p2Mark = ' <span class="history-mark-w">(W)</span>';
+            }
+          }
+          var ctxLine = formatHistoryTournamentContext(m);
           var ctxHtml = ctxLine
             ? '<div class="history-context">' + ctxLine + "</div>"
             : "";
@@ -394,16 +646,11 @@
             '<div class="history-entry">' +
             '<div class="history-matchup">' +
             esc(rowP1) +
+            p1Mark +
             " vs " +
             esc(rowP2) +
-            fmt +
+            p2Mark +
             "</div>" +
-            "<div>Winner: " +
-            '<span class="history-winner ' +
-            winnerClass +
-            '">' +
-            esc(winner) +
-            "</span></div>" +
             ctxHtml +
             '<div class="history-meta">' +
             formatTime(m.timestamp) +
@@ -418,19 +665,41 @@
 
       async function refresh() {
         try {
-          var resp = await fetch("/scoreboard", { cache: "no-store" });
+          var scoreP = fetch("/scoreboard", { cache: "no-store" });
+          var upP = fetch("/api/manager/queue/upcoming?limit=24", {
+            cache: "no-store",
+          });
+          var resp = await scoreP;
           var data = await resp.json();
           renderScoreboard(data);
           if (data.total_matches !== lastTotal) {
             lastTotal = data.total_matches;
             renderHistory(data.recent_matches || []);
           }
+          try {
+            var upResp = await upP;
+            if (upResp.ok) {
+              var upcoming = await upResp.json();
+              renderUpcomingTicker(
+                Array.isArray(upcoming) ? upcoming : [],
+              );
+            }
+          } catch (_) {}
         } catch (_) {}
       }
 
       renderHistory([]);
+      renderUpcomingTicker([]);
       refresh();
       setInterval(refresh, 10000);
+      window.addEventListener("resize", function () {
+        syncTickerScroll();
+      });
+      if (window.matchMedia) {
+        window
+          .matchMedia("(prefers-reduced-motion: reduce)")
+          .addEventListener("change", syncTickerScroll);
+      }
     </script>
   </body>
 </html>

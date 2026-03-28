@@ -52,7 +52,7 @@
       </div>
       <div class="form-group">
         <label>Model</label>
-        <input type="text" id="p1_model" placeholder="e.g. claude-sonnet-4-20250514" required>
+        <input type="text" id="p1_model" placeholder="e.g. claude-haiku-4-5-20251001" required>
       </div>
       <div class="form-group">
         <label>Persona</label>
@@ -74,7 +74,7 @@
       </div>
       <div class="form-group">
         <label>Model</label>
-        <input type="text" id="p2_model" placeholder="e.g. deepseek-chat" required>
+        <input type="text" id="p2_model" placeholder="e.g. claude-haiku-4-5-20251001" required>
       </div>
       <div class="form-group">
         <label>Persona</label>
@@ -95,6 +95,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/provider-model-validate.js"></script>
 <script>
 function toggleMatchType() {
   const type = document.getElementById('match_type').value;
@@ -129,6 +130,19 @@ document.getElementById('match-form').addEventListener('submit', async (e) => {
     body.count = parseInt(document.getElementById('count').value);
   }
 
+  const v1 = validateProviderModel(body.player1_provider, body.player1_model, 'Player 1');
+  if (!v1.ok) {
+    errEl.textContent = v1.message;
+    errEl.style.display = 'block';
+    return;
+  }
+  const v2 = validateProviderModel(body.player2_provider, body.player2_model, 'Player 2');
+  if (!v2.ok) {
+    errEl.textContent = v2.message;
+    errEl.style.display = 'block';
+    return;
+  }
+
   try {
     const res = await fetch('/api/manager/matches', {
       method: 'POST',
@@ -137,7 +151,9 @@ document.getElementById('match-form').addEventListener('submit', async (e) => {
     });
     if (!res.ok) {
       const err = await res.json();
-      throw new Error(err.detail || 'Failed to create match');
+      const d = err.detail;
+      const msg = typeof d === 'string' ? d : Array.isArray(d) ? d.map(x => x.msg || x).join(' ') : 'Failed to create match';
+      throw new Error(msg || 'Failed to create match');
     }
     const data = await res.json();
     if (data.type === 'series') {
