@@ -8,6 +8,7 @@ container restarts.
 
 from __future__ import annotations
 
+import sqlite3
 import time
 from collections import Counter, defaultdict
 from contextlib import asynccontextmanager
@@ -100,6 +101,16 @@ CREATE TABLE IF NOT EXISTS matches (
     started_at      REAL,
     completed_at    REAL
 );
+
+CREATE TABLE IF NOT EXISTS tournament_presets (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT    NOT NULL COLLATE NOCASE,
+    body        TEXT    NOT NULL,
+    created_at  REAL    NOT NULL,
+    updated_at  REAL    NOT NULL,
+    UNIQUE(name)
+);
+CREATE INDEX IF NOT EXISTS idx_tpresets_name ON tournament_presets(name);
 """
 
 
@@ -195,6 +206,28 @@ async def init_db() -> None:
         await db.commit()
     await _migrate_sqlite_columns()
     await _migrate_tournament_columns()
+    await _ensure_tournament_presets_table()
+
+
+async def _ensure_tournament_presets_table() -> None:
+    """CREATE TABLE for DBs created before tournament_presets existed."""
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tournament_presets (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                name        TEXT    NOT NULL COLLATE NOCASE,
+                body        TEXT    NOT NULL,
+                created_at  REAL    NOT NULL,
+                updated_at  REAL    NOT NULL,
+                UNIQUE(name)
+            )
+            """
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tpresets_name ON tournament_presets(name)"
+        )
+        await db.commit()
 
 
 def _now() -> float:
@@ -351,6 +384,106 @@ async def get_tournament(tournament_id: int) -> dict | None:
         t["series"] = [dict(r) for r in await cur3.fetchall()]
     attach_tournament_persona_display_fields(t)
     return t
+
+
+# ---------------------------------------------------------------------------
+# Tournament definition presets (plaintext; stored on manager-data volume)
+# ---------------------------------------------------------------------------
+
+PRESET_NAME_DUP = "duplicate_preset_name"
+
+
+async def list_tournament_presets() -> list[dict[str, Any]]:
+    async with _db() as db:
+        cur = await db.execute(
+            """SELECT id, name, created_at, updated_at FROM tournament_presets
+               ORDER BY name COLLATE NOCASE"""
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_tournament_preset(preset_id: int) -> dict[str, Any] | None:
+    async with _db() as db:
+        cur = await db.execute(
+            "SELECT * FROM tournament_presets WHERE id = ?", (preset_id,)
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def create_tournament_preset(*, name: str, body: str) -> dict[str, Any]:
+    now = _now()
+    nm = name.strip()
+    async with _db() as db:
+        try:
+            cur = await db.execute(
+                """INSERT INTO tournament_presets (name, body, created_at, updated_at)
+                   VALUES (?, ?, ?, ?)""",
+                (nm, body, now, now),
+            )
+            pid = cur.lastrowid
+        except sqlite3.IntegrityError as exc:
+            if "UNIQUE" in str(exc).upper():
+                raise ValueError(PRESET_NAME_DUP) from exc
+            raise
+        await db.commit()
+    out = await get_tournament_preset(int(pid))
+    assert out is not None
+    return out
+
+
+async def update_tournament_preset(
+    preset_id: int,
+    *,
+    name: str | None = None,
+    body: str | None = None,
+) -> dict[str, Any] | None:
+    if name is None and body is None:
+        return await get_tournament_preset(preset_id)
+    now = _now()
+    async with _db() as db:
+        cur = await db.execute(
+            "SELECT id FROM tournament_presets WHERE id = ?", (preset_id,)
+        )
+        if not await cur.fetchone():
+            return None
+        if name is not None and body is not None:
+            try:
+                await db.execute(
+                    """UPDATE tournament_presets SET name = ?, body = ?, updated_at = ?
+                       WHERE id = ?""",
+                    (name.strip(), body, now, preset_id),
+                )
+            except sqlite3.IntegrityError as exc:
+                if "UNIQUE" in str(exc).upper():
+                    raise ValueError(PRESET_NAME_DUP) from exc
+                raise
+        elif name is not None:
+            try:
+                await db.execute(
+                    "UPDATE tournament_presets SET name = ?, updated_at = ? WHERE id = ?",
+                    (name.strip(), now, preset_id),
+                )
+            except sqlite3.IntegrityError as exc:
+                if "UNIQUE" in str(exc).upper():
+                    raise ValueError(PRESET_NAME_DUP) from exc
+                raise
+        else:
+            await db.execute(
+                "UPDATE tournament_presets SET body = ?, updated_at = ? WHERE id = ?",
+                (body if body is not None else "", now, preset_id),
+            )
+        await db.commit()
+    return await get_tournament_preset(preset_id)
+
+
+async def delete_tournament_preset(preset_id: int) -> bool:
+    async with _db() as db:
+        cur = await db.execute(
+            "DELETE FROM tournament_presets WHERE id = ?", (preset_id,)
+        )
+        await db.commit()
+        return cur.rowcount > 0
 
 
 def _winner_entry_from_series(series_completed: list[dict], ttype: str) -> tuple[int | None, bool]:
@@ -1044,17 +1177,46 @@ async def list_tournament_series_pending_opponent(*, limit: int = 24) -> list[di
         return [dict(r) for r in await cur.fetchall()]
 
 
-async def get_stats() -> dict:
+def _stats_battle_format_filter(
+    battle_formats: list[str] | None,
+) -> tuple[str, tuple[Any, ...], tuple[Any, ...]]:
+    """
+    Returns (SQL fragment, params for a single SELECT, params for UNION of two SELECTs).
+    When battle_formats is empty/None, no filter (all completed matches).
+    """
+    if not battle_formats:
+        return "", (), ()
+    placeholders = ",".join("?" * len(battle_formats))
+    frag = f" AND battle_format IN ({placeholders})"
+    t = tuple(battle_formats)
+    return frag, t, t + t
+
+
+async def list_completed_battle_formats() -> list[str]:
+    """Distinct battle formats that appear in at least one completed match."""
+    async with _db() as db:
+        cur = await db.execute(
+            """
+            SELECT DISTINCT battle_format FROM matches
+            WHERE status = 'completed' AND battle_format != ''
+            ORDER BY battle_format COLLATE NOCASE
+            """
+        )
+        return [str(r[0]) for r in await cur.fetchall() if r[0]]
+
+
+async def get_stats(battle_formats: list[str] | None = None) -> dict:
     """Aggregate stats for the analytics dashboard."""
+    bf_frag, bf_one, bf_two = _stats_battle_format_filter(battle_formats)
     async with _db() as db:
         # Win rates by model (provider/model combo)
         model_cur = await db.execute(
-            """SELECT
+            f"""SELECT
                  player1_provider || '/' || player1_model as model,
                  SUM(CASE WHEN winner_side = 'p1' THEN 1 ELSE 0 END) as wins,
                  SUM(CASE WHEN winner_side = 'p2' THEN 1 ELSE 0 END) as losses,
                  COUNT(*) as total
-               FROM matches WHERE status = 'completed'
+               FROM matches WHERE status = 'completed'{bf_frag}
                GROUP BY model
                UNION ALL
                SELECT
@@ -1062,8 +1224,9 @@ async def get_stats() -> dict:
                  SUM(CASE WHEN winner_side = 'p2' THEN 1 ELSE 0 END) as wins,
                  SUM(CASE WHEN winner_side = 'p1' THEN 1 ELSE 0 END) as losses,
                  COUNT(*) as total
-               FROM matches WHERE status = 'completed'
-               GROUP BY model"""
+               FROM matches WHERE status = 'completed'{bf_frag}
+               GROUP BY model""",
+            bf_two,
         )
         model_rows = [dict(r) for r in await model_cur.fetchall()]
         # Merge duplicate model keys
@@ -1090,33 +1253,35 @@ async def get_stats() -> dict:
 
         # Head-to-head matrix
         h2h_cur = await db.execute(
-            """SELECT
+            f"""SELECT
                  player1_provider || '/' || player1_model as model1,
                  player2_provider || '/' || player2_model as model2,
                  SUM(CASE WHEN winner_side = 'p1' THEN 1 ELSE 0 END) as model1_wins,
                  SUM(CASE WHEN winner_side = 'p2' THEN 1 ELSE 0 END) as model2_wins,
                  COUNT(*) as total
-               FROM matches WHERE status = 'completed'
+               FROM matches WHERE status = 'completed'{bf_frag}
                GROUP BY model1, model2
-               ORDER BY total DESC"""
+               ORDER BY total DESC""",
+            bf_one,
         )
         head_to_head = [dict(r) for r in await h2h_cur.fetchall()]
 
         h2h_persona_cur = await db.execute(
-            """SELECT
+            f"""SELECT
                  player1_persona as persona1,
                  player2_persona as persona2,
                  SUM(CASE WHEN winner_side = 'p1' THEN 1 ELSE 0 END) as persona1_wins,
                  SUM(CASE WHEN winner_side = 'p2' THEN 1 ELSE 0 END) as persona2_wins,
                  COUNT(*) as total
-               FROM matches WHERE status = 'completed'
+               FROM matches WHERE status = 'completed'{bf_frag}
                GROUP BY player1_persona, player2_persona
-               ORDER BY total DESC"""
+               ORDER BY total DESC""",
+            bf_one,
         )
         head_to_head_personas = [dict(r) for r in await h2h_persona_cur.fetchall()]
 
         h2h_mp_cur = await db.execute(
-            """SELECT
+            f"""SELECT
                  player1_provider || '/' || player1_model as model1,
                  player1_persona as persona1,
                  player2_provider || '/' || player2_model as model2,
@@ -1124,29 +1289,31 @@ async def get_stats() -> dict:
                  SUM(CASE WHEN winner_side = 'p1' THEN 1 ELSE 0 END) as model1_wins,
                  SUM(CASE WHEN winner_side = 'p2' THEN 1 ELSE 0 END) as model2_wins,
                  COUNT(*) as total
-               FROM matches WHERE status = 'completed'
+               FROM matches WHERE status = 'completed'{bf_frag}
                GROUP BY
                  player1_provider, player1_model, player1_persona,
                  player2_provider, player2_model, player2_persona
-               ORDER BY total DESC"""
+               ORDER BY total DESC""",
+            bf_one,
         )
         head_to_head_model_persona = [dict(r) for r in await h2h_mp_cur.fetchall()]
 
         # Win rates by persona
         persona_cur = await db.execute(
-            """SELECT
+            f"""SELECT
                  player1_persona as persona,
                  SUM(CASE WHEN winner_side = 'p1' THEN 1 ELSE 0 END) as wins,
                  COUNT(*) as total
-               FROM matches WHERE status = 'completed'
+               FROM matches WHERE status = 'completed'{bf_frag}
                GROUP BY persona
                UNION ALL
                SELECT
                  player2_persona as persona,
                  SUM(CASE WHEN winner_side = 'p2' THEN 1 ELSE 0 END) as wins,
                  COUNT(*) as total
-               FROM matches WHERE status = 'completed'
-               GROUP BY persona"""
+               FROM matches WHERE status = 'completed'{bf_frag}
+               GROUP BY persona""",
+            bf_two,
         )
         persona_rows = [dict(r) for r in await persona_cur.fetchall()]
         persona_stats: dict[str, dict] = {}

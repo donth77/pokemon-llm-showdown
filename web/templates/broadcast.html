@@ -4,6 +4,12 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=1280,height=720" />
     <title>{{ stream_title }}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=Teko:wght@500;600&display=swap"
+      rel="stylesheet"
+    />
     <style>
       html,
       body {
@@ -46,7 +52,43 @@
         pointer-events: none;
       }
 
-      /* Full-frame winner splash; above scoreboard overlay, below nothing critical */
+      /*
+        Full-screen splash iframes above thought panels (z-index 12) but in one
+        stacking context so order is: tournament → matchup → victory (victory wins
+        when visible; transparent higher layers still show through to match intro).
+      */
+      .splash-stack {
+        position: absolute;
+        inset: 0;
+        width: 1280px;
+        height: 720px;
+        z-index: 20;
+        pointer-events: none;
+        isolation: isolate;
+      }
+
+      .tournament-intro-frame {
+        position: absolute;
+        inset: 0;
+        width: 1280px;
+        height: 720px;
+        border: 0;
+        background: transparent;
+        pointer-events: none;
+        z-index: 1;
+      }
+
+      .match-intro-frame {
+        position: absolute;
+        inset: 0;
+        width: 1280px;
+        height: 720px;
+        border: 0;
+        background: transparent;
+        pointer-events: none;
+        z-index: 2;
+      }
+
       .victory-frame {
         position: absolute;
         inset: 0;
@@ -55,31 +97,66 @@
         border: 0;
         background: transparent;
         pointer-events: none;
-        z-index: 14;
+        z-index: 3;
       }
 
       .stream-title {
-        padding: 8px 12px;
-        border-radius: 8px;
-        background: rgba(0, 0, 0, 0.55);
-        color: #fff;
-        font-size: 18px;
-        font-weight: 700;
-        letter-spacing: 0.2px;
-        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+        flex-shrink: 1;
+        min-width: 0;
+        max-width: min(560px, calc(100vw - 340px));
+        padding: 6px 24px 10px 16px;
+        margin: 0;
+        border: none;
+        border-left: 4px solid rgba(116, 185, 255, 1);
+        border-radius: 0 6px 6px 0;
+        box-shadow: 0 0 0 1px rgba(116, 185, 255, 0.12);
+        background: linear-gradient(
+          90deg,
+          rgba(4, 12, 34, 0.92) 0%,
+          rgba(6, 14, 40, 0.72) 35%,
+          rgba(6, 14, 40, 0.28) 68%,
+          transparent 100%
+        );
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        color: #f8fafc;
+        font-family: "Teko", system-ui, sans-serif;
+        font-size: 2.125rem;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+        line-height: 1.05;
+        text-transform: none;
+        text-shadow:
+          0 2px 16px rgba(0, 0, 0, 0.95),
+          0 0 40px rgba(116, 185, 255, 0.18),
+          0 1px 0 rgba(0, 0, 0, 0.45);
         pointer-events: none;
         white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+        .stream-title {
+          background: linear-gradient(
+            90deg,
+            rgba(8, 16, 38, 0.95) 0%,
+            rgba(8, 16, 38, 0.78) 55%,
+            transparent 100%
+          );
+        }
       }
 
       .top-left-bar {
         position: absolute;
-        left: 16px;
-        top: 10px;
+        left: 0;
+        top: 0;
         z-index: 10;
         display: flex;
         align-items: center;
-        gap: 12px;
+        gap: 14px;
         pointer-events: none;
+        max-width: calc(100% - 32px);
       }
 
       .battle-format {
@@ -95,20 +172,49 @@
         white-space: nowrap;
       }
 
-      .tournament-info-pill {
-        padding: 4px 10px;
-        border-radius: 999px;
-        background: rgba(0, 0, 0, 0.48);
-        color: rgba(200, 220, 255, 0.95);
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        font-size: 12px;
+      .tournament-info-banner {
+        flex-shrink: 1;
+        min-width: 0;
+        max-width: min(520px, calc(100vw - 320px));
+        padding: 6px 18px 7px 13px;
+        border: none;
+        border-left: 3px solid rgba(186, 168, 255, 0.95);
+        border-radius: 0 5px 5px 0;
+        box-shadow: 0 0 0 1px rgba(186, 168, 255, 0.1);
+        background: linear-gradient(
+          90deg,
+          rgba(18, 12, 42, 0.9) 0%,
+          rgba(18, 12, 42, 0.65) 38%,
+          rgba(18, 12, 42, 0.28) 70%,
+          transparent 100%
+        );
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        color: #e8eaff;
+        font-family: "Barlow Semi Condensed", system-ui, sans-serif;
+        font-size: 0.9375rem;
         font-weight: 700;
-        letter-spacing: 0.2px;
-        pointer-events: none;
-        max-width: min(520px, calc(100vw - 480px));
-        white-space: normal;
-        line-height: 1.35;
+        letter-spacing: 0.04em;
+        line-height: 1.3;
         text-align: left;
+        pointer-events: none;
+        white-space: normal;
+        word-break: break-word;
+        text-shadow:
+          0 1px 12px rgba(0, 0, 0, 0.85),
+          0 0 28px rgba(186, 168, 255, 0.12);
+        margin: 0 0 0 24px;
+      }
+
+      @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+        .tournament-info-banner {
+          background: linear-gradient(
+            90deg,
+            rgba(22, 16, 48, 0.92) 0%,
+            rgba(22, 16, 48, 0.72) 60%,
+            transparent 100%
+          );
+        }
       }
 
       .thoughts-wrap {
@@ -124,6 +230,9 @@
       }
 
       .thoughts-panel {
+        position: relative;
+        display: flex;
+        flex-direction: column;
         background: rgba(4, 10, 24, 0.72);
         border: 1px solid rgba(255, 255, 255, 0.2);
         border-radius: 10px;
@@ -133,13 +242,39 @@
         overflow: hidden;
       }
 
+      .thoughts-panel-head {
+        flex-shrink: 0;
+        margin-bottom: 6px;
+      }
+
       .thoughts-title {
         font-size: 12px;
         letter-spacing: 1.2px;
         text-transform: uppercase;
         color: rgba(255, 255, 255, 0.8);
-        margin-bottom: 6px;
+        margin: 0;
         font-weight: 700;
+        line-height: 1.25;
+        word-break: break-word;
+      }
+
+      .thoughts-portrait {
+        float: right;
+        width: 40px;
+        height: 40px;
+        margin: 0 0 6px 10px;
+        border-radius: 8px;
+        object-fit: cover;
+        object-position: center top;
+        border: 1px solid rgba(255, 255, 255, 0.28);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+        display: none;
+        pointer-events: none;
+        shape-outside: margin-box;
+      }
+
+      .thoughts-portrait.is-visible {
+        display: block;
       }
 
       /* Match overlay scoreboard .player-name.red / .player-name.blue */
@@ -152,10 +287,16 @@
       }
 
       .thoughts-scroll {
-        height: 102px;
+        flex: 1;
+        min-height: 0;
         overflow-y: auto;
         scrollbar-width: none;
         -ms-overflow-style: none;
+      }
+
+      .thoughts-scroll-body {
+        min-width: 0;
+        padding-bottom: 10px;
       }
 
       .thoughts-scroll::-webkit-scrollbar {
@@ -190,7 +331,7 @@
         <div class="stream-title">{{ stream_title }}</div>
         <div class="battle-format" id="battle-format-label">Format: --</div>
         <div
-          class="tournament-info-pill"
+          class="tournament-info-banner"
           id="broadcast-tournament-label"
           hidden
         ></div>
@@ -204,26 +345,57 @@
         allowfullscreen
       >
       </iframe>
-      <iframe class="overlay-frame" src="/overlay" title="Scoreboard Overlay">
-      </iframe>
       <iframe
-        class="victory-frame"
-        src="/victory"
-        title="Victory splash"
-        allow="autoplay"
-      ></iframe>
+        class="overlay-frame"
+        id="overlay-frame"
+        src="/overlay?embed=broadcast"
+        title="Scoreboard Overlay"
+      >
+      </iframe>
+      <div class="splash-stack">
+        <iframe
+          class="tournament-intro-frame"
+          id="tournament-intro-frame"
+          src="/tournament_intro?embed=broadcast"
+          title="Tournament intro"
+        ></iframe>
+        <iframe
+          class="match-intro-frame"
+          id="match-intro-frame"
+          src="/match_intro?embed=broadcast"
+          title="Match intro"
+        ></iframe>
+        <iframe
+          class="victory-frame"
+          id="victory-frame"
+          src="/victory?embed=broadcast"
+          title="Victory splash"
+          allow="autoplay"
+        ></iframe>
+      </div>
       <div class="thoughts-wrap">
         <section class="thoughts-panel">
-          <div class="thoughts-title red" id="thoughts-title-p1">Player 1</div>
-          <div class="thoughts-scroll" id="thoughts-p1"></div>
+          <div class="thoughts-panel-head">
+            <div class="thoughts-title red" id="thoughts-title-p1">Player 1</div>
+          </div>
+          <div class="thoughts-scroll">
+            <img class="thoughts-portrait" id="thoughts-portrait-p1" alt="" />
+            <div class="thoughts-scroll-body" id="thoughts-p1"></div>
+          </div>
         </section>
         <section class="thoughts-panel">
-          <div class="thoughts-title blue" id="thoughts-title-p2">Player 2</div>
-          <div class="thoughts-scroll" id="thoughts-p2"></div>
+          <div class="thoughts-panel-head">
+            <div class="thoughts-title blue" id="thoughts-title-p2">Player 2</div>
+          </div>
+          <div class="thoughts-scroll">
+            <img class="thoughts-portrait" id="thoughts-portrait-p2" alt="" />
+            <div class="thoughts-scroll-body" id="thoughts-p2"></div>
+          </div>
         </section>
       </div>
     </div>
     <script>
+      window.__BROADCAST_SCOREBOARD_HUB__ = true;
       window.__BATTLE_CORE__ = {
         battleFrameId: "battle-frame",
         formatLabelId: "battle-format-label",
@@ -239,6 +411,8 @@
           p2: "thoughts-p2",
           titleP1: "thoughts-title-p1",
           titleP2: "thoughts-title-p2",
+          portraitP1: "thoughts-portrait-p1",
+          portraitP2: "thoughts-portrait-p2",
         },
         calloutIframeId: "battle-frame",
       };
@@ -274,5 +448,45 @@
     </script>
     <script src="/static/broadcast-battle-core.js?v={{ cache_bust }}"></script>
     <script src="/static/broadcast-thoughts-feed.js?v={{ cache_bust }}"></script>
+    <script>
+      (function () {
+        var HUB_MS = 250;
+        var origin = window.location.origin || "*";
+        function pushScoreboardToEmbeds(data) {
+          try {
+            window.dispatchEvent(new CustomEvent("broadcast_scoreboard", { detail: data }));
+          } catch (_e) {}
+          var msg = { type: "scoreboard", payload: data };
+          [
+            "overlay-frame",
+            "tournament-intro-frame",
+            "match-intro-frame",
+            "victory-frame",
+          ].forEach(function (id) {
+            var el = document.getElementById(id);
+            if (!el || !el.contentWindow) return;
+            try {
+              el.contentWindow.postMessage(msg, origin);
+            } catch (_e) {}
+          });
+        }
+        var hubInFlight = false;
+        async function hubTick() {
+          if (hubInFlight) return;
+          hubInFlight = true;
+          try {
+            var r = await fetch("/scoreboard", { cache: "no-store" });
+            if (!r.ok) return;
+            var data = await r.json();
+            pushScoreboardToEmbeds(data);
+          } catch (_e) {}
+          finally {
+            hubInFlight = false;
+          }
+        }
+        hubTick();
+        setInterval(hubTick, HUB_MS);
+      })();
+    </script>
   </body>
 </html>

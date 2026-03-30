@@ -41,7 +41,7 @@
         background: rgba(0, 0, 0, 0.75);
         border: 2px solid rgba(255, 255, 255, 0.15);
         border-radius: 12px;
-        padding: 16px 24px;
+        padding: 16px 20px;
         width: 310px;
         max-width: 310px;
         backdrop-filter: blur(8px);
@@ -84,18 +84,46 @@
         min-width: 0;
       }
 
+      .player-heading {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        min-width: 0;
+      }
+
+      .overlay-player-portrait {
+        width: 36px;
+        height: 36px;
+        border-radius: 8px;
+        object-fit: cover;
+        object-position: center top;
+        border: 1px solid rgba(255, 255, 255, 0.28);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+        flex-shrink: 0;
+        display: none;
+        pointer-events: none;
+      }
+
+      .overlay-player-portrait.is-visible {
+        display: block;
+      }
+
+      .player-heading-text {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+        flex: 1;
+      }
+
       .player-model {
+        display: block;
+        width: 100%;
         font-size: 11px;
         color: rgba(255, 255, 255, 0.55);
         font-variant-numeric: tabular-nums;
-        max-width: 100%;
-        overflow: hidden;
-        text-overflow: ellipsis;
         white-space: nowrap;
-      }
-
-      .player-model.model-long {
-        font-size: 9px;
+        overflow: hidden;
       }
 
       .player-name.red {
@@ -126,7 +154,7 @@
         border-radius: 12px;
         padding: 12px 16px;
         min-width: 0;
-        min-height: 300px;
+        min-height: 380px;
         backdrop-filter: blur(8px);
         display: flex;
         flex-direction: column;
@@ -253,18 +281,20 @@
         display: flex;
         align-items: center;
         justify-content: flex-start;
-        /* Fade only the right edge so the start of the line is fully readable */
+        /* Soft edges on both sides so the marquee loop seam is less noticeable */
         mask-image: linear-gradient(
           90deg,
-          #000 0,
+          transparent 0,
+          #000 10px,
           #000 calc(100% - 16px),
-          transparent
+          transparent 100%
         );
         -webkit-mask-image: linear-gradient(
           90deg,
-          #000 0,
+          transparent 0,
+          #000 10px,
           #000 calc(100% - 16px),
-          transparent
+          transparent 100%
         );
       }
 
@@ -288,6 +318,7 @@
         flex-shrink: 0;
         will-change: transform;
         transform: translateX(0);
+        /* --ticker-shift: first .ticker-group width (px), set in JS for a seamless duplicate loop */
         animation: ticker-marquee linear infinite;
         animation-delay: 2s;
         animation-fill-mode: backwards;
@@ -300,7 +331,7 @@
         align-items: center;
         flex-shrink: 0;
         padding: 0 20px;
-        font-size: 12px;
+        font-size: 18px;
         font-weight: 500;
         line-height: 1.35;
         color: rgba(255, 255, 255, 0.88);
@@ -308,9 +339,37 @@
         letter-spacing: 0.01em;
       }
 
+      .ticker-group .ticker-match {
+        flex-shrink: 0;
+      }
+
       .ticker-group .ticker-sep {
+        flex-shrink: 0;
         color: rgba(255, 255, 255, 0.35);
-        padding: 0 0.35em;
+        margin: 0 28px;
+      }
+
+      .ticker-loop-spacer {
+        display: none;
+        flex-shrink: 0;
+        align-items: center;
+        padding: 0 6px;
+        font-size: 15px;
+        font-weight: 600;
+        line-height: 1;
+        letter-spacing: 0.42em;
+        white-space: nowrap;
+        color: rgba(255, 255, 255, 0.2);
+        user-select: none;
+        pointer-events: none;
+      }
+
+      .ticker-track.ticker-track--single-match .ticker-loop-spacer {
+        display: flex;
+      }
+
+      .ticker-viewport.is-static .ticker-loop-spacer {
+        display: none !important;
       }
 
       @keyframes ticker-marquee {
@@ -318,7 +377,7 @@
           transform: translateX(0);
         }
         100% {
-          transform: translateX(-50%);
+          transform: translateX(calc(-1 * var(--ticker-shift, 50%)));
         }
       }
 
@@ -342,15 +401,37 @@
         <h2>Scoreboard</h2>
         <div class="player-row">
           <div class="player-meta">
-            <span class="player-name red" id="p1-name">Player 1</span>
-            <span class="player-model" id="p1-model"></span>
+            <div class="player-heading">
+              <img
+                class="overlay-player-portrait"
+                id="p1-portrait"
+                alt=""
+                width="36"
+                height="36"
+              />
+              <div class="player-heading-text">
+                <span class="player-name red" id="p1-name">Player 1</span>
+                <span class="player-model" id="p1-model"></span>
+              </div>
+            </div>
           </div>
           <span class="player-wins" id="p1-wins">0</span>
         </div>
         <div class="player-row">
           <div class="player-meta">
-            <span class="player-name blue" id="p2-name">Player 2</span>
-            <span class="player-model" id="p2-model"></span>
+            <div class="player-heading">
+              <img
+                class="overlay-player-portrait"
+                id="p2-portrait"
+                alt=""
+                width="36"
+                height="36"
+              />
+              <div class="player-heading-text">
+                <span class="player-name blue" id="p2-name">Player 2</span>
+                <span class="player-model" id="p2-model"></span>
+              </div>
+            </div>
           </div>
           <span class="player-wins" id="p2-wins">0</span>
         </div>
@@ -372,7 +453,9 @@
         <div class="ticker-viewport" id="ticker-viewport">
           <div class="ticker-track" id="ticker-track" aria-hidden="true">
             <span class="ticker-group" id="ticker-g1"></span>
+            <span class="ticker-loop-spacer" id="ticker-gap-mid" aria-hidden="true">· · · · · · ·</span>
             <span class="ticker-group" id="ticker-g2"></span>
+            <span class="ticker-loop-spacer" id="ticker-gap-end" aria-hidden="true">· · · · · · ·</span>
           </div>
         </div>
       </div>
@@ -439,8 +522,10 @@
         return "";
       }
 
-      function buildTournamentContextSegments(m, escaper) {
+      function buildTournamentContextSegments(m, escaper, includeMatchPosition) {
         var escFn = escaper || function (x) { return x; };
+        var showMp = includeMatchPosition === true;
+        var bracket = m.series_bracket;
         var stage = formatTournamentStageLabel(m);
         var rn = m.series_round_number;
         var mp = m.series_match_position;
@@ -449,32 +534,39 @@
         if (stage) {
           segs.push(escFn(stage));
         } else if (rn != null && rn !== "") {
-          segs.push("R" + escFn(String(rn)));
+          var rlab = escFn(String(rn));
+          if (bracket === "losers") {
+            segs.push("LB R" + rlab);
+          } else {
+            segs.push("R" + rlab);
+          }
         }
-        if (mp != null && mp !== "") {
+        if (showMp && mp != null && mp !== "") {
           segs.push("M" + escFn(String(mp)));
         }
-        if (gn != null && Number(gn) > 1) {
+        if (gn != null) {
           segs.push("G" + escFn(String(gn)));
         }
         return segs;
       }
 
-      /** Tournament · stage · M# (HTML); empty if not a tournament match. */
-      function formatHistoryTournamentContext(m) {
+      /** Tournament · stage · G# (HTML); empty if not a tournament match. M# omitted unless includeMatchPosition. */
+      function formatHistoryTournamentContext(m, includeMatchPosition) {
         var tname = m.tournament_name;
         if (tname == null || !String(tname).trim()) return "";
         var name = esc(String(tname).trim());
-        var segs = buildTournamentContextSegments(m, esc);
+        var segs = buildTournamentContextSegments(m, esc, includeMatchPosition);
         if (!segs.length) return name;
         return name + " - " + segs.join(" · ");
       }
 
       var $p1Name = document.getElementById("p1-name");
       var $p1Model = document.getElementById("p1-model");
+      var $p1Portrait = document.getElementById("p1-portrait");
       var $p1Wins = document.getElementById("p1-wins");
       var $p2Name = document.getElementById("p2-name");
       var $p2Model = document.getElementById("p2-model");
+      var $p2Portrait = document.getElementById("p2-portrait");
       var $p2Wins = document.getElementById("p2-wins");
       var $matchCount = document.getElementById("match-count");
       var $historyPanel = document.getElementById("history-panel");
@@ -483,9 +575,25 @@
       var $tickerTrack = document.getElementById("ticker-track");
       var $tickerG1 = document.getElementById("ticker-g1");
       var $tickerG2 = document.getElementById("ticker-g2");
+      var $tickerGapMid = document.getElementById("ticker-gap-mid");
+      var $tickerGapEnd = document.getElementById("ticker-gap-end");
       var tickerQueuedCount = 0;
+      var lastUpcomingMatches = [];
+      /** From last scoreboard; used to drop repeated tournament names in Up next. */
+      var overlayCurrentTournamentId = null;
+      var useBroadcastHub = /\bembed=broadcast\b/.test(
+        location.search || "",
+      );
 
-      function formatUpcomingMatchLine(m) {
+      function tournamentIdsMatch(qid, currentId) {
+        if (qid == null || currentId == null) return false;
+        if (qid === "" || currentId === "") return false;
+        var a = Number(qid);
+        var b = Number(currentId);
+        return Number.isFinite(a) && Number.isFinite(b) && a === b;
+      }
+
+      function formatUpcomingMatchLine(m, currentTournamentId) {
         var a =
           String(m.player1_stream_label || m.player1_persona_label || "").trim() ||
           "TBD";
@@ -499,6 +607,14 @@
         }
         var tnm = String(tname).trim();
         var segs = buildTournamentContextSegments(m, function (x) { return x; });
+        var sameTournament = tournamentIdsMatch(
+          m.tournament_id,
+          currentTournamentId,
+        );
+        if (sameTournament) {
+          if (!segs.length) return head;
+          return head + " · " + segs.join(" · ");
+        }
         if (!segs.length) {
           return head + " · " + tnm;
         }
@@ -516,8 +632,10 @@
         }
         if (tickerQueuedCount === 0) {
           $tickerVp.classList.add("is-static");
+          $tickerTrack.classList.remove("ticker-track--single-match");
           $tickerTrack.style.animationDuration = "";
           $tickerTrack.style.transform = "";
+          $tickerTrack.style.removeProperty("--ticker-shift");
           $tickerG2.style.display = "none";
           return;
         }
@@ -526,8 +644,10 @@
           window.matchMedia("(prefers-reduced-motion: reduce)").matches;
         if (reduce) {
           $tickerVp.classList.add("is-static");
+          $tickerTrack.classList.remove("ticker-track--single-match");
           $tickerTrack.style.animationDuration = "";
           $tickerTrack.style.transform = "";
+          $tickerTrack.style.removeProperty("--ticker-shift");
           $tickerG2.style.display = "none";
           return;
         }
@@ -540,36 +660,176 @@
         $tickerG2.style.display = "";
         var full = $tickerTrack.scrollWidth;
         var half = full > 0 ? full / 2 : 0;
-        if (!half) {
+        /* One loop = width until the second copy lines up (group + optional single-match spacers) */
+        var gapPx = 0;
+        if (
+          $tickerTrack.classList.contains("ticker-track--single-match") &&
+          $tickerGapMid
+        ) {
+          gapPx = Math.round($tickerGapMid.offsetWidth || 0);
+        }
+        var segPx = Math.max(
+          1,
+          Math.round(($tickerG1.offsetWidth || half || 0) + gapPx),
+        );
+        if (!half || !segPx) {
           $tickerVp.classList.add("is-static");
+          $tickerTrack.classList.remove("ticker-track--single-match");
           $tickerTrack.style.animationDuration = "";
           $tickerTrack.style.transform = "";
+          $tickerTrack.style.removeProperty("--ticker-shift");
           $tickerG2.style.display = "none";
           return;
         }
-        /* Slower crawl; ~half a viewport width per ~7s at the low end */
-        var sec = Math.max(42, Math.min(140, half / 22));
+        $tickerTrack.style.setProperty("--ticker-shift", segPx + "px");
+        /* Slower crawl; scale duration to segment width */
+        var sec = Math.max(42, Math.min(140, segPx / 22));
         $tickerTrack.style.animationDuration = sec + "s";
       }
 
+      function fillTickerGroup(el, parts) {
+        while (el.firstChild) {
+          el.removeChild(el.firstChild);
+        }
+        for (var i = 0; i < parts.length; i++) {
+          if (i > 0) {
+            var sep = document.createElement("span");
+            sep.className = "ticker-sep";
+            sep.textContent = "|";
+            el.appendChild(sep);
+          }
+          var chunk = document.createElement("span");
+          chunk.className = "ticker-match";
+          chunk.textContent = parts[i];
+          el.appendChild(chunk);
+        }
+      }
+
       function renderUpcomingTicker(matches) {
-        var n = matches && matches.length ? matches.length : 0;
+        lastUpcomingMatches = Array.isArray(matches) ? matches.slice() : [];
+        var n = lastUpcomingMatches.length;
         tickerQueuedCount = n;
         if (n === 0) {
           $tickerG1.textContent = "No matches queued.";
           $tickerG2.textContent = "";
+          $tickerTrack.classList.remove("ticker-track--single-match");
         } else {
+          $tickerTrack.classList.toggle("ticker-track--single-match", n === 1);
           var parts = [];
-          for (var i = 0; i < matches.length; i++) {
-            parts.push(formatUpcomingMatchLine(matches[i]));
+          for (var i = 0; i < lastUpcomingMatches.length; i++) {
+            parts.push(
+              formatUpcomingMatchLine(
+                lastUpcomingMatches[i],
+                overlayCurrentTournamentId,
+              ),
+            );
           }
-          var line = parts.join("  |  ");
-          $tickerG1.textContent = line;
-          $tickerG2.textContent = line;
+          fillTickerGroup($tickerG1, parts);
+          fillTickerGroup($tickerG2, parts);
         }
         requestAnimationFrame(function () {
           requestAnimationFrame(syncTickerScroll);
         });
+      }
+
+      function pickOverlayPortraitUrl(portraitUrl, spriteUrl) {
+        var u = String(portraitUrl || "").trim();
+        if (u) return u;
+        return String(spriteUrl || "").trim();
+      }
+
+      var MODEL_LINE_FONT_MAX_PX = 11;
+      var MODEL_LINE_FONT_MIN_PX = 6;
+
+      /** Largest font size in [min,max] so the full line fits (no ellipsis). */
+      function fitPlayerModelLine(el) {
+        if (!el) return;
+        var text = el.textContent || "";
+        if (!String(text).trim()) {
+          el.style.removeProperty("font-size");
+          return;
+        }
+        var w = el.clientWidth;
+        if (w <= 0) return;
+        var low = MODEL_LINE_FONT_MIN_PX;
+        var high = MODEL_LINE_FONT_MAX_PX;
+        var best = MODEL_LINE_FONT_MIN_PX;
+        while (low <= high) {
+          var mid = (low + high) >> 1;
+          el.style.fontSize = mid + "px";
+          if (el.scrollWidth <= el.clientWidth + 1) {
+            best = mid;
+            low = mid + 1;
+          } else {
+            high = mid - 1;
+          }
+        }
+        el.style.fontSize = best + "px";
+      }
+
+      function refitPlayerModelLines() {
+        fitPlayerModelLine($p1Model);
+        fitPlayerModelLine($p2Model);
+      }
+
+      function scheduleRefitPlayerModelLines() {
+        requestAnimationFrame(function () {
+          requestAnimationFrame(refitPlayerModelLines);
+        });
+      }
+
+      if (typeof ResizeObserver !== "undefined") {
+        (function () {
+          var ro = new ResizeObserver(function () {
+            scheduleRefitPlayerModelLines();
+          });
+          if ($p1Model && $p1Model.parentElement) {
+            ro.observe($p1Model.parentElement);
+          }
+          if ($p2Model && $p2Model.parentElement) {
+            ro.observe($p2Model.parentElement);
+          }
+        })();
+      }
+
+      function applyOverlayPortrait(el, portraitUrl, spriteUrl, altName) {
+        if (!el) return;
+        var u = pickOverlayPortraitUrl(portraitUrl, spriteUrl);
+        var alt = altName ? String(altName) : "";
+        if (!u) {
+          el.onload = null;
+          el.onerror = null;
+          if (!el.getAttribute("src")) {
+            el.alt = "";
+            return;
+          }
+          el.classList.remove("is-visible");
+          el.removeAttribute("src");
+          el.alt = "";
+          return;
+        }
+        var cur = el.getAttribute("src") || "";
+        if (cur === u) {
+          if (el.alt !== alt) el.alt = alt;
+          if (el.classList.contains("is-visible")) return;
+          if (el.complete && el.naturalWidth > 0) {
+            el.classList.add("is-visible");
+            return;
+          }
+          return;
+        }
+        el.onload = null;
+        el.onerror = null;
+        el.classList.remove("is-visible");
+        el.alt = alt;
+        el.onload = function () {
+          el.classList.add("is-visible");
+        };
+        el.onerror = function () {
+          el.classList.remove("is-visible");
+          el.removeAttribute("src");
+        };
+        el.src = u;
       }
 
       function renderScoreboard(data) {
@@ -582,14 +842,29 @@
 
         $p1Name.textContent = p1;
         $p2Name.textContent = p2;
+        applyOverlayPortrait(
+          $p1Portrait,
+          data.player1_portrait_square_url,
+          data.player1_sprite_url,
+          p1,
+        );
+        applyOverlayPortrait(
+          $p2Portrait,
+          data.player2_portrait_square_url,
+          data.player2_sprite_url,
+          p2,
+        );
         var m1 = data.player1_model_id || "";
         var m2 = data.player2_model_id || "";
         $p1Model.textContent = m1;
-        $p1Model.classList.toggle("model-long", m1.length > 32);
+        $p1Model.title = m1 || "";
         $p1Model.style.display = m1 ? "" : "none";
+        if (!m1) $p1Model.style.removeProperty("font-size");
         $p2Model.textContent = m2;
-        $p2Model.classList.toggle("model-long", m2.length > 32);
+        $p2Model.title = m2 || "";
         $p2Model.style.display = m2 ? "" : "none";
+        if (!m2) $p2Model.style.removeProperty("font-size");
+        scheduleRefitPlayerModelLines();
         $p1Wins.textContent = wins[p1] || 0;
         $p2Wins.textContent = wins[p2] || 0;
         if (scope === "series" && seriesNote) {
@@ -597,6 +872,14 @@
         } else {
           $matchCount.textContent =
             total + " match" + (total !== 1 ? "es" : "") + " played";
+        }
+        var tctx = data.tournament_context || {};
+        var tid = tctx.tournament_id;
+        if (tid != null && tid !== "") {
+          var tn = Number(tid);
+          overlayCurrentTournamentId = Number.isFinite(tn) ? tn : null;
+        } else {
+          overlayCurrentTournamentId = null;
         }
       }
 
@@ -663,6 +946,30 @@
 
       var lastTotal = -1;
 
+      function applyScoreboardFromHub(data) {
+        renderScoreboard(data);
+        if (data.total_matches !== lastTotal) {
+          lastTotal = data.total_matches;
+          renderHistory(data.recent_matches || []);
+        }
+        renderUpcomingTicker(lastUpcomingMatches);
+      }
+
+      async function refreshUpcomingOnly() {
+        try {
+          var upResp = await fetch(
+            "/api/manager/queue/upcoming?limit=24",
+            { cache: "no-store" },
+          );
+          if (upResp.ok) {
+            var upcoming = await upResp.json();
+            renderUpcomingTicker(
+              Array.isArray(upcoming) ? upcoming : [],
+            );
+          }
+        } catch (_) {}
+      }
+
       async function refresh() {
         try {
           var scoreP = fetch("/scoreboard", { cache: "no-store" });
@@ -671,11 +978,7 @@
           });
           var resp = await scoreP;
           var data = await resp.json();
-          renderScoreboard(data);
-          if (data.total_matches !== lastTotal) {
-            lastTotal = data.total_matches;
-            renderHistory(data.recent_matches || []);
-          }
+          applyScoreboardFromHub(data);
           try {
             var upResp = await upP;
             if (upResp.ok) {
@@ -688,12 +991,26 @@
         } catch (_) {}
       }
 
+      function onHubScoreboardMessage(ev) {
+        if (ev.origin !== window.location.origin) return;
+        var d = ev.data;
+        if (!d || d.type !== "scoreboard" || !d.payload) return;
+        applyScoreboardFromHub(d.payload);
+      }
+
       renderHistory([]);
       renderUpcomingTicker([]);
-      refresh();
-      setInterval(refresh, 10000);
+      if (useBroadcastHub) {
+        window.addEventListener("message", onHubScoreboardMessage);
+        refreshUpcomingOnly();
+        setInterval(refreshUpcomingOnly, 10000);
+      } else {
+        refresh();
+        setInterval(refresh, 10000);
+      }
       window.addEventListener("resize", function () {
         syncTickerScroll();
+        scheduleRefitPlayerModelLines();
       });
       if (window.matchMedia) {
         window

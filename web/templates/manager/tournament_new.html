@@ -7,10 +7,10 @@
   <h1>New Tournament</h1>
 </div>
 
-<form id="tournament-form" class="card form-card">
+<form id="tournament-form" class="card form-card" novalidate>
   <div class="form-group">
     <label for="name">Tournament Name</label>
-    <input type="text" id="name" required placeholder="LLM Battle Royale">
+    <input type="text" id="name" placeholder="LLM Battle Royale">
   </div>
 
   <div class="form-row">
@@ -61,15 +61,79 @@
   <div class="form-group">
     <label>Participants</label>
     <div id="entries-container"></div>
-    <button type="button" class="btn btn-secondary mt-1" onclick="addEntry()">+ Add Participant</button>
+    <button type="button" class="btn btn-secondary mt-1" id="add-entry-btn" onclick="addEntry()">+ Add Participant</button>
   </div>
 
-  <div class="form-actions">
+  <details class="import-def-block import-def-collapsible" id="import-def-section" aria-labelledby="import-def-heading">
+    <summary class="import-def-summary import-def-collapsible-summary" id="import-def-heading">
+      Import from plaintext or .txt file (optional)
+    </summary>
+    <div class="import-def-collapsible-body">
+    <p class="text-muted text-small mt-1">
+      Paste a definition or choose a file below.
+      If this box contains any non-empty text when you click <strong>Create Tournament</strong>, that definition is parsed and used instead of the fields above.
+      Headers use <code>Key: value</code>. Line comments start with <code>#</code>.
+      After a <code>Participants:</code> line, each participant is
+      <code>provider, model, persona</code> or pipe-separated; optional 4th field is <code>seed</code>
+      (then every line must include a seed). Use <code>|</code> if a model id contains commas.
+    </p>
+    <div class="form-group mt-1">
+      <label for="preset-load">Load saved preset</label>
+      <div class="form-row" style="align-items: center; flex-wrap: wrap; gap: 8px">
+        <select id="preset-load" style="max-width: 22rem">
+          <option value="">— None —</option>
+          {% for pr in tournament_presets %}
+          <option value="{{ pr.id }}">{{ pr.name }}</option>
+          {% endfor %}
+        </select>
+        <a href="/manager/tournament-presets" class="text-small">Manage presets…</a>
+      </div>
+    </div>
+    <textarea id="tournament-def-text" class="code-editor" rows="14" spellcheck="false" placeholder="# Example
+Name: LLM Battle Royale
+Type: Single Elimination
+Battle Format: gen9randombattle
+Best Of: Bo3
+Single Elim Bracket: compact
+
+Participants:
+anthropic, claude-sonnet-4-20250514, aggro
+deepseek | deepseek-chat | stall"></textarea>
+    <div class="form-row mt-1" style="align-items: center; flex-wrap: wrap; gap: 8px">
+      <input type="file" id="tournament-def-file" accept=".txt,text/plain,text/*">
+      <button type="button" class="btn btn-secondary btn-sm" id="import-clear-btn">
+        Clear
+      </button>
+    </div>
+    <details class="text-small mt-1 import-format-ref-details">
+      <summary>Full format reference</summary>
+      <pre class="format-ref-pre text-small mt-1"># One tournament per file. Blank lines ignored.
+
+Name: &lt;string&gt;
+Type: round robin | single elimination | double elimination
+  (snake_case ids also work, e.g. single_elimination)
+Battle Format: &lt;showdown format&gt;   # e.g. gen9randombattle
+Best Of: Bo1 | Bo3 | 3 | …            # must be an odd positive number
+Single Elim Bracket: compact | power_of_two   # optional; elim types only (default compact)
+
+Participants:
+  &lt;provider&gt;, &lt;model&gt;, &lt;persona_slug&gt; [, &lt;seed&gt;]
+  # or: provider | model | persona [| seed]
+  # provider: anthropic | deepseek | openrouter
+  # persona_slug: filename in /personas (e.g. aggro, stall)
+
+# Validation runs the same provider/model checks as the form; unknown persona slugs are rejected.</pre>
+    </details>
+    <div id="import-def-feedback" class="form-error import-def-feedback" style="display:none" role="alert"></div>
+    </div>
+  </details>
+
+  <div id="form-error" class="form-error" style="display:none"></div>
+
+  <div class="form-actions form-actions--after-import">
     <button type="submit" class="btn btn-primary">Create Tournament</button>
     <a href="/manager/tournaments" class="btn btn-secondary">Cancel</a>
   </div>
-
-  <div id="form-error" class="form-error" style="display:none"></div>
 </form>
 {% endblock %}
 
@@ -94,7 +158,7 @@ function addEntry(defaults) {
     <select name="provider" class="entry-provider">
       ${providers.map(p => `<option value="${p}" ${d.provider===p?'selected':''}>${p}</option>`).join('')}
     </select>
-    <input type="text" name="model" placeholder="e.g. claude-haiku-4-5-20251001" value="${d.model||''}" required>
+    <input type="text" name="model" placeholder="e.g. claude-haiku-4-5-20251001" value="${d.model||''}">
     <select name="persona">
       ${personas.map(p => `<option value="${p.slug}" ${d.persona===p.slug?'selected':''}>${p.name} (${p.slug})</option>`).join('')}
     </select>
@@ -117,44 +181,162 @@ function syncSingleElimBracketVisibility() {
 document.getElementById('type').addEventListener('change', syncSingleElimBracketVisibility);
 syncSingleElimBracketVisibility();
 
+function buildCreateBodyFromParseData(data) {
+  var body = {
+    name: String(data.name || '').trim(),
+    type: data.type,
+    battle_format: String(data.battle_format || '').trim(),
+    best_of: parseInt(String(data.best_of), 10),
+    entries: (data.entries || []).map(function (e, idx) {
+      return {
+        provider: e.provider,
+        model: String(e.model || '').trim(),
+        persona_slug: e.persona_slug,
+        seed: parseInt(String(e.seed), 10) || idx + 1,
+      };
+    }),
+  };
+  if (body.type === 'single_elimination' || body.type === 'double_elimination') {
+    var seb = String(data.single_elim_bracket || 'compact').trim().toLowerCase();
+    body.single_elim_bracket = seb === 'power_of_two' ? 'power_of_two' : 'compact';
+  }
+  return body;
+}
+
+async function fetchParseApiJson(text) {
+  var res = await fetch('/api/manager/tournaments/parse-definition', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: text }),
+  });
+  return await res.json();
+}
+
+document.getElementById('tournament-def-file').addEventListener('change', function (ev) {
+  var f = ev.target.files && ev.target.files[0];
+  if (!f) return;
+  var rd = new FileReader();
+  rd.onload = function () {
+    document.getElementById('tournament-def-text').value = String(rd.result || '');
+  };
+  rd.readAsText(f, 'UTF-8');
+  ev.target.value = '';
+});
+
+document.getElementById('preset-load').addEventListener('change', async function () {
+  var id = this.value;
+  var fb = document.getElementById('import-def-feedback');
+  fb.classList.remove('import-def-warn');
+  fb.style.display = 'none';
+  fb.textContent = '';
+  if (!id) return;
+  var sel = this;
+  try {
+    var res = await fetch('/api/manager/tournament-presets/' + encodeURIComponent(id));
+    if (!res.ok) throw new Error('Failed to load preset');
+    var p = await res.json();
+    document.getElementById('tournament-def-text').value = p.body || '';
+    var imp = document.getElementById('import-def-section');
+    imp.open = true;
+    imp.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  } catch (err) {
+    sel.value = '';
+    fb.textContent = err.message || 'Failed to load preset';
+    fb.style.display = 'block';
+  }
+});
+
+document.getElementById('import-clear-btn').addEventListener('click', function () {
+  document.getElementById('preset-load').value = '';
+  document.getElementById('tournament-def-text').value = '';
+  var fb = document.getElementById('import-def-feedback');
+  fb.style.display = 'none';
+  fb.textContent = '';
+  fb.classList.remove('import-def-warn');
+});
+
 document.getElementById('tournament-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const errEl = document.getElementById('form-error');
   errEl.style.display = 'none';
 
-  const customFmt = document.getElementById('battle_format_custom').value.trim();
-  const battle_format = customFmt || document.getElementById('battle_format').value;
+  const defText = document.getElementById('tournament-def-text').value.trim();
 
-  const rows = document.querySelectorAll('.entry-row');
-  const entries = [];
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    const prov = row.querySelector('[name=provider]').value;
-    const mod = row.querySelector('[name=model]').value.trim();
-    const chk = validateProviderModel(prov, mod, 'Entry ' + (i + 1));
-    if (!chk.ok) {
-      errEl.textContent = chk.message;
+  let body;
+  if (defText) {
+    var impSec = document.getElementById('import-def-section');
+    impSec.open = true;
+    impSec.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    try {
+      var j = await fetchParseApiJson(defText);
+      if (!j.ok) {
+        var lines = (j.errors || []).map(function (e) {
+          var ln = e.line === 0 ? 'general' : String(e.line);
+          return (ln === 'general' ? 'General: ' : 'Line ' + ln + ': ') + e.message;
+        });
+        errEl.textContent = lines.join('\n');
+        errEl.style.display = 'block';
+        return;
+      }
+      body = buildCreateBodyFromParseData(j.data);
+    } catch (err) {
+      errEl.textContent = err.message || 'Parse request failed';
       errEl.style.display = 'block';
       return;
     }
-    entries.push({
-      provider: prov,
-      model: mod,
-      persona_slug: row.querySelector('[name=persona]').value,
-      seed: parseInt(row.querySelector('[name=seed]').value) || entries.length + 1,
-    });
-  }
+    for (let i = 0; i < body.entries.length; i++) {
+      const chk = validateProviderModel(
+        body.entries[i].provider,
+        body.entries[i].model,
+        'Entry ' + (i + 1),
+      );
+      if (!chk.ok) {
+        errEl.textContent = chk.message;
+        errEl.style.display = 'block';
+        return;
+      }
+    }
+  } else {
+    const nameVal = document.getElementById('name').value.trim();
+    if (!nameVal) {
+      errEl.textContent = 'Tournament name is required.';
+      errEl.style.display = 'block';
+      return;
+    }
+    const customFmt = document.getElementById('battle_format_custom').value.trim();
+    const battle_format = customFmt || document.getElementById('battle_format').value;
 
-  const typeVal = document.getElementById('type').value;
-  const body = {
-    name: document.getElementById('name').value.trim(),
-    type: typeVal,
-    battle_format,
-    best_of: parseInt(document.getElementById('best_of').value),
-    entries,
-  };
-  if (typeVal === 'single_elimination' || typeVal === 'double_elimination') {
-    body.single_elim_bracket = document.getElementById('single_elim_bracket').value;
+    const rows = document.querySelectorAll('.entry-row');
+    const entries = [];
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const prov = row.querySelector('[name=provider]').value;
+      const mod = row.querySelector('[name=model]').value.trim();
+      const chk = validateProviderModel(prov, mod, 'Entry ' + (i + 1));
+      if (!chk.ok) {
+        errEl.textContent = chk.message;
+        errEl.style.display = 'block';
+        return;
+      }
+      entries.push({
+        provider: prov,
+        model: mod,
+        persona_slug: row.querySelector('[name=persona]').value,
+        seed: parseInt(row.querySelector('[name=seed]').value) || entries.length + 1,
+      });
+    }
+
+    const typeVal = document.getElementById('type').value;
+    body = {
+      name: nameVal,
+      type: typeVal,
+      battle_format,
+      best_of: parseInt(document.getElementById('best_of').value),
+      entries,
+    };
+    if (typeVal === 'single_elimination' || typeVal === 'double_elimination') {
+      body.single_elim_bracket = document.getElementById('single_elim_bracket').value;
+    }
   }
 
   try {

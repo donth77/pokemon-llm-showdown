@@ -1,5 +1,5 @@
 """
-Read/write persona markdown files and trainer sprite assets for the manager UI.
+Read/write persona markdown files, trainer sprites, and optional portrait images for the manager UI.
 """
 
 from __future__ import annotations
@@ -10,6 +10,9 @@ from pathlib import Path
 
 PERSONAS_DIR = Path(os.getenv("PERSONAS_DIR", "/personas"))
 TRAINERS_DIR = Path(os.getenv("TRAINERS_DIR", "/app/static/trainers"))
+PORTRAITS_DIR = Path(os.getenv("PORTRAITS_DIR", "/app/static/portraits"))
+PORTRAIT_IMAGE_EXT = (".png", ".gif", ".webp")
+PORTRAIT_MAX_BYTES = 5_000_000
 
 SLUG_RE = re.compile(r"^[a-z0-9_-]+$")
 
@@ -119,6 +122,8 @@ def read_persona(slug: str) -> dict:
         "meta": meta,
         "body": body,
         "sprite_url": resolve_sprite_url(slug, meta),
+        "portrait_tall_url": resolve_portrait_url(slug, square=False),
+        "portrait_square_url": resolve_portrait_url(slug, square=True),
     }
 
 
@@ -185,7 +190,13 @@ def create_persona(slug: str, meta: dict[str, str] | None = None, body: str | No
     write_persona(slug, meta, body if body is not None else default_body)
 
 
-def delete_persona(slug: str, *, delete_trainer_sprite: bool = False) -> None:
+def delete_persona(
+    slug: str,
+    *,
+    delete_trainer_sprite: bool = False,
+    delete_portrait_tall: bool = False,
+    delete_portrait_square: bool = False,
+) -> None:
     slug = validate_slug(slug)
     path = PERSONAS_DIR / f"{slug}.md"
     trainer_path: Path | None = None
@@ -199,6 +210,18 @@ def delete_persona(slug: str, *, delete_trainer_sprite: bool = False) -> None:
             trainer_path.unlink()
         except OSError:
             pass
+    for flag, is_sq in (
+        (delete_portrait_tall, False),
+        (delete_portrait_square, True),
+    ):
+        if not flag:
+            continue
+        pp = find_portrait_file(slug, square=is_sq)
+        if pp is not None and pp.is_file():
+            try:
+                pp.unlink()
+            except OSError:
+                pass
 
 
 def list_trainer_filenames() -> list[str]:
@@ -209,6 +232,97 @@ def list_trainer_filenames() -> list[str]:
         if p.is_file() and p.suffix.lower() in (".png", ".gif", ".webp"):
             names.append(p.name)
     return sorted(names)
+
+
+def _portrait_subdir(square: bool) -> Path:
+    return PORTRAITS_DIR / "square" if square else PORTRAITS_DIR
+
+
+def _strip_other_portrait_exts(dest_dir: Path, slug: str, keep_ext: str) -> None:
+    for ext in PORTRAIT_IMAGE_EXT:
+        if ext == keep_ext:
+            continue
+        p = dest_dir / f"{slug}{ext}"
+        if p.is_file():
+            try:
+                p.unlink()
+            except OSError:
+                pass
+
+
+def save_portrait_upload(
+    slug: str, filename: str, data: bytes, *, square: bool, max_bytes: int = PORTRAIT_MAX_BYTES
+) -> None:
+    """Write portrait to ``{slug}.{ext}`` under tall or ``square/``; replaces other ext for same slug."""
+    slug = validate_slug(slug)
+    if len(data) > max_bytes:
+        raise ValueError("Portrait too large (max ~5 MB).")
+    safe_name = safe_trainer_filename(filename)
+    if not safe_name:
+        raise ValueError("Invalid portrait filename.")
+    ext = Path(safe_name).suffix.lower()
+    if ext not in PORTRAIT_IMAGE_EXT:
+        raise ValueError("Only .png, .gif or .webp portraits are allowed.")
+    dest_dir = _portrait_subdir(square)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / f"{slug}{ext}"
+    try:
+        base = dest_dir.resolve()
+        resolved = dest.resolve()
+        if not resolved.is_relative_to(base):
+            raise ValueError("Invalid portrait path")
+    except (OSError, ValueError) as e:
+        raise ValueError("Invalid portrait path") from e
+    _strip_other_portrait_exts(dest_dir, slug, ext)
+    dest.write_bytes(data)
+
+
+def find_portrait_file(slug: str, *, square: bool) -> Path | None:
+    slug = validate_slug(slug)
+    dest_dir = _portrait_subdir(square)
+    if not dest_dir.is_dir():
+        return None
+    for ext in PORTRAIT_IMAGE_EXT:
+        p = dest_dir / f"{slug}{ext}"
+        if p.is_file():
+            return p
+    return None
+
+
+def resolve_portrait_url(slug: str, *, square: bool) -> str | None:
+    p = find_portrait_file(slug, square=square)
+    if p is None:
+        return None
+    if square:
+        return f"/static/portraits/square/{p.name}"
+    return f"/static/portraits/{p.name}"
+
+
+def require_both_portraits(slug: str) -> None:
+    """Every persona must have tall and square portrait files on disk (PNG / GIF / WebP)."""
+    slug = validate_slug(slug)
+    if find_portrait_file(slug, square=False) is None:
+        raise ValueError(
+            "Tall portrait is required. Upload a PNG, GIF, or WebP, or place "
+            f"`assets/static/portraits/{slug}.(png|gif|webp)` before saving."
+        )
+    if find_portrait_file(slug, square=True) is None:
+        raise ValueError(
+            "Square headshot is required. Upload a PNG, GIF, or WebP, or place "
+            f"`assets/static/portraits/square/{slug}.(png|gif|webp)` before saving."
+        )
+
+
+def delete_all_portraits_for_slug(slug: str) -> None:
+    """Remove tall and square portrait files for ``slug`` (e.g. failed create rollback)."""
+    slug = validate_slug(slug)
+    for sq in (False, True):
+        p = find_portrait_file(slug, square=sq)
+        if p is not None and p.is_file():
+            try:
+                p.unlink()
+            except OSError:
+                pass
 
 
 def save_trainer_upload(filename: str, data: bytes, max_bytes: int = 2_500_000) -> str:

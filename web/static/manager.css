@@ -385,6 +385,47 @@ input:focus, select:focus { outline: none; border-color: var(--primary); }
 .form-error { margin-top: 16px; padding: 12px; background: rgba(239,68,68,0.1); border: 1px solid var(--danger); border-radius: 6px; color: var(--danger); }
 .form-success { margin-top: 16px; padding: 12px; background: rgba(34,197,94,0.1); border: 1px solid var(--success); border-radius: 6px; color: var(--success); }
 
+.import-def-block {
+  margin-top: 20px;
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  background: var(--bg-input);
+}
+.import-def-block.import-def-collapsible {
+  padding: 0;
+}
+.import-def-collapsible > .import-def-collapsible-summary {
+  padding: 12px 16px;
+  margin: 0;
+  cursor: pointer;
+  user-select: none;
+  list-style-position: outside;
+}
+.import-def-collapsible[open] > .import-def-collapsible-summary {
+  border-bottom: 1px solid var(--border);
+}
+.import-def-collapsible-body {
+  padding: 12px 16px 16px;
+}
+.import-def-summary {
+  margin: 0 0 12px;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.3;
+}
+.import-def-collapsible > .import-def-collapsible-summary.import-def-summary {
+  margin-bottom: 0;
+}
+.import-format-ref-details > summary {
+  cursor: pointer;
+  user-select: none;
+}
+.format-ref-pre { white-space: pre-wrap; margin: 0; padding: 10px; background: var(--bg-card); border-radius: 6px; border: 1px solid var(--border); max-height: 320px; overflow: auto; }
+.import-def-feedback.import-def-warn { color: var(--text); background: rgba(234,179,8,0.12); border: 1px solid #ca8a04; }
+
 /* Entry rows (tournament participant) */
 .entry-row {
   display: flex;
@@ -488,7 +529,7 @@ input:focus, select:focus { outline: none; border-color: var(--primary); }
 .bracket-player-label {
   display: flex;
   align-items: center;
-  gap: 0.35em;
+  gap: 0.75em;
   min-width: 0;
   flex: 1 1 auto;
 }
@@ -538,6 +579,55 @@ input:focus, select:focus { outline: none; border-color: var(--primary); }
 .participant-info strong { display: block; }
 .participant-info .text-muted { font-size: 0.8rem; }
 
+/* Tournament detail: square portraits clipped to a circle */
+.persona-square-thumb {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+}
+.persona-square-thumb--sm {
+  width: 28px;
+  height: 28px;
+}
+.persona-square-thumb--md {
+  width: 40px;
+  height: 40px;
+}
+.persona-square-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
+  display: block;
+}
+.tournament-detail .standings-player-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.tournament-detail .standings-player-name {
+  min-width: 0;
+}
+.tournament-detail .series-table-player {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+.tournament-detail .series-table-player .tournament-winner-cell {
+  min-width: 0;
+}
+
 /* Stats charts (Chart.js) */
 .stats-chart-wrap {
   position: relative;
@@ -548,6 +638,103 @@ input:focus, select:focus { outline: none; border-color: var(--primary); }
 }
 .stats-chart-wrap canvas {
   max-width: 100%;
+}
+
+.stats-filter-card h2 {
+  margin-bottom: 8px;
+}
+.stats-filter-hint {
+  font-size: 0.85rem;
+  margin: 0 0 16px;
+  max-width: 720px;
+}
+.stats-format-dropdown {
+  position: relative;
+  max-width: 520px;
+  margin-bottom: 12px;
+}
+.stats-format-dropdown > summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text);
+  user-select: none;
+}
+.stats-format-dropdown > summary::-webkit-details-marker {
+  display: none;
+}
+.stats-format-dropdown > summary::marker {
+  content: "";
+}
+.stats-format-dropdown-trigger:focus-visible {
+  outline: 2px solid var(--accent, #3b82f6);
+  outline-offset: 2px;
+}
+.stats-format-dropdown-chevron {
+  display: inline-block;
+  width: 0.5em;
+  height: 0.5em;
+  border-right: 2px solid var(--text-muted);
+  border-bottom: 2px solid var(--text-muted);
+  transform: rotate(45deg);
+  margin-top: -0.25em;
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+.stats-format-dropdown[open] .stats-format-dropdown-chevron {
+  transform: rotate(-135deg);
+  margin-top: 0.15em;
+}
+.stats-format-dropdown-panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 20;
+  max-height: min(320px, 70vh);
+  overflow-y: auto;
+  padding: 12px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+.stats-filter-checkboxes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+}
+.stats-filter-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+.stats-filter-label input {
+  margin: 0;
+  flex-shrink: 0;
+}
+.stats-filter-format-id {
+  font-family: ui-monospace, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.85rem;
+  word-break: break-all;
+}
+.stats-filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
 }
 
 /* Bars (stats) */

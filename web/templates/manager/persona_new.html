@@ -32,7 +32,11 @@
   </div>
 
   <h2 class="mt-1">Sprite</h2>
-  <p class="text-muted" style="margin-bottom: 12px">
+  <p class="text-muted" style="font-size: 0.85rem; margin: 0 0 0.75rem">
+    Trainer sprites should be <strong>80×80</strong> pixels, <strong>PNG</strong>, <strong>GIF</strong>, or
+    <strong>WebP</strong> only, with a <strong>transparent background</strong>. Character <strong>facing left</strong>.
+  </p>
+  <p class="text-muted" style="font-size: 0.85rem; margin: 0 0 0.75rem">
     Relative to <code>/static/trainers/</code> on the web service (same folder as Showdown <code>/trainers/</code>).
     Leave empty to use <code>{slug}.png</code>.
   </p>
@@ -52,6 +56,27 @@
   <div class="form-group">
     <label for="sprite_url">Optional full URL override</label>
     <input type="url" id="sprite_url" name="sprite_url" placeholder="https://..." />
+  </div>
+
+  <h2 class="mt-1">Portraits</h2>
+  <p class="text-muted" style="font-size: 0.85rem; margin: 0 0 0.75rem">
+    <strong>Required</strong>, same as trainer sprites. Stored as <code>&lt;slug&gt;.&lt;ext&gt;</code> under
+    <code>/static/portraits/</code> (tall) and <code>/static/portraits/square/</code> (headshot). Only
+    <strong>PNG</strong>, <strong>GIF</strong>, or <strong>WebP</strong>; transparent background recommended.
+  </p>
+  <p class="text-muted" style="font-size: 0.85rem; margin: 0 0 0.75rem">
+    <strong>Tall portrait</strong> (bust): target <strong>512×640</strong> px (4∶5). &nbsp;
+    <strong>Square headshot</strong>: target <strong>512×512</strong> px.
+  </p>
+  <div class="form-row">
+    <div class="form-group">
+      <label for="portrait-tall-file">Tall portrait <span class="text-muted">(required on disk — upload or add under <code>assets/static/portraits/</code>)</span></label>
+      <input type="file" id="portrait-tall-file" name="portrait_tall_file" accept=".png,.gif,.webp,image/png,image/gif,image/webp" />
+    </div>
+    <div class="form-group">
+      <label for="portrait-square-file">Square headshot <span class="text-muted">(required on disk — upload or add under <code>assets/static/portraits/square/</code>)</span></label>
+      <input type="file" id="portrait-square-file" name="portrait_square_file" accept=".png,.gif,.webp,image/png,image/gif,image/webp" />
+    </div>
   </div>
 
   <h2 class="mt-1">Prompt body</h2>

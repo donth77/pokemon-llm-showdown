@@ -28,6 +28,10 @@
   </div>
 
   <h2 class="mt-1">Sprite</h2>
+  <p class="text-muted" style="font-size: 0.85rem; margin: 0 0 0.75rem">
+    Trainer sprites should be <strong>80×80</strong> pixels, <strong>PNG</strong>, <strong>GIF</strong>, or
+    <strong>WebP</strong> only, with a <strong>transparent background</strong>. Character <strong>facing left</strong>.
+  </p>
   <div class="persona-edit-preview">
     <img src="{{ p.sprite_url }}" alt="Sprite preview" width="96" height="96" loading="lazy" class="persona-card-sprite" />
     <div class="text-muted" style="font-size: 0.85rem">Resolved URL: <code>{{ p.sprite_url }}</code></div>
@@ -50,6 +54,42 @@
     <input type="url" id="sprite_url" name="sprite_url" value="{{ p.meta.get('sprite_url', '') }}" />
   </div>
 
+  <h2 class="mt-1">Portraits</h2>
+  <p class="text-muted" style="font-size: 0.85rem; margin: 0 0 0.75rem">
+    <strong>Required</strong> for every persona (like trainer sprites). <strong>PNG</strong>, <strong>GIF</strong>, or
+    <strong>WebP</strong>; transparent background recommended. <strong>Tall</strong> (bust): target
+    <strong>512×640</strong> px. <strong>Square</strong>: target <strong>512×512</strong> px. You must upload any slot
+    that is missing before save succeeds.
+  </p>
+  <div class="form-row persona-edit-portraits">
+    <div class="form-group">
+      <div class="text-muted" style="font-size: 0.85rem; margin-bottom: 6px"><strong>Tall</strong> — <code>/static/portraits/{{ p.slug }}.*</code></div>
+      {% if p.portrait_tall_url %}
+      <div class="persona-edit-preview" style="margin-bottom: 8px">
+        <img src="{{ p.portrait_tall_url }}" alt="Tall portrait" style="max-height: 200px; max-width: 160px; object-fit: contain; border-radius: 6px; background: rgba(0,0,0,0.06)" loading="lazy" />
+        <div class="text-muted" style="font-size: 0.85rem"><code>{{ p.portrait_tall_url }}</code></div>
+      </div>
+      {% else %}
+      <p class="text-muted" style="font-size: 0.85rem">No tall portrait on disk.</p>
+      {% endif %}
+      <label for="portrait_tall_file">Upload or replace tall portrait {% if not p.portrait_tall_url %}<span class="text-muted">(required)</span>{% endif %}</label>
+      <input type="file" id="portrait_tall_file" name="portrait_tall_file" {% if not p.portrait_tall_url %}required{% endif %} accept=".png,.gif,.webp,image/png,image/gif,image/webp" />
+    </div>
+    <div class="form-group">
+      <div class="text-muted" style="font-size: 0.85rem; margin-bottom: 6px"><strong>Square</strong> — <code>/static/portraits/square/{{ p.slug }}.*</code></div>
+      {% if p.portrait_square_url %}
+      <div class="persona-edit-preview" style="margin-bottom: 8px">
+        <img src="{{ p.portrait_square_url }}" alt="Square portrait" width="120" height="120" style="object-fit: contain; border-radius: 6px; background: rgba(0,0,0,0.06)" loading="lazy" />
+        <div class="text-muted" style="font-size: 0.85rem"><code>{{ p.portrait_square_url }}</code></div>
+      </div>
+      {% else %}
+      <p class="text-muted" style="font-size: 0.85rem">No square portrait on disk.</p>
+      {% endif %}
+      <label for="portrait_square_file">Upload or replace square headshot {% if not p.portrait_square_url %}<span class="text-muted">(required)</span>{% endif %}</label>
+      <input type="file" id="portrait_square_file" name="portrait_square_file" {% if not p.portrait_square_url %}required{% endif %} accept=".png,.gif,.webp,image/png,image/gif,image/webp" />
+    </div>
+  </div>
+
   <h2 class="mt-1">Prompt body</h2>
   <div class="form-group">
     <textarea id="body" name="body" class="code-editor" required rows="22">{{ p.body }}</textarea>
@@ -63,11 +103,19 @@
 
 <form class="card form-card persona-delete-form" method="post" action="/manager/personas/{{ p.slug }}/delete" onsubmit="return window.confirm('Delete persona {{ p.slug }}? This cannot be undone.');">
   <h2>Delete</h2>
-  <p class="text-muted"> Optional: delete the on-disk sprite if it lives under <code>/static/trainers/</code> (skipped for remote <code>sprite_url</code>).</p>
+  <p class="text-muted"> Optional: delete on-disk art under mounted <code>/static/trainers/</code> or <code>/static/portraits/</code> (skipped for remote <code>sprite_url</code>).</p>
   <div class="form-group persona-delete-options">
     <label class="persona-delete-checkbox">
       <input type="checkbox" name="delete_trainer_sprite" value="1" />
-      Delete local trainer image
+      Delete local trainer sprite
+    </label>
+    <label class="persona-delete-checkbox">
+      <input type="checkbox" name="delete_portrait_tall" value="1" />
+      Delete tall portrait (persona will be incomplete until you re-upload)
+    </label>
+    <label class="persona-delete-checkbox">
+      <input type="checkbox" name="delete_portrait_square" value="1" />
+      Delete square portrait (persona will be incomplete until you re-upload)
     </label>
   </div>
   <button type="submit" class="btn btn-danger">Delete persona</button>

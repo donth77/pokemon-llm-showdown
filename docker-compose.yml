@@ -1,11 +1,13 @@
 services:
   showdown:
-    build: ./showdown
+    build:
+      context: .
+      dockerfile: showdown/Dockerfile
     container_name: showdown
     ports:
       - "8000:8000"
     volumes:
-      - ./showdown/static/trainers:/showdown/server/static/trainers
+      - ./assets/static/trainers:/showdown/server/static/trainers
     networks:
       - battle-net
     restart: unless-stopped
@@ -23,6 +25,9 @@ services:
       - STREAM_TITLE=${STREAM_TITLE:-Pokémon Showdown battles with LLMs}
       - HIDE_BATTLE_UI=${HIDE_BATTLE_UI:-1}
       - VICTORY_MODAL_SECONDS=${VICTORY_MODAL_SECONDS:-30}
+      - TOURNAMENT_VICTORY_MODAL_SECONDS=${TOURNAMENT_VICTORY_MODAL_SECONDS:-60}
+      - VICTORY_SHOW_DELAY_SECONDS=${VICTORY_SHOW_DELAY_SECONDS:-1}
+      - MATCH_INTRO_SECONDS=${MATCH_INTRO_SECONDS:-5}
       - PERSONAS_DIR=/personas
       - SHOWDOWN_VIEW_BASE=${SHOWDOWN_VIEW_BASE:-http://localhost:8000}
       - MANAGER_HOST_ENV_FILE=/app/host.env
@@ -35,7 +40,8 @@ services:
       - log-data:/logs:ro
       - state-data:/state:ro
       - ./agents/personas:/personas
-      - ./showdown/static/trainers:/app/static/trainers
+      - ./assets/static/trainers:/app/static/trainers
+      - ./assets/static/portraits:/app/static/portraits
       - ./.env:/app/host.env
     networks:
       - battle-net
@@ -72,6 +78,9 @@ services:
       - TURN_DELAY_SECONDS=${TURN_DELAY_SECONDS:-0}
       - DELAY_BETWEEN_MATCHES=${DELAY_BETWEEN_MATCHES:-15}
       - QUEUE_POLL_INTERVAL=${QUEUE_POLL_INTERVAL:-5}
+      - TOURNAMENT_INTRO_SECONDS=${TOURNAMENT_INTRO_SECONDS:-0}
+      - TOURNAMENT_INTRO_DELAY_SECONDS=${TOURNAMENT_INTRO_DELAY_SECONDS:-0}
+      - MATCH_INTRO_STARTING_HOLD_SECONDS=${MATCH_INTRO_STARTING_HOLD_SECONDS:-0.45}
       - LLM_MAX_OUTPUT_TOKENS=${LLM_MAX_OUTPUT_TOKENS:-512}
       - LLM_TURN_TIMEOUT=${LLM_TURN_TIMEOUT:-150}
       - OPENROUTER_STRUCTURED_OUTPUTS=${OPENROUTER_STRUCTURED_OUTPUTS:-auto}
@@ -79,6 +88,12 @@ services:
       - POKEDEX_TOOL_ENABLED=${POKEDEX_TOOL_ENABLED:-0}
       - POKEDEX_AUTO_ENRICH=${POKEDEX_AUTO_ENRICH:-0}
       - POKEDEX_MAX_LOOKUPS=${POKEDEX_MAX_LOOKUPS:-3}
+      - ENABLE_MEMORY=${ENABLE_MEMORY:-0}
+      - MEMORY_REFLECTION_INTERVAL=${MEMORY_REFLECTION_INTERVAL:-1}
+      - LEARNINGS_UPDATE_INTERVAL=${LEARNINGS_UPDATE_INTERVAL:-3}
+      - MAX_MEMORY_ENTRIES=${MAX_MEMORY_ENTRIES:-10}
+      - MAX_LEARNINGS_BULLETS=${MAX_LEARNINGS_BULLETS:-30}
+      - LLM_MEMORY_REFLECTION_MAX_TOKENS=${LLM_MEMORY_REFLECTION_MAX_TOKENS:-2048}
     volumes:
       - replay-data:/replays
       - log-data:/logs

@@ -1,0 +1,77 @@
+{% extends "manager/_base.html" %}
+{% set active_page = "tournament_presets" %}
+{% block title %}{% if preset %}Edit preset{% else %}New preset{% endif %}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>{% if preset %}Edit preset{% else %}New preset{% endif %}</h1>
+  <div class="header-actions">
+    <a href="/manager/tournament-presets" class="btn btn-secondary">All presets</a>
+  </div>
+</div>
+
+<form id="preset-form" class="card form-card">
+  <input type="hidden" id="preset-id" value="{% if preset %}{{ preset.id }}{% endif %}">
+  <div class="form-group">
+    <label for="preset-name">Preset name</label>
+    <input type="text" id="preset-name" required placeholder="e.g. Weekend 4-player Bo3"
+      value="{% if preset %}{{ preset.name }}{% endif %}">
+  </div>
+  <div class="form-group">
+    <label for="preset-body">Definition</label>
+    <p class="text-muted text-small">Must be a valid tournament definition (same rules as parse on the new tournament page).</p>
+    <textarea id="preset-body" class="code-editor" rows="18" required spellcheck="false">{% if preset %}{{ preset.body }}{% endif %}</textarea>
+  </div>
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Save</button>
+    <a href="/manager/tournament-presets" class="btn btn-secondary">Cancel</a>
+  </div>
+  <div id="preset-form-error" class="form-error" style="display:none" role="alert"></div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var form = document.getElementById('preset-form');
+  var errEl = document.getElementById('preset-form-error');
+  form.addEventListener('submit', async function (e) {
+    e.preventDefault();
+    errEl.style.display = 'none';
+    errEl.textContent = '';
+    var id = document.getElementById('preset-id').value.trim();
+    var name = document.getElementById('preset-name').value.trim();
+    var body = document.getElementById('preset-body').value;
+    var url = id ? '/api/manager/tournament-presets/' + id : '/api/manager/tournament-presets';
+    var method = id ? 'PATCH' : 'POST';
+    try {
+      var res = await fetch(url, {
+        method: method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name, body: body })
+      });
+      var j = await res.json().catch(function () { return {}; });
+      if (!res.ok) {
+        var d = j.detail;
+        var msg;
+        if (typeof d === 'string') msg = d;
+        else if (d && typeof d === 'object' && d.errors) {
+          msg = (d.errors || []).map(function (x) {
+            return 'Line ' + (x.line || '?') + ': ' + x.message;
+          }).join('\n');
+          if (d.message) msg = d.message + '\n' + msg;
+        } else if (d && typeof d === 'object' && d.message) msg = d.message;
+        else msg = 'Save failed';
+        errEl.textContent = msg;
+        errEl.style.display = 'block';
+        return;
+      }
+      location.href = '/manager/tournament-presets';
+    } catch (err) {
+      errEl.textContent = err.message || 'Request failed';
+      errEl.style.display = 'block';
+    }
+  });
+})();
+</script>
+{% endblock %}

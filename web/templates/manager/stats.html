@@ -7,6 +7,34 @@
   <h1>Analytics</h1>
 </div>
 
+{% if all_battle_formats %}
+<section class="card stats-filter-card">
+  <h2>Battle format</h2>
+  <form method="get" action="/manager/results/stats" class="stats-filter-form">
+    <details class="stats-format-dropdown">
+      <summary class="stats-format-dropdown-trigger">
+        <span class="stats-format-dropdown-label" id="stats-format-dropdown-label">Formats</span>
+        <span class="stats-format-dropdown-chevron" aria-hidden="true"></span>
+      </summary>
+      <div class="stats-format-dropdown-panel">
+        <div class="stats-filter-checkboxes" role="group" aria-labelledby="stats-format-dropdown-label">
+          {% for fmt in all_battle_formats %}
+          <label class="stats-filter-label">
+            <input type="checkbox" name="formats" value="{{ fmt }}" {% if selected_formats is none or fmt in selected_formats %}checked{% endif %}>
+            <span class="stats-filter-format-id">{{ fmt }}</span>
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+    </details>
+    <div class="stats-filter-actions">
+      <button type="submit" class="btn btn-primary btn-sm">Apply</button>
+      <a href="/manager/results/stats" class="btn btn-secondary btn-sm">All formats</a>
+    </div>
+  </form>
+</section>
+{% endif %}
+
 <!-- Model Performance -->
 <section class="card">
   <h2>Model Performance</h2>
@@ -155,6 +183,47 @@
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js" crossorigin="anonymous"></script>
 <script>
+(function () {
+  var form = document.querySelector(".stats-filter-form");
+  if (!form) return;
+  var labelEl = document.getElementById("stats-format-dropdown-label");
+  var boxes = function () {
+    return form.querySelectorAll('input[name="formats"]');
+  };
+  function updateFormatDropdownLabel() {
+    if (!labelEl) return;
+    var list = boxes();
+    var n = list.length;
+    var c = 0;
+    list.forEach(function (cb) {
+      if (cb.checked) c += 1;
+    });
+    if (!n) {
+      labelEl.textContent = "Formats";
+      return;
+    }
+    if (c === 0) {
+      labelEl.textContent = "No formats selected — Apply uses all";
+    } else if (c === n) {
+      labelEl.textContent = "All formats (" + n + ")";
+    } else {
+      labelEl.textContent = c + " of " + n + " formats";
+    }
+  }
+  updateFormatDropdownLabel();
+  form.addEventListener("change", function (e) {
+    if (e.target && e.target.name === "formats") updateFormatDropdownLabel();
+  });
+  form.addEventListener("submit", function () {
+    var all = boxes();
+    var checked = form.querySelectorAll('input[name="formats"]:checked');
+    if (all.length && !checked.length) {
+      all.forEach(function (cb) {
+        cb.checked = true;
+      });
+    }
+  });
+})();
 (function () {
   var winCol = "#22c55e";
   var lossCol = "#ef4444";

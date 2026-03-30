@@ -271,17 +271,17 @@
       }
 
       .sub .sub-battle-format {
-        color: rgba(255, 255, 255, 0.78);
-        font-size: 15px;
-        font-weight: 600;
-        letter-spacing: 0.04em;
-      }
-
-      .sub .sub-tourney {
-        color: rgba(200, 220, 255, 0.88);
+        color: rgba(255, 255, 255, 0.5);
         font-size: 12px;
         font-weight: 500;
         letter-spacing: 0.05em;
+      }
+
+      .sub .sub-tourney {
+        color: rgba(200, 220, 255, 0.92);
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
       }
 
       .sub .sub-vs {
@@ -289,25 +289,27 @@
         color: rgba(255, 255, 255, 0.5);
       }
 
-      .winner-sprite {
+      .winner-portrait {
         display: none;
         margin: 0 auto 16px;
-        max-height: 140px;
-        max-width: 180px;
-        width: auto;
-        height: auto;
-        object-fit: contain;
-        image-rendering: pixelated;
+        width: 168px;
+        height: 168px;
+        object-fit: cover;
+        object-position: center top;
+        border-radius: 16px;
+        border: 2px solid rgba(255, 255, 255, 0.25);
+        box-shadow: 0 10px 32px rgba(0, 0, 0, 0.55);
         filter: drop-shadow(0 8px 24px rgba(0, 0, 0, 0.65));
       }
 
-      .winner-sprite.is-visible {
+      .winner-portrait.is-visible {
         display: block;
       }
     </style>
   </head>
   <body
     data-victory-visible-ms="{{ victory_modal_ms }}"
+    data-tournament-victory-visible-ms="{{ tournament_victory_modal_ms }}"
     data-victory-show-delay-ms="{{ victory_show_delay_ms }}"
   >
     <div id="splash" aria-live="polite">
@@ -316,11 +318,11 @@
       <div class="burst"></div>
       <div class="card">
         <div class="label" id="splash-label">Winner</div>
-        <img class="winner-sprite" id="splash-sprite" alt="" />
+        <img class="winner-portrait" id="splash-portrait" alt="" />
         <div class="winner-name" id="splash-name"></div>
         <div class="sub" id="splash-sub">
-          <div class="sub-battle-format" id="splash-format" hidden></div>
           <div class="sub-tourney" id="splash-tourney" hidden></div>
+          <div class="sub-battle-format" id="splash-format" hidden></div>
           <div class="sub-vs" id="splash-vs" hidden></div>
         </div>
       </div>
@@ -334,39 +336,54 @@
     >
       <source src="/static/audio/victory.mp3" type="audio/mpeg" />
     </audio>
+    <audio
+      id="tournament-victory-sfx"
+      preload="auto"
+      playsinline
+      loop
+      style="position: absolute; width: 0; height: 0; opacity: 0; pointer-events: none"
+    >
+      <source src="/static/audio/tournament_victory.mp3" type="audio/mpeg" />
+    </audio>
 
     <script src="/static/vendor/confetti.min.js?v={{ cache_bust }}"></script>
     <script src="/static/format-utils.js?v={{ cache_bust }}"></script>
     <script>
       var $splash = document.getElementById("splash");
       var $label = document.getElementById("splash-label");
-      var $sprite = document.getElementById("splash-sprite");
+      var $portrait = document.getElementById("splash-portrait");
       var $name = document.getElementById("splash-name");
       var $sub = document.getElementById("splash-sub");
       var $splashFmt = document.getElementById("splash-format");
       var $splashTourney = document.getElementById("splash-tourney");
       var $splashVs = document.getElementById("splash-vs");
       var $victorySfx = document.getElementById("victory-sfx");
+      var $tournamentVictorySfx = document.getElementById("tournament-victory-sfx");
+
+      function primeAudioForAutoplay(el) {
+        if (!el) return;
+        el.muted = true;
+        var p = el.play();
+        if (p && typeof p.then === "function") {
+          p.then(function () {
+            el.pause();
+            el.currentTime = 0;
+            el.muted = false;
+          }).catch(function () {
+            el.muted = false;
+          });
+        } else {
+          el.pause();
+          el.currentTime = 0;
+          el.muted = false;
+        }
+      }
 
       window.addEventListener("message", function (evt) {
         var d = evt && evt.data;
         if (!d || d.type !== "user_gesture_unlock") return;
-        if (!$victorySfx) return;
-        $victorySfx.muted = true;
-        var p = $victorySfx.play();
-        if (p && typeof p.then === "function") {
-          p.then(function () {
-            $victorySfx.pause();
-            $victorySfx.currentTime = 0;
-            $victorySfx.muted = false;
-          }).catch(function () {
-            $victorySfx.muted = false;
-          });
-        } else {
-          $victorySfx.pause();
-          $victorySfx.currentTime = 0;
-          $victorySfx.muted = false;
-        }
+        primeAudioForAutoplay($victorySfx);
+        primeAudioForAutoplay($tournamentVictorySfx);
       });
 
       var victoryVisibleMs = parseInt(
@@ -377,12 +394,23 @@
         victoryVisibleMs = 30000;
       }
 
+      var tournamentVictoryVisibleMs = parseInt(
+        document.body.getAttribute("data-tournament-victory-visible-ms") || "60000",
+        10
+      );
+      if (
+        !Number.isFinite(tournamentVictoryVisibleMs) ||
+        tournamentVictoryVisibleMs < 1
+      ) {
+        tournamentVictoryVisibleMs = 60000;
+      }
+
       var victoryShowDelayMs = parseInt(
-        document.body.getAttribute("data-victory-show-delay-ms") || "4000",
+        document.body.getAttribute("data-victory-show-delay-ms") || "1000",
         10
       );
       if (!Number.isFinite(victoryShowDelayMs) || victoryShowDelayMs < 0) {
-        victoryShowDelayMs = 4000;
+        victoryShowDelayMs = 1000;
       }
 
       // Track the latest completed match by id + timestamp. Relying only on
@@ -399,12 +427,36 @@
       }
 
       function stopVictorySfx() {
-        if (!$victorySfx) return;
-        $victorySfx.pause();
-        $victorySfx.currentTime = 0;
+        if ($victorySfx) {
+          $victorySfx.pause();
+          $victorySfx.currentTime = 0;
+        }
+        if ($tournamentVictorySfx) {
+          $tournamentVictorySfx.pause();
+          $tournamentVictorySfx.currentTime = 0;
+          $tournamentVictorySfx.loop = false;
+        }
       }
 
-      function playVictorySfx() {
+      function playVictorySfx(isTournamentChamp) {
+        if (isTournamentChamp && $tournamentVictorySfx) {
+          if ($victorySfx) {
+            $victorySfx.pause();
+            $victorySfx.currentTime = 0;
+          }
+          $tournamentVictorySfx.loop = true;
+          $tournamentVictorySfx.currentTime = 0;
+          var pt = $tournamentVictorySfx.play();
+          if (pt && typeof pt.catch === "function") {
+            pt.catch(function () {});
+          }
+          return;
+        }
+        if ($tournamentVictorySfx) {
+          $tournamentVictorySfx.pause();
+          $tournamentVictorySfx.currentTime = 0;
+          $tournamentVictorySfx.loop = false;
+        }
         if (!$victorySfx) return;
         $victorySfx.currentTime = 0;
         var p = $victorySfx.play();
@@ -446,7 +498,7 @@
         });
       }
 
-      function showVictory(match, p1, p2, p1Sprite, p2Sprite) {
+      function showVictory(match, p1, p2, p1Portrait, p2Portrait, p1Sprite, p2Sprite) {
         if (hideTimer) {
           clearTimeout(hideTimer);
           hideTimer = null;
@@ -455,41 +507,51 @@
           clearTimeout(showDelayTimer);
           showDelayTimer = null;
         }
+        stopVictorySfx();
 
         var winner = (match && match.winner) || "Unknown";
         var isDraw = winner === "Draw";
 
-        var spriteUrl = "";
-        if (!isDraw) {
-          if (winner === p1) spriteUrl = (p1Sprite || "").trim();
-          else if (winner === p2) spriteUrl = (p2Sprite || "").trim();
+        function pickArt(portrait, sprite) {
+          var a = (portrait || "").trim();
+          if (a) return a;
+          return (sprite || "").trim();
         }
-        $sprite.classList.remove("is-visible");
-        $sprite.onload = null;
-        $sprite.onerror = null;
-        if (spriteUrl) {
-          $sprite.alt = winner + " trainer";
-          $sprite.removeAttribute("width");
-          $sprite.removeAttribute("height");
-          $sprite.onload = function () {
-            $sprite.classList.add("is-visible");
+
+        var artUrl = "";
+        if (!isDraw) {
+          if (winner === p1) artUrl = pickArt(p1Portrait, p1Sprite);
+          else if (winner === p2) artUrl = pickArt(p2Portrait, p2Sprite);
+        }
+        $portrait.classList.remove("is-visible");
+        $portrait.onload = null;
+        $portrait.onerror = null;
+        if (artUrl) {
+          $portrait.alt = winner + " portrait";
+          $portrait.removeAttribute("width");
+          $portrait.removeAttribute("height");
+          $portrait.onload = function () {
+            $portrait.classList.add("is-visible");
           };
-          $sprite.onerror = function () {
-            $sprite.classList.remove("is-visible");
-            $sprite.removeAttribute("src");
+          $portrait.onerror = function () {
+            $portrait.classList.remove("is-visible");
+            $portrait.removeAttribute("src");
           };
-          if ($sprite.getAttribute("src") === spriteUrl) {
-            $sprite.removeAttribute("src");
-            void $sprite.offsetWidth;
+          if ($portrait.getAttribute("src") === artUrl) {
+            $portrait.removeAttribute("src");
+            void $portrait.offsetWidth;
           }
-          $sprite.src = spriteUrl;
+          $portrait.src = artUrl;
         } else {
-          $sprite.alt = "";
-          $sprite.removeAttribute("src");
+          $portrait.alt = "";
+          $portrait.removeAttribute("src");
         }
 
         var isTournamentChamp =
           !isDraw && match && match.victory_tournament_clinched;
+        var victoryDisplayMs = isTournamentChamp
+          ? tournamentVictoryVisibleMs
+          : victoryVisibleMs;
         $label.textContent = victorySplashTitleLabel(match, isDraw);
         $label.className = "label" + (isTournamentChamp ? " tournament-champ" : "");
         $name.className = "winner-name";
@@ -548,7 +610,7 @@
           resetBursts();
           void $splash.offsetWidth;
           $splash.classList.add("visible");
-          playVictorySfx();
+          playVictorySfx(isTournamentChamp);
           if (
             match &&
             match.victory_tournament_clinched &&
@@ -564,41 +626,87 @@
               $splash.classList.remove("visible", "fading");
               hideTimer = null;
             }, 500);
-          }, victoryVisibleMs);
+          }, victoryDisplayMs);
         }, victoryShowDelayMs);
       }
 
-      async function tick() {
+      var useBroadcastHub = /\bembed=broadcast\b/.test(
+        location.search || "",
+      );
+
+      function hideVictorySplashImmediately() {
+        if (showDelayTimer) {
+          clearTimeout(showDelayTimer);
+          showDelayTimer = null;
+        }
+        if (hideTimer) {
+          clearTimeout(hideTimer);
+          hideTimer = null;
+        }
+        stopVictorySfx();
+        if ($splash) {
+          $splash.classList.remove("visible", "fading");
+        }
+      }
+
+      function processScoreboardData(data) {
+        if (!data) return;
+        var st = data.battle_status || "idle";
+        if (
+          st === "tournament_intro" ||
+          st === "intro_gap" ||
+          st === "starting" ||
+          st === "live"
+        ) {
+          hideVictorySplashImmediately();
+        }
+        var p1 = data.player1_name || "Player 1";
+        var p2 = data.player2_name || "Player 2";
+        var lm = data.last_match;
+        var fp = fingerprintLastMatch(lm);
+
+        if (lastMatchFingerprint === null) {
+          lastMatchFingerprint = fp;
+          return;
+        }
+        if (fp && fp !== lastMatchFingerprint) {
+          lastMatchFingerprint = fp;
+          showVictory(
+            lm,
+            p1,
+            p2,
+            data.player1_portrait_square_url,
+            data.player2_portrait_square_url,
+            data.player1_sprite_url,
+            data.player2_sprite_url
+          );
+        }
+      }
+
+      async function tickFromFetch() {
         try {
           var resp = await fetch("/scoreboard", { cache: "no-store" });
           if (!resp.ok) return;
           var data = await resp.json();
-          var p1 = data.player1_name || "Player 1";
-          var p2 = data.player2_name || "Player 2";
-          var lm = data.last_match;
-          var fp = fingerprintLastMatch(lm);
-
-          if (lastMatchFingerprint === null) {
-            lastMatchFingerprint = fp;
-            return;
-          }
-          if (fp && fp !== lastMatchFingerprint) {
-            lastMatchFingerprint = fp;
-            showVictory(
-              lm,
-              p1,
-              p2,
-              data.player1_sprite_url,
-              data.player2_sprite_url
-            );
-          }
+          processScoreboardData(data);
         } catch (err) {
           console.warn("[victory] scoreboard poll failed:", err);
         }
       }
 
-      tick();
-      setInterval(tick, 800);
+      function onHubScoreboardMessage(ev) {
+        if (ev.origin !== window.location.origin) return;
+        var d = ev.data;
+        if (!d || d.type !== "scoreboard" || !d.payload) return;
+        processScoreboardData(d.payload);
+      }
+
+      if (useBroadcastHub) {
+        window.addEventListener("message", onHubScoreboardMessage);
+      } else {
+        tickFromFetch();
+        setInterval(tickFromFetch, 400);
+      }
     </script>
   </body>
 </html>

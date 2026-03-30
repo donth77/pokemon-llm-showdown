@@ -40,6 +40,9 @@
       }
 
       .thoughts-panel {
+        position: relative;
+        display: flex;
+        flex-direction: column;
         background: rgba(4, 10, 24, 0.72);
         border: 1px solid rgba(255, 255, 255, 0.2);
         border-radius: 10px;
@@ -49,13 +52,39 @@
         overflow: hidden;
       }
 
+      .thoughts-panel-head {
+        flex-shrink: 0;
+        margin-bottom: 6px;
+      }
+
       .thoughts-title {
         font-size: 12px;
         letter-spacing: 1.2px;
         text-transform: uppercase;
         color: rgba(255, 255, 255, 0.8);
-        margin-bottom: 6px;
+        margin: 0;
         font-weight: 700;
+        line-height: 1.25;
+        word-break: break-word;
+      }
+
+      .thoughts-portrait {
+        float: right;
+        width: 40px;
+        height: 40px;
+        margin: 0 0 6px 10px;
+        border-radius: 8px;
+        object-fit: cover;
+        object-position: center top;
+        border: 1px solid rgba(255, 255, 255, 0.28);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+        display: none;
+        pointer-events: none;
+        shape-outside: margin-box;
+      }
+
+      .thoughts-portrait.is-visible {
+        display: block;
       }
 
       .thoughts-title.red {
@@ -67,10 +96,16 @@
       }
 
       .thoughts-scroll {
-        height: 102px;
+        flex: 1;
+        min-height: 0;
         overflow-y: auto;
         scrollbar-width: none;
         -ms-overflow-style: none;
+      }
+
+      .thoughts-scroll-body {
+        min-width: 0;
+        padding-bottom: 10px;
       }
 
       .thoughts-scroll::-webkit-scrollbar {
@@ -102,12 +137,22 @@
     <div class="scene">
       <div class="thoughts-wrap">
         <section class="thoughts-panel">
-          <div class="thoughts-title red" id="thoughts-title-p1">Player 1</div>
-          <div class="thoughts-scroll" id="thoughts-p1"></div>
+          <div class="thoughts-panel-head">
+            <div class="thoughts-title red" id="thoughts-title-p1">Player 1</div>
+          </div>
+          <div class="thoughts-scroll">
+            <img class="thoughts-portrait" id="thoughts-portrait-p1" alt="" />
+            <div class="thoughts-scroll-body" id="thoughts-p1"></div>
+          </div>
         </section>
         <section class="thoughts-panel">
-          <div class="thoughts-title blue" id="thoughts-title-p2">Player 2</div>
-          <div class="thoughts-scroll" id="thoughts-p2"></div>
+          <div class="thoughts-panel-head">
+            <div class="thoughts-title blue" id="thoughts-title-p2">Player 2</div>
+          </div>
+          <div class="thoughts-scroll">
+            <img class="thoughts-portrait" id="thoughts-portrait-p2" alt="" />
+            <div class="thoughts-scroll-body" id="thoughts-p2"></div>
+          </div>
         </section>
       </div>
     </div>
@@ -120,6 +165,8 @@
           p2: "thoughts-p2",
           titleP1: "thoughts-title-p1",
           titleP2: "thoughts-title-p2",
+          portraitP1: "thoughts-portrait-p1",
+          portraitP2: "thoughts-portrait-p2",
         },
         calloutIframeId: null,
       };

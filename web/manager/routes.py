@@ -12,7 +12,7 @@ import os
 import re
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
@@ -21,6 +21,7 @@ from . import (
     env_host_file as envfile,
     personas_store as pstore,
     showdown_accounts,
+    tournament_definition,
     tournament_logic,
 )
 from .env_registry import ENV_REGISTRY, REGISTRY_BY_KEY, categories_in_order
@@ -29,6 +30,23 @@ from .provider_model_validate import validate_provider_model
 router = APIRouter()
 templates = Jinja2Templates(directory="templates")
 _log = logging.getLogger("uvicorn.error")
+
+
+async def _analytics_format_filter(
+    query_formats: list[str],
+) -> tuple[list[str] | None, list[str]]:
+    """
+    Map repeated ``formats`` query values to a ``get_stats`` filter.
+    Empty selection or a selection that includes every known format → no filter (all).
+    """
+    known = await db.list_completed_battle_formats()
+    if not known:
+        return None, known
+    known_set = set(known)
+    sel = [f for f in query_formats if f in known_set]
+    if not sel or set(sel) == known_set:
+        return None, known
+    return sel, known
 
 
 def _timestamp_fmt(epoch: float | int | None) -> str:
@@ -98,6 +116,24 @@ BATTLE_FORMATS = [
     "gen2randombattle",
     "gen1randombattle",
 ]
+
+
+def _require_valid_tournament_definition_text(text: str) -> None:
+    raw = (text or "").strip()
+    if not raw:
+        raise HTTPException(400, "Definition body is required")
+    personas = _scan_personas()
+    slugs = {p["slug"] for p in personas}
+    _, errors, _ = tournament_definition.parse_tournament_definition(
+        raw,
+        valid_battle_formats=frozenset(BATTLE_FORMATS),
+        valid_persona_slugs=slugs,
+    )
+    if errors:
+        raise HTTPException(
+            400,
+            {"message": "Invalid tournament definition", "errors": errors},
+        )
 
 
 def _scan_personas() -> list[dict]:
@@ -405,10 +441,22 @@ async def _enrich_series_api_payload(s: dict) -> dict:
     return out
 
 
+def _portrait_square_url_filter(slug: str | None) -> str:
+    raw = (slug or "").strip()
+    if not raw:
+        return ""
+    try:
+        u = pstore.resolve_portrait_url(raw, square=True)
+    except ValueError:
+        return ""
+    return u or ""
+
+
 templates.env.filters["persona_slug_label"] = persona_slug_label
 templates.env.filters["persona_dashboard_label"] = persona_dashboard_label
 templates.env.filters["persona_slug_only"] = persona_slug_only
 templates.env.filters["persona_battle_label"] = persona_battle_label
+templates.env.filters["portrait_square_url"] = _portrait_square_url_filter
 
 
 # ===================================================================
@@ -425,6 +473,97 @@ async def api_config():
 
 
 # --- Tournaments ---
+
+@router.post("/api/manager/tournaments/parse-definition", response_class=JSONResponse)
+async def api_parse_tournament_definition(request: Request):
+    """Parse plaintext tournament definition; returns payload compatible with POST /tournaments."""
+    body = await request.json()
+    text = body.get("text", "")
+    if not isinstance(text, str):
+        raise HTTPException(400, "text must be a string")
+    personas = _scan_personas()
+    slugs = {p["slug"] for p in personas}
+    data, errors, warnings = tournament_definition.parse_tournament_definition(
+        text,
+        valid_battle_formats=frozenset(BATTLE_FORMATS),
+        valid_persona_slugs=slugs,
+    )
+    return JSONResponse(
+        {"ok": not errors, "data": data, "errors": errors, "warnings": warnings}
+    )
+
+
+@router.get("/api/manager/tournament-presets", response_class=JSONResponse)
+async def api_list_tournament_presets():
+    rows = await db.list_tournament_presets()
+    return [{"id": r["id"], "name": r["name"], "updated_at": r["updated_at"]} for r in rows]
+
+
+@router.post("/api/manager/tournament-presets", response_class=JSONResponse)
+async def api_create_tournament_preset(request: Request):
+    body = await request.json()
+    name = str(body.get("name", "")).strip()
+    raw_body = body.get("body", "")
+    if not name:
+        raise HTTPException(400, "Preset name is required")
+    if not isinstance(raw_body, str):
+        raise HTTPException(400, "body must be a string")
+    _require_valid_tournament_definition_text(raw_body)
+    try:
+        row = await db.create_tournament_preset(name=name, body=raw_body.strip())
+    except ValueError as exc:
+        if exc.args and exc.args[0] == db.PRESET_NAME_DUP:
+            raise HTTPException(
+                409, "A preset with this name already exists"
+            ) from None
+        raise
+    return row
+
+
+@router.get("/api/manager/tournament-presets/{pid}", response_class=JSONResponse)
+async def api_get_tournament_preset(pid: int):
+    row = await db.get_tournament_preset(pid)
+    if not row:
+        raise HTTPException(404, "Preset not found")
+    return row
+
+
+@router.patch("/api/manager/tournament-presets/{pid}", response_class=JSONResponse)
+async def api_update_tournament_preset(pid: int, request: Request):
+    body = await request.json()
+    name = body.get("name")
+    if name is not None:
+        name = str(name).strip()
+        if not name:
+            raise HTTPException(400, "Preset name cannot be empty")
+    raw_body = body.get("body")
+    if raw_body is not None and not isinstance(raw_body, str):
+        raise HTTPException(400, "body must be a string")
+    if name is None and raw_body is None:
+        raise HTTPException(400, "Provide name and/or body to update")
+    if raw_body is not None:
+        _require_valid_tournament_definition_text(raw_body)
+        raw_body = raw_body.strip()
+    try:
+        row = await db.update_tournament_preset(pid, name=name, body=raw_body)
+    except ValueError as exc:
+        if exc.args and exc.args[0] == db.PRESET_NAME_DUP:
+            raise HTTPException(
+                409, "A preset with this name already exists"
+            ) from None
+        raise
+    if not row:
+        raise HTTPException(404, "Preset not found")
+    return row
+
+
+@router.delete("/api/manager/tournament-presets/{pid}", response_class=JSONResponse)
+async def api_delete_tournament_preset(pid: int):
+    ok = await db.delete_tournament_preset(pid)
+    if not ok:
+        raise HTTPException(404, "Preset not found")
+    return {"status": "deleted"}
+
 
 @router.post("/api/manager/tournaments", response_class=JSONResponse)
 async def api_create_tournament(request: Request):
@@ -813,8 +952,9 @@ async def api_results(
 
 
 @router.get("/api/manager/stats", response_class=JSONResponse)
-async def api_stats():
-    return await db.get_stats()
+async def api_stats(formats: list[str] = Query(default=[])):
+    battle_formats, _ = await _analytics_format_filter(formats)
+    return await db.get_stats(battle_formats=battle_formats)
 
 
 # ===================================================================
@@ -857,8 +997,40 @@ async def page_tournament_list(request: Request):
     )
 
 
+@router.get("/manager/tournament-presets", response_class=HTMLResponse)
+async def page_tournament_preset_list(request: Request):
+    presets = await db.list_tournament_presets()
+    return templates.TemplateResponse(
+        request=request,
+        name="manager/tournament_preset_list.html",
+        context={"request": request, "presets": presets},
+    )
+
+
+@router.get("/manager/tournament-presets/new", response_class=HTMLResponse)
+async def page_tournament_preset_new(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name="manager/tournament_preset_form.html",
+        context={"request": request, "preset": None},
+    )
+
+
+@router.get("/manager/tournament-presets/{pid}/edit", response_class=HTMLResponse)
+async def page_tournament_preset_edit(request: Request, pid: int):
+    preset = await db.get_tournament_preset(pid)
+    if not preset:
+        raise HTTPException(404, "Preset not found")
+    return templates.TemplateResponse(
+        request=request,
+        name="manager/tournament_preset_form.html",
+        context={"request": request, "preset": preset},
+    )
+
+
 @router.get("/manager/tournaments/new", response_class=HTMLResponse)
 async def page_tournament_new(request: Request):
+    tournament_presets = await db.list_tournament_presets()
     return templates.TemplateResponse(
         request=request,
         name="manager/tournament_new.html",
@@ -867,6 +1039,7 @@ async def page_tournament_new(request: Request):
             "providers": ALLOWED_PROVIDERS,
             "battle_formats": BATTLE_FORMATS,
             "personas": _scan_personas(),
+            "tournament_presets": tournament_presets,
         },
     )
 
@@ -928,12 +1101,21 @@ async def page_results(request: Request):
 
 
 @router.get("/manager/results/stats", response_class=HTMLResponse)
-async def page_stats(request: Request):
-    stats = await db.get_stats()
+async def page_stats(request: Request, formats: list[str] = Query(default=[])):
+    battle_formats, all_battle_formats = await _analytics_format_filter(formats)
+    if battle_formats is None and formats:
+        clean = request.url.replace(query="")
+        return RedirectResponse(url=str(clean), status_code=307)
+    stats = await db.get_stats(battle_formats=battle_formats)
     return templates.TemplateResponse(
         request=request,
         name="manager/stats.html",
-        context={"request": request, "stats": stats},
+        context={
+            "request": request,
+            "stats": stats,
+            "all_battle_formats": all_battle_formats,
+            "selected_formats": battle_formats,
+        },
     )
 
 
@@ -1053,6 +1235,8 @@ async def action_persona_create(
     sprite_url: str = Form(""),
     body: str = Form(...),
     sprite_file: UploadFile | None = File(None),
+    portrait_tall_file: UploadFile | None = File(None),
+    portrait_square_file: UploadFile | None = File(None),
 ):
     try:
         s = pstore.validate_slug(slug)
@@ -1074,6 +1258,20 @@ async def action_persona_create(
         _log.exception("create persona")
         raise HTTPException(500, detail=str(e)) from e
     await _maybe_save_persona_sprite_upload(s, sprite_file)
+    await _maybe_save_persona_portrait_uploads(
+        s, portrait_tall_file, portrait_square_file
+    )
+    try:
+        pstore.require_both_portraits(s)
+    except ValueError as e:
+        md_path = pstore.PERSONAS_DIR / f"{s}.md"
+        if md_path.is_file():
+            try:
+                md_path.unlink()
+            except OSError:
+                pass
+        pstore.delete_all_portraits_for_slug(s)
+        raise HTTPException(400, str(e)) from e
     return RedirectResponse(url="/manager/personas", status_code=303)
 
 
@@ -1094,6 +1292,26 @@ async def _maybe_save_persona_sprite_upload(slug: str, sprite_file: UploadFile |
         pstore.write_persona(slug, meta, data_r["body"])
     except Exception:
         _log.exception("attach sprite to persona after upload")
+
+
+async def _maybe_save_persona_portrait_uploads(
+    slug: str,
+    portrait_tall_file: UploadFile | None,
+    portrait_square_file: UploadFile | None,
+) -> None:
+    for uf, square in (
+        (portrait_tall_file, False),
+        (portrait_square_file, True),
+    ):
+        if uf is None or not uf.filename:
+            continue
+        data = await uf.read()
+        if not data:
+            continue
+        try:
+            pstore.save_portrait_upload(slug, uf.filename, data, square=square)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
 
 
 @router.get("/manager/personas/{slug}/edit", response_class=HTMLResponse)
@@ -1126,6 +1344,8 @@ async def action_persona_save(
     sprite_url: str = Form(""),
     body: str = Form(...),
     sprite_file: UploadFile | None = File(None),
+    portrait_tall_file: UploadFile | None = File(None),
+    portrait_square_file: UploadFile | None = File(None),
 ):
     try:
         s = pstore.validate_slug(slug)
@@ -1147,6 +1367,13 @@ async def action_persona_save(
         _log.exception("save persona")
         raise HTTPException(500, detail=str(e)) from e
     await _maybe_save_persona_sprite_upload(s, sprite_file)
+    await _maybe_save_persona_portrait_uploads(
+        s, portrait_tall_file, portrait_square_file
+    )
+    try:
+        pstore.require_both_portraits(s)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
     return RedirectResponse(url=f"/manager/personas/{s}/edit", status_code=303)
 
 
@@ -1155,14 +1382,23 @@ async def action_persona_delete(
     request: Request,
     slug: str,
     delete_trainer_sprite: str | None = Form(None),
+    delete_portrait_tall: str | None = Form(None),
+    delete_portrait_square: str | None = Form(None),
 ):
     try:
         s = pstore.validate_slug(slug)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     also_sprite = delete_trainer_sprite in ("1", "on", "true", "yes")
+    also_pt = delete_portrait_tall in ("1", "on", "true", "yes")
+    also_ps = delete_portrait_square in ("1", "on", "true", "yes")
     try:
-        pstore.delete_persona(s, delete_trainer_sprite=also_sprite)
+        pstore.delete_persona(
+            s,
+            delete_trainer_sprite=also_sprite,
+            delete_portrait_tall=also_pt,
+            delete_portrait_square=also_ps,
+        )
     except OSError as e:
         _log.exception("delete persona")
         raise HTTPException(500, detail=str(e)) from e

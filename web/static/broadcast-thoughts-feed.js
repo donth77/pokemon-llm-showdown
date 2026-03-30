@@ -16,6 +16,14 @@
   const thoughtsTitleP2 = panels
     ? document.getElementById(panels.titleP2)
     : null;
+  const thoughtsPortraitP1 =
+    panels && panels.portraitP1
+      ? document.getElementById(panels.portraitP1)
+      : null;
+  const thoughtsPortraitP2 =
+    panels && panels.portraitP2
+      ? document.getElementById(panels.portraitP2)
+      : null;
 
   function getCalloutTarget() {
     const id = cfg.calloutIframeId;
@@ -42,13 +50,12 @@
     }
 
     const panelHeight = hideUi ? 270 : 136;
-    const scrollHeight = hideUi ? 250 : 102;
 
     document.querySelectorAll(".thoughts-panel").forEach((el) => {
       el.style.height = panelHeight + "px";
     });
     document.querySelectorAll(".thoughts-scroll").forEach((el) => {
-      el.style.height = scrollHeight + "px";
+      el.style.height = "";
     });
   }
 
@@ -67,20 +74,159 @@
     if (thoughtsTitleP2) thoughtsTitleP2.textContent = thoughtPlayer2;
   }
 
+  function pickTrainerArt(portraitUrl, spriteUrl) {
+    const u = (portraitUrl || "").trim();
+    if (u) return u;
+    return (spriteUrl || "").trim();
+  }
+
+  function schedulePinPortrait(el) {
+    const sc = el && el.closest ? el.closest(".thoughts-scroll") : null;
+    if (!sc) return;
+    const body = sc.querySelector(".thoughts-scroll-body");
+    requestAnimationFrame(function () {
+      if (body) scrollThoughtsToBottom(body);
+      else pinPortraitToScroll(sc);
+    });
+  }
+
+  function applyThoughtPortraitImg(el, url, altName) {
+    if (!el) return;
+    const u = (url || "").trim();
+    const alt = altName ? String(altName) : "";
+    if (!u) {
+      el.onload = null;
+      el.onerror = null;
+      if (!el.getAttribute("src")) {
+        el.alt = "";
+        return;
+      }
+      el.classList.remove("is-visible");
+      el.removeAttribute("src");
+      el.alt = "";
+      schedulePinPortrait(el);
+      return;
+    }
+    const cur = el.getAttribute("src") || "";
+    if (cur === u) {
+      if (el.alt !== alt) el.alt = alt;
+      if (el.classList.contains("is-visible")) return;
+      if (el.complete && el.naturalWidth > 0) {
+        el.classList.add("is-visible");
+        schedulePinPortrait(el);
+        return;
+      }
+      return;
+    }
+    el.onload = null;
+    el.onerror = null;
+    el.classList.remove("is-visible");
+    el.alt = alt;
+    el.onload = function () {
+      el.classList.add("is-visible");
+      schedulePinPortrait(el);
+    };
+    el.onerror = function () {
+      el.classList.remove("is-visible");
+      el.removeAttribute("src");
+      schedulePinPortrait(el);
+    };
+    el.src = u;
+  }
+
+  function setThoughtPortraitsFromScoreboard(data) {
+    if (!thoughtsPortraitP1 && !thoughtsPortraitP2) return;
+    const n1 = data?.player1_name || thoughtPlayer1;
+    const n2 = data?.player2_name || thoughtPlayer2;
+    const art1 = pickTrainerArt(
+      data?.player1_portrait_square_url,
+      data?.player1_sprite_url,
+    );
+    const art2 = pickTrainerArt(
+      data?.player2_portrait_square_url,
+      data?.player2_sprite_url,
+    );
+    applyThoughtPortraitImg(thoughtsPortraitP1, art1, n1);
+    applyThoughtPortraitImg(thoughtsPortraitP2, art2, n2);
+  }
+
+  function applyScoreboardToThoughts(data) {
+    if (!data || typeof data !== "object") return;
+    const p1 = data.player1_name;
+    const p2 = data.player2_name;
+    if (p1 && p2) {
+      setThoughtPlayerNames(p1, p2);
+    } else {
+      const wins = data.wins || {};
+      const names = Object.keys(wins);
+      if (names.length >= 2) setThoughtPlayerNames(names[0], names[1]);
+    }
+    setThoughtPortraitsFromScoreboard(data);
+    requestAnimationFrame(function () {
+      syncPortraitPinsForPanels();
+    });
+  }
+
   async function refreshThoughtNamesFromScoreboard() {
     try {
       const resp = await fetch("/scoreboard", { cache: "no-store" });
       const data = await resp.json();
-      const p1 = data?.player1_name;
-      const p2 = data?.player2_name;
-      if (p1 && p2) {
-        setThoughtPlayerNames(p1, p2);
-        return;
-      }
-      const wins = data?.wins || {};
-      const names = Object.keys(wins);
-      if (names.length >= 2) setThoughtPlayerNames(names[0], names[1]);
+      applyScoreboardToThoughts(data);
     } catch (_) {}
+  }
+
+  function maxScrollTop(scroller) {
+    if (!scroller) return 0;
+    return Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+  }
+
+  /** Keep float portrait visually at top of viewport; marginTop must be 0 when content fits. */
+  function pinPortraitToScroll(scroller) {
+    if (!scroller) return;
+    const portrait = scroller.querySelector(".thoughts-portrait");
+    if (!portrait) return;
+    const maxS = maxScrollTop(scroller);
+    if (maxS <= 0) {
+      portrait.style.marginTop = "0";
+      scroller.scrollTop = 0;
+      return;
+    }
+    portrait.style.marginTop = scroller.scrollTop + "px";
+  }
+
+  /**
+   * Pinning the float portrait changes scrollHeight; scroll max must be re-applied
+   * after layout (often needs 2+ passes). Deferred rAF flushes catch innerHTML/fonts.
+   */
+  function flushScrollToBottom(scroller) {
+    if (!scroller) return;
+    for (let k = 0; k < 6; k++) {
+      scroller.scrollTop = scroller.scrollHeight;
+      pinPortraitToScroll(scroller);
+    }
+  }
+
+  function scrollThoughtsToBottom(bodyEl) {
+    const scroller =
+      bodyEl && bodyEl.closest
+        ? bodyEl.closest(".thoughts-scroll")
+        : null;
+    if (!scroller) return;
+    flushScrollToBottom(scroller);
+    requestAnimationFrame(function () {
+      flushScrollToBottom(scroller);
+      requestAnimationFrame(function () {
+        flushScrollToBottom(scroller);
+      });
+    });
+  }
+
+  function syncPortraitPinsForPanels() {
+    [thoughtsP1, thoughtsP2].forEach((body) => {
+      if (!body) return;
+      const sc = body.closest ? body.closest(".thoughts-scroll") : null;
+      if (sc) flushScrollToBottom(sc);
+    });
   }
 
   function renderThoughtList(target, items) {
@@ -88,6 +234,7 @@
     if (!Array.isArray(items) || !items.length) {
       target.innerHTML =
         '<div class="thought-line"><span class="meta">--</span>Waiting for thoughts...</div>';
+      scrollThoughtsToBottom(target);
       return;
     }
     const lastItems = items.slice(-14);
@@ -103,7 +250,7 @@
         return `<div class="thought-line"><span class="meta">${turn} ${action}</span>${safeReasoning}</div>`;
       })
       .join("");
-    target.scrollTop = target.scrollHeight;
+    scrollThoughtsToBottom(target);
   }
 
   let calloutMessageSeq = 0;
@@ -132,12 +279,26 @@
   let calloutPlaying = false;
   const CALLOUT_DISPLAY_MS = 3200;
 
+  function isPlaceholderThoughtName(name) {
+    const n = (name || "").trim();
+    return !n || n === "Player 1" || n === "Player 2";
+  }
+
   function syncPlayerNamesFromThoughts() {
     const keys = Object.keys(thoughtItems);
     const p1Has = thoughtPlayer1 && keys.includes(thoughtPlayer1);
     const p2Has = thoughtPlayer2 && keys.includes(thoughtPlayer2);
     if (keys.length === 1 && !p1Has) {
-      setThoughtPlayerNames(keys[0], thoughtPlayer2);
+      const only = keys[0];
+      // If scoreboard already fixed P2's name and the only thought is from P2,
+      // do not assign `only` to panel 1 — that would make thoughtPlayer1 ===
+      // thoughtPlayer2 and duplicate one stream in both bubbles.
+      if (
+        isPlaceholderThoughtName(thoughtPlayer2) ||
+        only !== thoughtPlayer2
+      ) {
+        setThoughtPlayerNames(only, thoughtPlayer2);
+      }
     } else if (keys.length >= 2 && (!p1Has || !p2Has)) {
       const sorted = keys.slice().sort();
       setThoughtPlayerNames(sorted[0], sorted[1]);
@@ -319,7 +480,14 @@
     ws.onerror = () => ws.close();
   }
 
-  refreshThoughtNamesFromScoreboard();
-  setInterval(refreshThoughtNamesFromScoreboard, 5000);
+  if (window.__BROADCAST_SCOREBOARD_HUB__) {
+    window.addEventListener("broadcast_scoreboard", (ev) => {
+      const d = ev && ev.detail;
+      if (d) applyScoreboardToThoughts(d);
+    });
+  } else {
+    refreshThoughtNamesFromScoreboard();
+    setInterval(refreshThoughtNamesFromScoreboard, 5000);
+  }
   connectThoughtsWS();
 })();

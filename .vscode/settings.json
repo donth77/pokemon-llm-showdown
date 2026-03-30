@@ -1,0 +1,5 @@
+{
+  // Jinja in attributes / <script> breaks the built-in HTML/CSS/JS validators.
+  "html.validate.styles": false,
+  "html.validate.scripts": false
+}

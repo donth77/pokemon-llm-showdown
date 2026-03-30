@@ -5,7 +5,7 @@ The route ``/overlay`` is still the transparent scoreboard page for stream compo
 the Docker service is named ``web``.
 
 OBS / multi-source layouts can use ``/thoughts_overlay``, ``/broadcast/top_bar``,
-and ``/broadcast/battle_frame`` alongside ``/overlay`` and ``/victory`` (see README).
+and ``/broadcast/battle_frame`` alongside ``/overlay``, ``/victory``, and ``/match_intro`` (see README).
 """
 
 import json
@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from manager import db
+from manager.personas_store import resolve_portrait_url
 from manager.routes import router as manager_router
 
 
@@ -62,7 +63,11 @@ def _non_negative_int_env(name: str, default: int) -> int:
 
 
 VICTORY_MODAL_MS = _positive_int_env("VICTORY_MODAL_SECONDS", 30) * 1000
-VICTORY_SHOW_DELAY_MS = _non_negative_int_env("VICTORY_SHOW_DELAY_SECONDS", 4) * 1000
+TOURNAMENT_VICTORY_MODAL_MS = _positive_int_env(
+    "TOURNAMENT_VICTORY_MODAL_SECONDS", 60
+) * 1000
+VICTORY_SHOW_DELAY_MS = _non_negative_int_env("VICTORY_SHOW_DELAY_SECONDS", 1) * 1000
+MATCH_INTRO_MS = _non_negative_int_env("MATCH_INTRO_SECONDS", 5) * 1000
 
 MAX_THOUGHTS_PER_PLAYER = 80
 _thought_store: dict[str, list[dict]] = {}
@@ -109,14 +114,25 @@ def _load_current_battle_state() -> dict:
 
 # Merged into /current_battle when ``match_id`` is set (broadcast tournament pill).
 _CURRENT_BATTLE_TOURNEY_KEYS = (
+    "tournament_id",
     "tournament_name",
     "tournament_type",
+    "tournament_best_of",
     "series_bracket",
     "series_round_number",
     "series_match_position",
     "tournament_max_winners_round",
     "game_number",
 )
+
+
+def _tournament_context_from_state(state: dict) -> dict:
+    out: dict = {}
+    for key in _CURRENT_BATTLE_TOURNEY_KEYS:
+        v = state.get(key)
+        if v is not None:
+            out[key] = v
+    return out
 
 
 async def _hydrate_current_battle_tournament(state: dict) -> dict:
@@ -140,6 +156,39 @@ async def _hydrate_current_battle_tournament(state: dict) -> dict:
     return state
 
 
+def _tournament_intro_roster_for_api(state: dict) -> list[dict]:
+    raw = state.get("tournament_intro_roster")
+    if not isinstance(raw, list):
+        return []
+    out: list[dict] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        slug = (item.get("persona_slug") or "").strip()
+        if not slug:
+            continue
+        row = {
+            "persona_slug": slug,
+            "portrait_square_url": _safe_square_portrait_url(slug),
+        }
+        seed = item.get("seed")
+        if seed is not None:
+            row["seed"] = seed
+        out.append(row)
+    return out
+
+
+def _safe_square_portrait_url(slug: str | None) -> str:
+    raw = (slug or "").strip()
+    if not raw:
+        return ""
+    try:
+        u = resolve_portrait_url(raw, square=True)
+    except ValueError:
+        return ""
+    return u or ""
+
+
 def _display_model_id(model_id: str | None) -> str:
     """UI-only label: strip OpenRouter routing prefix; state files keep full ids."""
     if model_id is None:
@@ -157,6 +206,11 @@ async def get_scoreboard():
     """Scoreboard data sourced from SQLite + live battle state file."""
     scoreboard = await db.get_scoreboard_data(RECENT_MATCHES_COUNT)
     state = _load_current_battle_state()
+    if isinstance(state, dict) and state.get("match_id") is not None:
+        try:
+            state = await _hydrate_current_battle_tournament(dict(state))
+        except Exception:
+            pass
 
     p1_name = state.get("player1_name") or "Player 1"
     p2_name = state.get("player2_name") or "Player 2"
@@ -174,7 +228,7 @@ async def get_scoreboard():
             bo = int(state["series_best_of"])
             wins_out = {p1_name: p1w, p2_name: p2w}
             scope = "series"
-            footnote = f"Best of {bo} · {p1w}–{p2w}"
+            footnote = f"Best of {bo}"
         except (TypeError, ValueError):
             pass
 
@@ -191,6 +245,19 @@ async def get_scoreboard():
         "player2_persona_slug": state.get("player2_persona_slug") or "",
         "player1_sprite_url": state.get("player1_sprite_url") or "",
         "player2_sprite_url": state.get("player2_sprite_url") or "",
+        "player1_portrait_square_url": _safe_square_portrait_url(
+            state.get("player1_persona_slug")
+        ),
+        "player2_portrait_square_url": _safe_square_portrait_url(
+            state.get("player2_persona_slug")
+        ),
+        "battle_status": (state.get("status") or "idle"),
+        "battle_format": state.get("battle_format") or "",
+        "battle_tag": state.get("battle_tag"),
+        "battle_updated_at": state.get("updated_at"),
+        "match_id": state.get("match_id"),
+        "tournament_context": _tournament_context_from_state(state),
+        "tournament_intro_roster": _tournament_intro_roster_for_api(state),
         "last_match": scoreboard["last_match"],
         "recent_matches": scoreboard["recent_matches"],
     }
@@ -270,8 +337,32 @@ async def get_victory_splash(request: Request):
         context={
             "request": request,
             "victory_modal_ms": VICTORY_MODAL_MS,
+            "tournament_victory_modal_ms": TOURNAMENT_VICTORY_MODAL_MS,
             "victory_show_delay_ms": VICTORY_SHOW_DELAY_MS,
         },
+    )
+
+
+@app.get("/match_intro", response_class=HTMLResponse)
+async def get_match_intro(request: Request):
+    """Transparent overlay: matchup card when agents set current_battle status ``starting``."""
+    return templates.TemplateResponse(
+        request=request,
+        name="match_intro.html",
+        context={
+            "request": request,
+            "match_intro_ms": MATCH_INTRO_MS,
+        },
+    )
+
+
+@app.get("/tournament_intro", response_class=HTMLResponse)
+async def get_tournament_intro(request: Request):
+    """Transparent overlay: opening card before the first match of a tournament."""
+    return templates.TemplateResponse(
+        request=request,
+        name="tournament_intro.html",
+        context={"request": request},
     )
 
 

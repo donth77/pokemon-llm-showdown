@@ -98,13 +98,15 @@ function victorySplashTitleLabel(m, isDraw) {
 /**
  * @param {Record<string, unknown>} m
  * @param {(x: string) => string} [escaper]
+ * @param {boolean} [includeMatchPosition] default false; M# is a bracket slot index, often omitted in UI
  */
-function buildTournamentContextSegments(m, escaper) {
+function buildTournamentContextSegments(m, escaper, includeMatchPosition) {
   var escFn =
     escaper ||
     function (x) {
       return String(x);
     };
+  var showMp = includeMatchPosition === true;
   var bracket = m.series_bracket;
   var stage = formatTournamentStageLabel(m);
   var rn = m.series_round_number;
@@ -121,10 +123,10 @@ function buildTournamentContextSegments(m, escaper) {
       segs.push("R" + rlab);
     }
   }
-  if (mp != null && mp !== "") {
+  if (showMp && mp != null && mp !== "") {
     segs.push("M" + escFn(String(mp)));
   }
-  if (gn != null && Number(gn) > 1) {
+  if (gn != null) {
     segs.push("G" + escFn(String(gn)));
   }
   return segs;
@@ -141,15 +143,22 @@ function formatBroadcastFormatLabel(data) {
   return "Format: " + fmtPart;
 }
 
-/** Plain-text line for victory modal / ticker (no HTML). */
-function formatTournamentMatchContextLine(m) {
+/**
+ * Plain-text line for victory modal / ticker (no HTML).
+ * @param {boolean} [includeMatchPosition] passed through to buildTournamentContextSegments
+ */
+function formatTournamentMatchContextLine(m, includeMatchPosition) {
   if (!m) return "";
   var tname = m.tournament_name;
   if (tname == null || !String(tname).trim()) return "";
   var name = String(tname).trim();
-  var segs = buildTournamentContextSegments(m, function (x) {
-    return x;
-  });
+  var segs = buildTournamentContextSegments(
+    m,
+    function (x) {
+      return x;
+    },
+    includeMatchPosition,
+  );
   if (!segs.length) return name;
   return name + " · " + segs.join(" · ");
 }
@@ -157,15 +166,24 @@ function formatTournamentMatchContextLine(m) {
 /**
  * @param {Record<string, unknown>} m
  * @param {(s: string) => string} escFn
+ * @param {boolean} [includeMatchPosition] passed through to buildTournamentContextSegments
  */
-function formatHistoryTournamentContext(m, escFn) {
+function formatHistoryTournamentContext(m, escFn, includeMatchPosition) {
   var esc = escFn || function (x) {
     return String(x);
   };
   var tname = m.tournament_name;
   if (tname == null || !String(tname).trim()) return "";
   var name = esc(String(tname).trim());
-  var segs = buildTournamentContextSegments(m, esc);
+  var segs = buildTournamentContextSegments(m, esc, includeMatchPosition);
   if (!segs.length) return name;
   return name + " - " + segs.join(" · ");
+}
+
+function displayTournamentBracketType(type) {
+  var s = String(type || "").trim();
+  if (s === "round_robin") return "Round robin";
+  if (s === "single_elimination") return "Single elimination";
+  if (s === "double_elimination") return "Double elimination";
+  return s || "—";
 }

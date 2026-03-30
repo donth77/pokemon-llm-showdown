@@ -14,15 +14,15 @@ import re
 import time
 import traceback
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 import aiohttp
 import json
 from poke_env.player import Player
 from poke_env.ps_client import AccountConfiguration, ServerConfiguration
 
-from llm_player import LLMPlayer
+from llm_player import LLMPlayer, reflection_json_completion
 
 
 # ---------------------------------------------------------------------------
@@ -40,6 +40,29 @@ STATE_DIR = Path(os.getenv("STATE_DIR", "/state"))
 CURRENT_BATTLE_FILE = STATE_DIR / "current_battle.json"
 THOUGHTS_FILE = STATE_DIR / "thoughts.json"
 TURN_DELAY_SECONDS = float(os.getenv("TURN_DELAY_SECONDS") or "0")
+# Keep status=starting on the wire long enough for /broadcast (250ms hub) to show match intro
+# before the battle loop flips to live (often immediate once battle_against starts).
+_MATCH_INTRO_STARTING_HOLD_SEC = float(
+    os.getenv("MATCH_INTRO_STARTING_HOLD_SECONDS") or "0.45"
+)
+
+
+def _env_truthy(name: str, *, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in ("0", "false", "no", "")
+
+
+ENABLE_MEMORY = _env_truthy("ENABLE_MEMORY", default=False)
+MEMORY_REFLECTION_INTERVAL = max(
+    0, int(os.getenv("MEMORY_REFLECTION_INTERVAL") or "1")
+)
+LEARNINGS_UPDATE_INTERVAL = max(
+    0, int(os.getenv("LEARNINGS_UPDATE_INTERVAL") or "3")
+)
+MAX_MEMORY_ENTRIES = max(1, int(os.getenv("MAX_MEMORY_ENTRIES") or "10"))
+MAX_LEARNINGS_BULLETS = max(1, int(os.getenv("MAX_LEARNINGS_BULLETS") or "30"))
 
 ALLOWED_PROVIDERS = {"anthropic", "deepseek", "openrouter"}
 _MAX_USERNAME_LEN = 18
@@ -154,12 +177,304 @@ def load_persona(persona_slug: str) -> PersonaDefinition:
     )
 
 
-def build_system_prompt(prompt_body: str, *, player_name: str, opponent_name: str) -> str:
+def build_system_prompt(
+    prompt_body: str,
+    *,
+    player_name: str,
+    opponent_name: str,
+    memory_md: str = "",
+    learnings_md: str = "",
+) -> str:
     try:
         persona_prompt = prompt_body.format(player_name=player_name, opponent_name=opponent_name)
     except KeyError as e:
         raise ValueError(f"Unknown template variable in persona prompt: {e}") from e
-    return f"{persona_prompt.strip()}\n\n{ACTION_FORMAT_INSTRUCTIONS}"
+    blocks: list[str] = [persona_prompt.strip()]
+    mem = (memory_md or "").strip()
+    if mem:
+        blocks.append(f"== YOUR BATTLE MEMORY (recent matches) ==\n{mem}")
+    learn = (learnings_md or "").strip()
+    if learn:
+        blocks.append(f"== YOUR TACTICAL LEARNINGS ==\n{learn}")
+    blocks.append(ACTION_FORMAT_INSTRUCTIONS)
+    return "\n\n".join(blocks)
+
+
+def _load_persona_memory_texts(persona_slug: str) -> tuple[str, str]:
+    if not ENABLE_MEMORY:
+        return "", ""
+    slug = (persona_slug or "").strip().lower()
+    if not slug or not re.fullmatch(r"[a-z0-9_-]+", slug):
+        return "", ""
+    base = STATE_DIR / "personas" / slug
+    mem_p = base / "memory.md"
+    learn_p = base / "learnings.md"
+    memory_md = mem_p.read_text(encoding="utf-8").strip() if mem_p.is_file() else ""
+    learnings_md = learn_p.read_text(encoding="utf-8").strip() if learn_p.is_file() else ""
+    return memory_md, learnings_md
+
+
+def _trim_memory_entries(md: str, max_entries: int) -> str:
+    md = (md or "").strip()
+    if not md or max_entries <= 0:
+        return ""
+    entries = [c.strip() for c in re.split(r"(?m)^(?=## Match )", md) if c.strip()]
+    entries = [c for c in entries if c.startswith("## Match")]
+    if len(entries) <= max_entries:
+        return "\n\n".join(entries).strip()
+    return "\n\n".join(entries[-max_entries:]).strip()
+
+
+def _trim_learnings_bullets(md: str, max_bullets: int) -> str:
+    md = (md or "").strip()
+    if not md:
+        return md
+    if max_bullets <= 0:
+        return ""
+    lines = md.splitlines()
+    bullet_count = sum(
+        1 for ln in lines if re.match(r"\s*[-*]\s+\S", ln)
+    )
+    if bullet_count <= max_bullets:
+        return "\n".join(lines).strip()
+    skip = bullet_count - max_bullets
+    out_rev: list[str] = []
+    skipped = 0
+    for ln in reversed(lines):
+        is_bullet = bool(re.match(r"\s*[-*]\s+\S", ln))
+        if is_bullet and skipped < skip:
+            skipped += 1
+            continue
+        out_rev.append(ln)
+    return "\n".join(reversed(out_rev)).strip()
+
+
+def _increment_persona_match_count(slug: str) -> int:
+    base = STATE_DIR / "personas" / slug
+    base.mkdir(parents=True, exist_ok=True)
+    meta = base / "_memory_state.json"
+    n = 0
+    if meta.is_file():
+        try:
+            data = json.loads(meta.read_text(encoding="utf-8"))
+            n = int(data.get("matches_completed", 0))
+        except Exception:
+            n = 0
+    n += 1
+    meta.write_text(
+        json.dumps({"matches_completed": n}, indent=2),
+        encoding="utf-8",
+    )
+    return n
+
+
+def _strip_json_fences(text: str) -> str:
+    t = (text or "").strip()
+    if t.startswith("```"):
+        t = re.sub(r"^```(?:json)?\s*", "", t, flags=re.IGNORECASE)
+        t = re.sub(r"\s*```\s*$", "", t)
+    return t.strip()
+
+
+def _battle_log_text_for_reflection(
+    *,
+    log_file: str | None,
+    replay_path: Path,
+) -> str:
+    lines: list[str] = []
+    if log_file:
+        p = LOG_DIR / log_file
+        if p.is_file():
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+                lines = (
+                    data.get("raw_log_lines")
+                    or data.get("replay_log_lines")
+                    or []
+                )
+                if not isinstance(lines, list):
+                    lines = []
+                lines = [str(x) for x in lines]
+            except Exception:
+                lines = []
+    if not lines and replay_path.is_file():
+        lines = _extract_replay_log_lines(replay_path)
+    text = "\n".join(lines) if lines else ""
+    if not text:
+        return "(no battle log available)"
+    max_chars = 120_000
+    if len(text) > max_chars:
+        return text[:max_chars] + "\n... (truncated for reflection prompt)"
+    return text
+
+
+_REFLECTION_SYSTEM = """You help a Pokémon Showdown battle persona update their memory after a match.
+Reply with a single JSON object only (no markdown code fences). Use exactly these keys:
+- "memory_entry": string. Markdown body summarizing THIS match only (3–8 short lines; you may use short subheadings like "Key moments:"). Write in first person, matching the persona's voice described in the user message. Do NOT include a "## Match" title line.
+- "learnings_update": string or null. If the user indicates tactical learnings must be updated, return the FULL updated learnings document (markdown with sections and bullet points). If learnings should not change this match, use null.
+
+Keep memory_entry concise. For learnings, prefer durable tactical patterns over one-off events; cap total bullet points mentally around 30 (the system will trim excess)."""
+
+
+async def _run_one_persona_reflection(
+    *,
+    persona_slug: str,
+    provider: str,
+    model_id: str,
+    persona_display_name: str,
+    opponent_persona_name: str,
+    battle_format: str,
+    outcome: str,
+    battle_log_text: str,
+    update_learnings: bool,
+) -> None:
+    if provider not in ALLOWED_PROVIDERS:
+        return
+    base = STATE_DIR / "personas" / persona_slug
+    base.mkdir(parents=True, exist_ok=True)
+    mem_path = base / "memory.md"
+    learn_path = base / "learnings.md"
+    current_memory = mem_path.read_text(encoding="utf-8") if mem_path.is_file() else ""
+    current_learnings = learn_path.read_text(encoding="utf-8") if learn_path.is_file() else ""
+
+    learnings_instruction = (
+        'Set "learnings_update" to the full updated learnings markdown document '
+        "if you have meaningful new tactical insights or refinements; otherwise null."
+        if update_learnings
+        else 'Set "learnings_update" to null (do not revise learnings this match).'
+    )
+    user_msg = "\n".join([
+        f"You are persona: {persona_display_name!r} (slug: {persona_slug}).",
+        f"Opponent persona: {opponent_persona_name!r}.",
+        f"Format: {battle_format}",
+        f"Result for you: {outcome}",
+        "",
+        learnings_instruction,
+        "",
+        "YOUR CURRENT BATTLE MEMORY FILE (may be empty):",
+        "---",
+        current_memory.strip() or "(empty)",
+        "---",
+        "",
+        "YOUR CURRENT TACTICAL LEARNINGS FILE (may be empty):",
+        "---",
+        current_learnings.strip() or "(empty)",
+        "---",
+        "",
+        "BATTLE LOG:",
+        battle_log_text,
+    ])
+    reply = await reflection_json_completion(
+        provider=provider,  # type: ignore[arg-type]
+        model_id=model_id,
+        system=_REFLECTION_SYSTEM,
+        user=user_msg,
+    )
+    raw = _strip_json_fences(reply)
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as e:
+        print(f"[memory] {persona_slug}: invalid JSON from reflection: {e}", flush=True)
+        return
+    if not isinstance(payload, dict):
+        return
+    entry = payload.get("memory_entry")
+    if not isinstance(entry, str) or not entry.strip():
+        print(f"[memory] {persona_slug}: missing memory_entry", flush=True)
+        return
+
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    header = f"## Match {ts} -- {battle_format} vs {opponent_persona_name} ({outcome})"
+    block = f"{header}\n\n{entry.strip()}\n"
+    prev = mem_path.read_text(encoding="utf-8") if mem_path.is_file() else ""
+    combined = f"{prev.rstrip()}\n\n{block}\n".strip() + "\n"
+    mem_path.write_text(_trim_memory_entries(combined, MAX_MEMORY_ENTRIES), encoding="utf-8")
+
+    lu = payload.get("learnings_update")
+    if update_learnings and isinstance(lu, str) and lu.strip():
+        trimmed = _trim_learnings_bullets(lu.strip(), MAX_LEARNINGS_BULLETS)
+        learn_path.write_text(trimmed + "\n", encoding="utf-8")
+
+    print(f"[memory] Updated memory for persona {persona_slug!r}", flush=True)
+
+
+async def _post_match_persona_memory(
+    *,
+    log_file: str | None,
+    replay_path: Path,
+    battle_format: str,
+    winner_side: str,
+    is_draw: bool,
+    player1_provider: str,
+    player1_model: str,
+    p1_persona: PersonaDefinition,
+    player1_name: str,
+    player2_provider: str,
+    player2_model: str,
+    p2_persona: PersonaDefinition,
+    player2_name: str,
+) -> None:
+    if not ENABLE_MEMORY or MEMORY_REFLECTION_INTERVAL <= 0:
+        return
+    battle_log_text = _battle_log_text_for_reflection(
+        log_file=log_file, replay_path=replay_path
+    )
+    seen_slug: set[str] = set()
+
+    async def _side(
+        *,
+        slug: str,
+        provider: str,
+        model_id: str,
+        display_name: str,
+        opp_name: str,
+        side: str,
+    ) -> None:
+        if slug in seen_slug:
+            return
+        seen_slug.add(slug)
+        matches_done = _increment_persona_match_count(slug)
+        if matches_done % MEMORY_REFLECTION_INTERVAL != 0:
+            return
+        if is_draw:
+            outcome = "DRAW"
+        else:
+            outcome = "WIN" if winner_side == side else "LOSS"
+        update_learnings = LEARNINGS_UPDATE_INTERVAL > 0 and (
+            matches_done % LEARNINGS_UPDATE_INTERVAL == 0
+        )
+        try:
+            await _run_one_persona_reflection(
+                persona_slug=slug,
+                provider=provider,
+                model_id=model_id,
+                persona_display_name=display_name,
+                opponent_persona_name=opp_name,
+                battle_format=battle_format,
+                outcome=outcome,
+                battle_log_text=battle_log_text,
+                update_learnings=update_learnings,
+            )
+        except Exception as e:
+            print(f"[memory] reflection failed for {slug!r}: {e}", flush=True)
+            traceback.print_exc()
+
+    await _side(
+        slug=p1_persona.slug,
+        provider=player1_provider,
+        model_id=player1_model,
+        display_name=p1_persona.name,
+        opp_name=p2_persona.name,
+        side="p1",
+    )
+    await _side(
+        slug=p2_persona.slug,
+        provider=player2_provider,
+        model_id=player2_model,
+        display_name=p2_persona.name,
+        opp_name=p1_persona.name,
+        side="p2",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +580,15 @@ def assign_distinct_showdown_pair(
 # State / thoughts helpers
 # ---------------------------------------------------------------------------
 
+def write_json_atomic(path: Path, data: dict) -> None:
+    """Replace a JSON file atomically so concurrent readers never see partial bytes."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    serialized = json.dumps(data)
+    tmp = path.parent / f".{path.name}.{os.getpid()}.tmp"
+    tmp.write_text(serialized, encoding="utf-8")
+    os.replace(tmp, path)
+
+
 def write_current_battle_state(
     *,
     status: str,
@@ -279,6 +603,8 @@ def write_current_battle_state(
     series_snapshot: dict | None = None,
     tourney_context: dict | None = None,
     manager_match_id: int | None = None,
+    tournament_intro_roster: list[dict] | None = None,
+    tournament_best_of: int | None = None,
 ) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     payload: dict = {
@@ -304,6 +630,7 @@ def write_current_battle_state(
         payload["series_player2_wins"] = series_snapshot["player2_wins"]
     if tourney_context:
         for key in (
+            "tournament_id",
             "tournament_name",
             "tournament_type",
             "series_bracket",
@@ -317,7 +644,14 @@ def write_current_battle_state(
                 payload[key] = val
     if manager_match_id is not None:
         payload["match_id"] = manager_match_id
-    CURRENT_BATTLE_FILE.write_text(json.dumps(payload))
+    if tournament_intro_roster is not None:
+        payload["tournament_intro_roster"] = tournament_intro_roster
+    if tournament_best_of is not None:
+        try:
+            payload["tournament_best_of"] = int(tournament_best_of)
+        except (TypeError, ValueError):
+            pass
+    write_json_atomic(CURRENT_BATTLE_FILE, payload)
 
 
 def clear_thoughts_state(*, battle_tag: str | None = None) -> None:
@@ -480,6 +814,8 @@ async def run_single_match(
     agent2: Player | None = None
 
     try:
+        p1_mem, p1_learn = _load_persona_memory_texts(p1_persona.slug)
+        p2_mem, p2_learn = _load_persona_memory_texts(p2_persona.slug)
         agent1 = LLMPlayer(
             account_configuration=AccountConfiguration(player1_name, None),
             server_configuration=server_config,
@@ -496,6 +832,8 @@ async def run_single_match(
                 p1_persona.prompt_body,
                 player_name=player1_name,
                 opponent_name=p2_persona.abbreviation,
+                memory_md=p1_mem,
+                learnings_md=p1_learn,
             ),
         )
 
@@ -515,6 +853,8 @@ async def run_single_match(
                 p2_persona.prompt_body,
                 player_name=player2_name,
                 opponent_name=p1_persona.abbreviation,
+                memory_md=p2_mem,
+                learnings_md=p2_learn,
             ),
         )
 
@@ -531,6 +871,8 @@ async def run_single_match(
             tourney_context=tourney_context,
             manager_match_id=manager_match_id,
         )
+        if _MATCH_INTRO_STARTING_HOLD_SEC > 0:
+            await asyncio.sleep(_MATCH_INTRO_STARTING_HOLD_SEC)
         clear_thoughts_state()
         await _post_thoughts_clear()
 
@@ -587,6 +929,27 @@ async def run_single_match(
             model_id=f"p1={player1_model},p2={player2_model}",
             replay_path=replay_path,
         )
+
+        is_draw = winner == "Draw"
+        try:
+            await _post_match_persona_memory(
+                log_file=log_path.name if log_path else None,
+                replay_path=replay_path,
+                battle_format=battle_format,
+                winner_side=winner_side,
+                is_draw=is_draw,
+                player1_provider=player1_provider,
+                player1_model=player1_model,
+                p1_persona=p1_persona,
+                player1_name=player1_name,
+                player2_provider=player2_provider,
+                player2_model=player2_model,
+                p2_persona=p2_persona,
+                player2_name=player2_name,
+            )
+        except Exception as e:
+            print(f"[memory] post-match memory cycle failed: {e}", flush=True)
+            traceback.print_exc()
 
         write_current_battle_state(
             status="idle",

@@ -6,28 +6,40 @@ Two **LLM-powered agents** face off on a local **Pokémon Showdown** server. Use
 
 ```
 docker-compose.yml
+├── assets/      — Shared static art: `static/trainers/`, `static/portraits/` (mounted into `web` and Showdown; see `assets/README.md`)
 ├── showdown/    — Local Pokémon Showdown server (no auth)
 │   ├── config/    — Server config overrides (port, auth, throttle)
-│   └── static/    — Custom Showdown UI assets (index.html, trainers/)
+│   └── static/    — Custom Showdown UI (`index.html` override only; trainer art lives under `assets/static/trainers/`)
 ├── agents/      — Queue worker + poke-env LLM players (`queue_worker.py`, `match_runner.py`)
-│   └── personas/  — Markdown persona files (aggro, stall, …)
+│   └── personas/  — Markdown persona definitions (`*.md`); optional runtime memory under `STATE_DIR/personas/{slug}/` when `ENABLE_MEMORY=1`
 ├── web/         — FastAPI: scoreboard, `/manager`, `/api/manager`, broadcast, victory, thoughts WebSocket
-│   ├── manager/   — `db.py` (aiosqlite + migrations), `tournament_logic.py` (brackets), `routes.py` (API + HTML)
+│   ├── manager/   — `db.py` (aiosqlite + migrations), `tournament_logic.py` (brackets), `tournament_definition.py` (plaintext definitions), `routes.py` (API + HTML)
 │   ├── templates/ — Jinja2 (broadcast, `/overlay`, victory, replays, manager dashboards)
-│   └── static/    — `manager.js` / `manager.css`
+│   └── static/    — App JS/CSS/vendor (image-baked; not for mountable art — see `assets/`)
 ├── stream/      — Xvfb + Chromium + FFmpeg → Twitch RTMP
 └── scripts/     — Health, stack lifecycle, manager CLI, Twitch title (see **Scripts** below)
 ```
+
+### Static files: `assets/` vs `web/static`
+
+| Location | Served as | Role |
+| --- | --- | --- |
+| **`assets/static/`** (repo root) | Bind-mounted paths such as `/static/trainers/` and `/static/portraits/` on **web** (and trainers on **Showdown** where the client needs them) | **Content / skins:** PNG/WebP art you edit on disk. Change files without rebuilding the **web** image. See **`assets/README.md`**. |
+| **`web/static/`** | `/static/…` from inside the **web** container | **App bundle:** `manager.js`, `manager.css`, vendor JS, optional default SFX (e.g. `audio/`). Shipped with the **web** Docker image; versioned and released with application code. |
+
+Use **`assets/`** for operator- or artist-owned media shared across services; use **`web/static/`** for static behavior of the FastAPI app itself.
+
+**Persona portraits:** **Both** a tall (512×640) and a square (512×512) file are **required** per persona (same idea as trainer sprites on disk). Put them under **`assets/static/portraits/`** and **`assets/static/portraits/square/`**, or upload from **Manager** (PNG / GIF / WebP — see **`assets/README.md`**); saves are rejected if either is missing.
 
 ## Tech stack
 
 | Area | Technologies |
 | --- | --- |
-| **Agents** | Python 3.11, [poke-env](https://github.com/hsahovic/poke-env), asyncio, **aiohttp**, Anthropic SDK, OpenAI-compatible SDK (DeepSeek / OpenRouter). Optional **Pokédex** layer in `agents/pokedex.py`; move/ability/item text built into the image via `agents/scripts/extract_showdown_data.py`. |
+| **Agents** | Python 3.11, [poke-env](https://github.com/hsahovic/poke-env), asyncio, **aiohttp**, Anthropic SDK, OpenAI-compatible SDK (DeepSeek / OpenRouter). Optional **Pokédex** layer in `agents/pokedex.py`; optional **persona adaptive memory** (Markdown under `STATE_DIR/personas/`, default off). Move/ability/item text built into the image via `agents/scripts/extract_showdown_data.py`. |
 | **Web** | Python 3.11, **FastAPI**, **Uvicorn**, **Starlette**, **Jinja2**, **aiosqlite** (WAL + foreign keys via the `_db()` connection helper in `web/manager/db.py`). |
 | **Showdown** | Node 20, upstream [pokemon-showdown](https://github.com/smogon/pokemon-showdown) (cloned at image build). |
 | **Stream** | Python 3.11, **Playwright** (Chromium), **Xvfb**, **FFmpeg**, PulseAudio. |
-| **Persistence** | Docker named volumes: SQLite on `manager-data` (`/manager-data/manager.db`) for tournaments / series / matches / queue; legacy `/data/results.json` on `web-data` if used; replays, logs, and live JSON state on their own volumes. |
+| **Persistence** | Docker named volumes: SQLite on `manager-data` (`/manager-data/manager.db`) for tournaments / series / matches / queue and **tournament definition presets** (`tournament_presets` table); legacy `/data/results.json` on `web-data` if used; replays and raw battle logs on `replay-data` / `log-data`; **`state-data`** holds `current_battle.json`, `thoughts.json`, and (when enabled) **`/state/personas/{slug}/memory.md`**, **`learnings.md`**, and per-persona **`_memory_state.json`**. |
 
 ### Matches DB
 
@@ -43,14 +55,16 @@ The **manager** is how you queue work for the agents (default entrypoint is `que
 | --- | --- |
 | `/manager` | Dashboard: queue depth, running match, recent results, tournament list |
 | `/manager/tournaments` | All tournaments |
-| `/manager/tournaments/new` | Create tournament (round-robin, single / double elimination) |
+| `/manager/tournaments/new` | Create tournament (round-robin, single / double elimination); optional **plaintext import** (paste or `.txt`) and **saved presets** |
+| `/manager/tournament-presets` | List, create, and edit **saved** plaintext tournament definitions (stored in SQLite on `manager-data`) |
 | `/manager/tournaments/{id}` | Tournament detail and bracket progress |
 | `/manager/matches/new` | Queue a one-off match or short series |
 | `/manager/series/{id}` | Series detail (best-of, individual games) |
 | `/manager/results` | Completed matches |
 | `/manager/results/stats` | Aggregate stats (models, formats) |
-| `/manager/personas` | Edit persona markdown and trainer sprites |
+| `/manager/personas` | Edit persona markdown; upload **trainer sprites** and **portraits** (see **`assets/README.md`**) |
 | `/manager/config` | View and edit documented env vars (host project `.env` when the `web` container mounts it; see `MANAGER_HOST_ENV_FILE` in **UI** env table) |
+| `/manager/config/update` | POST form target for `/manager/config`: writes one registered key into the host `.env` |
 
 **JSON API** (used by the queue worker, manager pages, and `scripts/create_match.sh` / `create_tournament.sh`):
 
@@ -58,8 +72,11 @@ The **manager** is how you queue work for the agents (default entrypoint is `que
 | --- | --- | --- |
 | `/api/manager/config` | GET | Allowed providers, battle formats, persona list (from mounted `agents/personas`) |
 | `/api/manager/tournaments` | GET, POST | List / create tournament |
+| `/api/manager/tournaments/parse-definition` | POST | Parse plaintext tournament definition (`{ "text": "..." }`) → `{ ok, data, errors, warnings }` for the create-tournament payload |
 | `/api/manager/tournaments/{tid}` | GET | Tournament + entries + series |
 | `/api/manager/tournaments/{tid}/cancel` | POST | Cancel tournament and pending work |
+| `/api/manager/tournament-presets` | GET, POST | List presets / create (name + body; body must parse like import) |
+| `/api/manager/tournament-presets/{id}` | GET, PATCH, DELETE | Get preset (incl. definition text), update, delete |
 | `/api/manager/series` | POST | Create a series (optional `auto_queue` games) |
 | `/api/manager/series/{sid}` | GET | Series + matches |
 | `/api/manager/matches` | GET, POST | List / create standalone match |
@@ -81,6 +98,60 @@ The **manager** is how you queue work for the agents (default entrypoint is `que
   - **Why it matters:** Older behavior treated double elim like single elim for advancement (no real LB or GF routing, tournament could finish without a meaningful grand final). The current logic actually **feeds** players through LB and **queues** grand finals when both sides are known.
   - **Caveats:** **Bracket reset** (losers-bracket winner must beat the undefeated player twice) is **not** modeled—one grand-finals series decides the winner. Routing from winners to losers is **exact** for common small sizes (e.g. 4- and 8-player paths); **larger** brackets use heuristics and “first open slot” fallbacks and may not match a strict international double-elim chart for every `N`.
 
+### Plaintext definitions & presets
+
+A **tournament definition** is a single plain-text file (or paste buffer): **one tournament only**. It mirrors the manual “New tournament” form. Use it from **`/manager/tournaments/new`** (import block: paste, `.txt` upload, **Parse & fill form**) or save/load it as a **preset** under **`/manager/tournament-presets`**.
+
+#### File structure
+
+1. **Header block** — Any number of `Key: value` lines (order does not matter). Keys are **case-insensitive**; spaces and hyphens in the key are treated like underscores (e.g. `Battle Format` and `battle_format` match). Lines whose trimmed text starts with `#` are comments; blank lines are ignored.
+2. **`Participants:`** — A line that is **only** `Participants:` or `Participant:` (case-insensitive), with **nothing after the colon**, ends the header block. If you put other text on the same line, it will not start the roster section.
+3. **Participant lines** — Every following non-empty, non-`#` line is one roster entry until end of file.
+
+#### Header keys
+
+| Key (examples) | Required | Meaning |
+| --- | --- | --- |
+| `Name` | Yes | Tournament display name. |
+| `Type` | Yes | `round robin`, `single elimination`, `double elimination`, or snake_case (`round_robin`, …). |
+| `Battle Format` | Yes | Showdown format string (e.g. `gen9randombattle`). Aliases: `Format`, `BattleFormat`. |
+| `Best Of` | Yes | Odd positive series length: `1`, `3`, `Bo3`, `bo5`, etc. Aliases: `BestOf`, `Bo`. |
+| `Single Elim Bracket` | No | For single/double elimination only: `compact` (default) or `power_of_two`. Aliases: `Bracket`, `Winners Bracket`. Ignored for round robin. |
+
+#### Participant lines
+
+Each line is **either** comma-separated **or** pipe-separated (if the line contains `|`, splits are on `|`; otherwise on commas). Fields are trimmed.
+
+| Fields | Meaning |
+| --- | --- |
+| 3 | `provider`, `model`, `persona_slug` |
+| 4 | Same + `seed` (integer ≥ 1) |
+
+- **Providers:** `anthropic`, `deepseek`, `openrouter` (same as the manager UI).
+- **Persona:** filename slug from `agents/personas/*.md` (e.g. `aggro`, `stall`).
+- **Seeds:** Omit on **all** lines → seeds become `1, 2, 3, …` in file order. If **any** line has a seed, **every** line must have one.
+- **OpenRouter:** Usually `openrouter` plus a model id containing `/`, e.g. `openrouter, anthropic/claude-3.5-sonnet, aggro`. Avoid commas inside the model id unless you use `|` as the separator.
+
+#### Example
+
+```text
+# Weekend mix — double elim, Gen 9
+Name: OpenRouter showcase
+Type: Double Elimination
+Battle Format: gen9randombattle
+Best Of: Bo3
+Single Elim Bracket: compact
+
+Participants:
+anthropic, claude-sonnet-4-20250514, aggro
+deepseek, deepseek-chat, stall
+openrouter, google/gemini-2.5-flash-lite, neutral
+```
+
+**Validation** matches the form: provider/model pairs (`claude…` for Anthropic, `deepseek…` for DeepSeek, `/` or `openrouter` prefix for OpenRouter), and persona slugs must exist on the personas mount. Unknown formats may still parse with a warning.
+
+**Presets** store the same text under a name in SQLite (`manager.db` on **`manager-data`**). **`docker compose down -v`** wipes them with other manager data unless you back up the DB. Implementation details and API: **CLAUDE.md** → *Tournament definitions (plaintext import) & presets*.
+
 ## Scripts
 
 All live in `scripts/` (run from repo root). The **web** service must be up for manager CLI scripts (default base URL `http://localhost:8080`, or set `WEB_URL` / `OVERLAY_URL`).
@@ -100,12 +171,18 @@ All live in `scripts/` (run from repo root). The **web** service must be up for 
 - **DeepSeek**
 - **OpenRouter** (hundreds of models: Gemini, Llama, Mistral, Qwen, etc.)
 
-Each player is assigned a **persona** — a markdown file that defines the agent's battle style, reasoning voice, and callout personality. Two built-in personas ship with the repo:
+Each player is assigned a **persona** — a markdown file that defines the agent's battle style, reasoning voice, and callout personality. The repo ships several example personas in `agents/personas/`:
 
 | Slug | Name | Style |
 | --- | --- | --- |
 | `aggro` | Damage Dan | Hyper-offense — swagger, urgency, rival banter |
-| `stall` | Stall Stella | Defensive fortress — calm, clinical, composed |
+| `stall` | Stall Stella | Defensive — long-term control, pivots, chip damage |
+| `nerd` | Intellect Imani | Poké-nerd — ties choices to concrete game knowledge |
+| `neutral` | Neutral Nori | Flexible — no fixed playstyle |
+| `gambler` | River Rick | High-variance reads, doubles, swinging for the fence |
+| `zoomer` | Lowkey Luca | Internet-native voice; spicy lines when they still feel real |
+| `villain` | Vex Vera | Evil-team swagger — disruptive tempo, predatory pressure, dramatic banter |
+| `racer` | Speedy Sisu | Speed-first — tempo, first strike, closing fast |
 
 ### How a Battle Works
 
@@ -114,7 +191,8 @@ Each player is assigned a **persona** — a markdown file that defines the agent
 3. Each turn, the active player sends the battle state to its **LLM provider**, which returns a structured JSON action (`action_type`, `index`, `reasoning`, optional `callout`). If **Pokédex tools** are enabled, Anthropic models can optionally look up move/ability/item/type details before committing an action.
 4. The player's reasoning and callout are **POSTed** to the web service `/thought` endpoint (and written to `thoughts.json` on the shared volume) for the live broadcast.
 5. When the battle ends, the worker **reports** the result via the manager API, saves an HTML replay to `/replays`, and optionally writes a raw JSON log to `/logs`.
-6. After a configurable pause (`DELAY_BETWEEN_MATCHES`), the worker polls `/api/manager/queue/next` for the next match (or waits). Configure matchups in **Manager** (`http://localhost:8080/manager`) or CLI scripts (`scripts/create_match.sh`, `create_tournament.sh`).
+6. If **`ENABLE_MEMORY=1`**, the agents service may run a **post-match reflection** LLM call per persona (see **Persona adaptive memory** below), append a diary entry to `memory.md`, and periodically refresh `learnings.md`.
+7. After a configurable pause (`DELAY_BETWEEN_MATCHES`), the worker polls `/api/manager/queue/next` for the next match (or waits). Configure matchups in **Manager** (`http://localhost:8080/manager`) or CLI scripts (`scripts/create_match.sh`, `create_tournament.sh`).
 
 ## Prerequisites
 
@@ -175,7 +253,7 @@ Use this when you want to **layer webcam, alerts, or custom graphics** on top of
    | 5 | `/broadcast/top_bar` | Transparent title + format pill |
    | 6 | `/victory` | Winner splash (transparent) |
 
-   If you split the battle out with `/broadcast/battle_frame`, add **separate** Browser Sources for `/overlay`, `/thoughts_overlay`, `/broadcast/top_bar`, and `/victory` instead of relying on `/broadcast`.
+   If you split the battle out with `/broadcast/battle_frame`, add **separate** Browser Sources for `/overlay`, `/thoughts_overlay`, `/broadcast/top_bar`, and `/victory` instead of relying on `/broadcast`. The same layered stack does **not** include `/match_intro` or `/tournament_intro` unless you add them (the all-in-one **`/broadcast`** page embeds those as iframes).
 
 5. **OBS Browser Source (layered setup):**
 
@@ -209,7 +287,7 @@ Valid providers: `anthropic`, `deepseek`, `openrouter`. For OpenRouter, use the 
 
 ### Adding a Persona
 
-Create a new markdown file in `agents/personas/` with YAML front matter and a prompt body:
+Create a new markdown file in `agents/personas/` with YAML front matter and a prompt body. **Sprites and portraits** (same `{slug}` as the filename) live under **`assets/static/`** — tall + square portraits are **required** before the manager will save a persona; see the **Static files: `assets/` vs `web/static`** section above.
 
 ```markdown
 ---
@@ -229,6 +307,22 @@ The prompt body supports two template variables (interpolated via Python `str.fo
 - `{opponent_name}` — the opponent's persona **abbreviation** (YAML front matter).
 
 In the Manager (or CLI), pick persona **slugs** that match the filename without `.md`.
+
+### Persona adaptive memory (optional)
+
+When **`ENABLE_MEMORY=1`** (default is **`0`** — off), each persona **slug** can accumulate **episodic** and **tactical** text that is injected into that player’s system prompt on the **next** match:
+
+| File (under `STATE_DIR/personas/{slug}/`, typically `/state/...` in Docker) | Role |
+| --- | --- |
+| `memory.md` | Rolling battle diary: `## Match ...` sections appended after eligible matches; capped by **`MAX_MEMORY_ENTRIES`**. |
+| `learnings.md` | Curated markdown (bullets / sections); rewritten only on turns where **`LEARNINGS_UPDATE_INTERVAL`** applies; trimmed to **`MAX_LEARNINGS_BULLETS`** bullet lines. |
+| `_memory_state.json` | Internal counter (`matches_completed`) for reflection intervals. |
+
+**Behavior:** At match start, `match_runner.build_system_prompt()` loads these files (if they exist) and adds `== YOUR BATTLE MEMORY (recent matches) ==` and `== YOUR TACTICAL LEARNINGS ==` **before** the action-format instructions. After a successful battle, each distinct persona in the match increments its counter; when **`MEMORY_REFLECTION_INTERVAL`** is satisfied, the **same provider and model** as that side runs one **JSON** reflection (battle log + current files → `memory_entry` and optional `learnings_update`). If both sides use the **same persona slug**, only one reflection runs for that slug (p1’s perspective).
+
+**Cost / ops:** Extra **input tokens** every turn while files are non-empty, plus **one reflection API call** per persona per qualifying match (log size dominates reflection input). Disable with `ENABLE_MEMORY=0`. Clearing memory: delete `state-data` / remove `personas/` under the state volume, or only the files for one slug.
+
+Env vars (see **Configuration** → Battle Settings, `.env.example`, and `/manager/config` registry): `ENABLE_MEMORY`, `MEMORY_REFLECTION_INTERVAL`, `LEARNINGS_UPDATE_INTERVAL`, `MAX_MEMORY_ENTRIES`, `MAX_LEARNINGS_BULLETS`, `LLM_MEMORY_REFLECTION_MAX_TOKENS`. They are **already forwarded** in `docker-compose.yml` for the `agents` service; restart **`agents`** after changing them.
 
 ### Pokédex Tools (Optional)
 
@@ -259,12 +353,14 @@ The HTTP route `/overlay` is still the **scoreboard page** embedded in `/broadca
 | --- | --- | --- |
 | `/manager` … `/manager/...` | GET | Manager UI (see **Tournament manager** above) |
 | `/api/manager/*` | various | Manager JSON API (see table above) |
-| `/broadcast` | GET | Full broadcast scene: battle iframe + scoreboard (`/overlay`) + victory + thoughts |
+| `/broadcast` | GET | Full broadcast scene: battle iframe + scoreboard (`/overlay`) + match/tournament intro iframes + victory + thoughts |
 | `/broadcast/battle_frame` | GET | Showdown iframe + battle sync + callouts only (for OBS layering) |
+| `/match_intro` | GET | Matchup card when a battle is starting (duration `MATCH_INTRO_SECONDS`; embedded in `/broadcast` iframe) |
+| `/tournament_intro` | GET | Tournament roster opener before the first match only (driven by `TOURNAMENT_INTRO_SECONDS` on **agents**; iframe child of `/broadcast`) |
 | `/broadcast/top_bar` | GET | Transparent stream title + format (for OBS layering) |
 | `/thoughts_overlay` | GET | Transparent LLM thoughts panels (for OBS layering) |
 | `/overlay` | GET | Transparent scoreboard for compositing |
-| `/victory` | GET | Animated post-match winner splash |
+| `/victory` | GET | Animated post-match winner splash (duration from `VICTORY_MODAL_SECONDS` or `TOURNAMENT_VICTORY_MODAL_SECONDS` when the win clinches the tournament) |
 | `/scoreboard` | GET | Win/loss records, player names/models, recent matches (JSON) |
 | `/current_battle` | GET | Live battle metadata (JSON) |
 | `/thoughts` | GET | Current LLM reasoning per player (JSON) |
@@ -358,7 +454,7 @@ When `stream` starts via Docker, it also attempts to set the Twitch title/catego
 
 ## Configuration
 
-Key environment variables (see `.env.example` for the full list). Under Docker Compose, values reach the `agents` (and `stream`) containers only if they are referenced in `docker-compose.yml` or you add `env_file: .env` — see **Gotchas** in `CLAUDE.md`.
+Key environment variables (see `.env.example` for the full list). Under Docker Compose, values reach a container only if they appear in that service’s `environment:` block (with `${VAR:-default}` substitution from the host `.env`), or you add `env_file: .env` — see **Gotchas** in `CLAUDE.md`. The **`web`** service does **not** automatically inherit every key from the mounted host file as process env; broadcast timing keys (`MATCH_INTRO_SECONDS`, `VICTORY_*`, `TOURNAMENT_VICTORY_*`, …) must be **listed under `web` in `docker-compose.yml`**. **Agents-only** timing (`TOURNAMENT_INTRO_SECONDS`, `TOURNAMENT_INTRO_DELAY_SECONDS`, `MATCH_INTRO_STARTING_HOLD_SECONDS`, plus queue/LLM/Pokédex/memory keys, …) must appear under **`agents`**. `/manager/config` edits the **host** `.env` file; restart affected containers after changes.
 
 <details>
 <summary><strong>LLM Providers</strong></summary>
@@ -381,6 +477,9 @@ Key environment variables (see `.env.example` for the full list). Under Docker C
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `QUEUE_POLL_INTERVAL` | No | `5` | Seconds between polls when the manager queue is empty (`queue_worker`) |
+| `TOURNAMENT_INTRO_SECONDS` | No | `0` | **Agents:** Hold the tournament opener (`/tournament_intro`) before the first match of a tournament; `0` disables |
+| `TOURNAMENT_INTRO_DELAY_SECONDS` | No | `0` | **Agents:** Extra pause after that hold (fade / margin before match intro) |
+| `MATCH_INTRO_STARTING_HOLD_SECONDS` | No | `0.45` | **Agents:** Keep battle status in `starting` briefly so `/broadcast` can show the match intro before Showdown connects; `0` skips |
 | `TURN_DELAY_SECONDS` | No | `0` | Delay per turn per player (seconds, for watchability) |
 | `DELAY_BETWEEN_MATCHES` | No | `15` | Pause between matches (seconds) |
 | `LLM_MAX_OUTPUT_TOKENS` | No | `512` | Max output tokens per LLM turn |
@@ -388,6 +487,12 @@ Key environment variables (see `.env.example` for the full list). Under Docker C
 | `POKEDEX_TOOL_ENABLED` | No | `0` | Enable Pokédex tool calling for Anthropic models (`1`/`0`) |
 | `POKEDEX_AUTO_ENRICH` | No | `0` | Inject Pokédex notes into battle context for all providers (`1`/`0`) |
 | `POKEDEX_MAX_LOOKUPS` | No | `3` | Max Pokédex tool calls per turn before forcing an action |
+| `ENABLE_MEMORY` | No | `0` | Persona adaptive memory: load/inject `memory.md` + `learnings.md`; post-match reflection (`1`/`0`) |
+| `MEMORY_REFLECTION_INTERVAL` | No | `1` | Run reflection every **N** completed matches **per persona** (`0` = never reflect) |
+| `LEARNINGS_UPDATE_INTERVAL` | No | `3` | When reflection runs, allow **full** `learnings.md` update every **N** matches (`0` = never update learnings) |
+| `MAX_MEMORY_ENTRIES` | No | `10` | Max `## Match ...` blocks kept in `memory.md` |
+| `MAX_LEARNINGS_BULLETS` | No | `30` | Max markdown bullet lines kept when trimming `learnings.md` |
+| `LLM_MEMORY_REFLECTION_MAX_TOKENS` | No | `2048` | Max output tokens for the reflection JSON completion |
 
 </details>
 
@@ -396,10 +501,16 @@ Key environment variables (see `.env.example` for the full list). Under Docker C
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `HIDE_BATTLE_UI` | No | `1` | Hide Showdown's native battle controls in the broadcast (`1`/`0`). Set in `docker-compose.yml`; add to `.env` to override. |
-| `VICTORY_MODAL_SECONDS` | No | `30` | Victory splash duration (seconds) |
+| `HIDE_BATTLE_UI` | No | `1` | Hide Showdown's native battle controls in the broadcast (`1`/`0`). Forwarded from `.env` in `docker-compose.yml` for **`web`** and **`stream`**; also documented in `.env.example`. |
+| `VICTORY_MODAL_SECONDS` | No | `30` | Victory splash visible duration for a normal match win (seconds; fade-out adds ~0.5s). Passed to **`web`** via Compose. |
+| `TOURNAMENT_VICTORY_MODAL_SECONDS` | No | `60` | Same splash when a match **clinches the tournament** (e.g. grand-finals decider); defaults longer than `VICTORY_MODAL_SECONDS`. Passed to **`web`** via Compose. |
+| `VICTORY_SHOW_DELAY_SECONDS` | No | `1` | Delay after a win is recorded before the victory layer appears (seconds; `0` = immediate). Passed to **`web`** via Compose. |
+| `MATCH_INTRO_SECONDS` | No | `5` | Matchup card on **`/broadcast`** when a battle is starting; `0` disables. Passed to **`web`** via Compose. |
+| `SHOWDOWN_VIEW_BASE` | No | `http://localhost:8000` | Base URL the **manager** uses for Showdown client links (what **browsers** should open — e.g. LAN hostname or HTTPS reverse proxy). Not the Docker service name `showdown`. Passed to **`web`** via Compose. |
 | `STREAM_TITLE` | No | *(compose default)* | Headline on the broadcast page (`web` service) |
 | `PERSONAS_DIR` | No | `/personas` | In the `web` container, mount of `agents/personas` for manager persona list + `/manager/personas` editor (`docker-compose.yml`) |
+| `TRAINERS_DIR` | No | `/app/static/trainers` | In **`web`**, on-disk trainer sprites (Compose mounts `./assets/static/trainers` here). Override only for non-Compose layouts. |
+| `PORTRAITS_DIR` | No | `/app/static/portraits` | In **`web`**, tall + square persona portraits (`portraits/square/`). Compose mounts `./assets/static/portraits`. |
 | `MANAGER_HOST_ENV_FILE` | No | `/app/host.env` *(via `docker-compose.yml`)* | In the `web` container, path to the mounted host `.env` (`./.env:/app/host.env` in Compose) so `/manager/config` can read/write keys listed in `web/manager/env_registry.py`. Without Compose, leave unset unless you mount a file at the path you configure. |
 
 </details>
@@ -472,10 +583,10 @@ Deprecated aliases (still read by agents/stream): `OVERLAY_HOST`, `OVERLAY_PORT`
 | Broadcast page is blank in browser | `HIDE_BATTLE_UI=1` hides controls but the iframe needs Showdown running | Verify Showdown is healthy: `curl http://localhost:8000/` |
 | Stale results / old scoreboard | Data persists in Docker named volumes across restarts | Clear replays/logs/state by recreating those volumes, or wipe everything (including manager SQLite) with **`docker compose down -v`** or **`bash scripts/stack_down.sh -v`** |
 | Persona not found | Slug doesn't match any file in `agents/personas/` | Ensure the `.md` file exists and the slug (filename without extension) matches the Manager / CLI pick |
+| Persona memory never updates | `ENABLE_MEMORY` is off or not passed into **`agents`** | Set `ENABLE_MEMORY=1` in `.env`, confirm `docker-compose.yml` lists it under `agents.environment`, then `docker compose up -d agents` (rebuild not required for env-only changes). Check `docker compose logs agents` for `[memory]` lines or reflection errors |
 | **`/manager/config` says the env file is missing or wrong** | Host `.env` did not exist before `docker compose up`; Docker may have created a **directory** named `.env` | Remove the erroneous path (`rm -rf .env` if it is a directory), copy `.env.example` to `.env`, then `docker compose up -d --build web` |
 
 ## Future Additions
 
 - **TTS narration** — text-to-speech commentary over battles, reading callouts and play-by-play
 - **Twitch chat integration** — let viewers influence battles (vote on moves, trigger events)
-- **More personas** — additional battle styles and personalities beyond aggro/stall

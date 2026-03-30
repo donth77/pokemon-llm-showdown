@@ -244,6 +244,9 @@ _thoughts_lock = threading.Lock()
 # Hard ceiling: even if httpx read-timeout doesn't fire (e.g. keepalive bytes drip in),
 # abort the entire _completion coroutine after this many seconds.
 _LLM_TURN_TIMEOUT = float(os.getenv("LLM_TURN_TIMEOUT") or "150")
+_LLM_MEMORY_REFLECTION_MAX_TOKENS = int(
+    os.getenv("LLM_MEMORY_REFLECTION_MAX_TOKENS") or "2048"
+)
 
 _POKEDEX_TOOL_ENABLED = (os.getenv("POKEDEX_TOOL_ENABLED") or "").strip().lower() in (
     "1", "true", "yes", "on",
@@ -893,8 +896,8 @@ _SUBMIT_ACTION_TOOL = {
             "callout": {
                 "type": "string",
                 "description": (
-                    "Usually empty. Only on standout turns: short taunt, quip, "
-                    "or battle cry (otherwise omit or use empty string)."
+                    "Usually empty. Only on standout turns: short phrase — "
+                    "taunt, quip, or battle cry (otherwise omit or use empty string)."
                 ),
             },
         },
@@ -1010,6 +1013,73 @@ def _dispatch_pokedex_tool(tool_name: str, tool_input: dict, gen: int) -> str:
     if tool_name == "pokedex_lookup_item":
         return _pdex_lookup_item(tool_input.get("item_id", ""))
     return f"Unknown tool: {tool_name}"
+
+
+async def reflection_json_completion(
+    *,
+    provider: Provider,
+    model_id: str,
+    system: str,
+    user: str,
+    max_tokens: int | None = None,
+) -> str:
+    """
+    One-shot LLM call (no tools). Returns assistant text expected to be a JSON object.
+    Used for post-match persona memory / learnings updates.
+    """
+    mt = (
+        int(max_tokens)
+        if max_tokens is not None
+        else _LLM_MEMORY_REFLECTION_MAX_TOKENS
+    )
+    if provider == "anthropic":
+        client = _make_anthropic_client()
+
+        def _req() -> str:
+            response = client.messages.create(
+                model=model_id,
+                max_tokens=mt,
+                system=system,
+                messages=[{"role": "user", "content": user}],
+            )
+            parts: list[str] = []
+            for block in response.content:
+                if getattr(block, "type", None) == "text":
+                    parts.append(getattr(block, "text", "") or "")
+            return "".join(parts).strip()
+
+        return await asyncio.wait_for(
+            asyncio.to_thread(_req), timeout=_LLM_TURN_TIMEOUT
+        )
+
+    if provider in ("deepseek", "openrouter"):
+        if provider == "deepseek":
+            client = _make_deepseek_client()
+        else:
+            client = _make_openrouter_client()
+
+        def _req() -> str:
+            extra = _openrouter_extra_body() if provider == "openrouter" else None
+            kwargs: dict = dict(
+                model=model_id,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=0.2,
+                max_tokens=mt,
+                response_format={"type": "json_object"},
+            )
+            if extra:
+                kwargs["extra_body"] = extra
+            response = client.chat.completions.create(**kwargs)
+            return (response.choices[0].message.content or "").strip()
+
+        return await asyncio.wait_for(
+            asyncio.to_thread(_req), timeout=_LLM_TURN_TIMEOUT
+        )
+
+    raise ValueError(f"Unsupported provider for reflection: {provider}")
 
 
 class LLMPlayer(Player):

@@ -7,6 +7,14 @@
 <span class="tournament-winner-trophy" aria-hidden="true">{{ lucide_trophy_svg() }}</span>
 {%- endmacro %}
 
+{# Square portrait on disk, shown in a circle (slug = tournament entry / series persona id). #}
+{% macro persona_square_thumb(slug, size_class='') -%}
+{% set url = (slug or '') | portrait_square_url %}
+<span class="persona-square-thumb{% if size_class %} {{ size_class }}{% endif %}" role="presentation">
+  {% if url %}<img src="{{ url }}" alt="" loading="lazy" decoding="async" />{% endif %}
+</span>
+{%- endmacro %}
+
 {% macro duration_mins_secs(duration) -%}
 {%- if duration is not none -%}
 {%- set total = duration|float -%}
