@@ -15,6 +15,8 @@ import time
 
 import requests
 
+from log_print import log_print
+
 SHOWDOWN_HOST = os.getenv("SHOWDOWN_HOST", "showdown")
 SHOWDOWN_PORT = int(os.getenv("SHOWDOWN_PORT", "8000"))
 HIDE_BATTLE_UI = os.getenv("HIDE_BATTLE_UI", "1").strip() in ("1", "true", "yes")
@@ -30,12 +32,12 @@ STREAM_VIEW_URL = os.getenv("STREAM_VIEW_URL", f"{WEB_BASE}/broadcast")
 
 def wait_for_http(url: str, name: str) -> None:
     """Block until an HTTP endpoint is responding."""
-    print(f"Waiting for {name} at {url} ...", flush=True)
+    log_print(f"Waiting for {name} at {url} ...", flush=True)
     while True:
         try:
             r = requests.get(url, timeout=5)
             if r.status_code == 200:
-                print(f"{name} is up!", flush=True)
+                log_print(f"{name} is up!", flush=True)
                 return
         except Exception:
             pass
@@ -69,7 +71,7 @@ def main() -> None:
     wait_for_http(STREAM_VIEW_URL, "Broadcast view")
 
     chromium = find_chromium()
-    print(f"Using Chromium: {chromium}", flush=True)
+    log_print(f"Using Chromium: {chromium}", flush=True)
 
     cmd = [
         chromium,
@@ -96,10 +98,10 @@ def main() -> None:
         STREAM_VIEW_URL,
     ]
 
-    print(f"Launching: {' '.join(cmd)}", flush=True)
+    log_print(f"Launching: {' '.join(cmd)}", flush=True)
     proc = subprocess.Popen(cmd, stdout=sys.stdout, stderr=sys.stderr)
     proc.wait()
-    print(f"Chromium exited with code {proc.returncode}", flush=True)
+    log_print(f"Chromium exited with code {proc.returncode}", flush=True)
 
 
 if __name__ == "__main__":

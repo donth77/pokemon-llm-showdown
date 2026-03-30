@@ -23,6 +23,7 @@ from poke_env.player import Player
 from poke_env.ps_client import AccountConfiguration, ServerConfiguration
 
 from llm_player import LLMPlayer, reflection_json_completion
+from log_print import log_print
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +100,7 @@ ACTION_FORMAT_INSTRUCTIONS = (
     "- You may direct callouts at your opponent using 'you' or their name.\n"
     "- Keep callouts concise and in-character, but not a copy of canned examples.\n"
     "- When you are clearly behind or about to lose, you may use a callout that shows "
-    "weariness or exasperation in YOUR persona's style (still PG and sportsmanlike).\n"
+    "weariness or exasperation in YOUR persona's style.\n"
 )
 
 
@@ -374,13 +375,13 @@ async def _run_one_persona_reflection(
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as e:
-        print(f"[memory] {persona_slug}: invalid JSON from reflection: {e}", flush=True)
+        log_print(f"[memory] {persona_slug}: invalid JSON from reflection: {e}", flush=True)
         return
     if not isinstance(payload, dict):
         return
     entry = payload.get("memory_entry")
     if not isinstance(entry, str) or not entry.strip():
-        print(f"[memory] {persona_slug}: missing memory_entry", flush=True)
+        log_print(f"[memory] {persona_slug}: missing memory_entry", flush=True)
         return
 
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -395,7 +396,7 @@ async def _run_one_persona_reflection(
         trimmed = _trim_learnings_bullets(lu.strip(), MAX_LEARNINGS_BULLETS)
         learn_path.write_text(trimmed + "\n", encoding="utf-8")
 
-    print(f"[memory] Updated memory for persona {persona_slug!r}", flush=True)
+    log_print(f"[memory] Updated memory for persona {persona_slug!r}", flush=True)
 
 
 async def _post_match_persona_memory(
@@ -456,7 +457,7 @@ async def _post_match_persona_memory(
                 update_learnings=update_learnings,
             )
         except Exception as e:
-            print(f"[memory] reflection failed for {slug!r}: {e}", flush=True)
+            log_print(f"[memory] reflection failed for {slug!r}: {e}", flush=True)
             traceback.print_exc()
 
     await _side(
@@ -490,13 +491,13 @@ def make_server_config() -> ServerConfiguration:
 
 async def wait_for_showdown() -> None:
     url = f"http://{SHOWDOWN_HOST}:{SHOWDOWN_PORT}/"
-    print(f"Waiting for Showdown at {url} ...", flush=True)
+    log_print(f"Waiting for Showdown at {url} ...", flush=True)
     async with aiohttp.ClientSession() as session:
         while True:
             try:
                 async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
                     if resp.status == 200:
-                        print("Showdown is up!", flush=True)
+                        log_print("Showdown is up!", flush=True)
                         return
             except Exception:
                 pass
@@ -510,9 +511,9 @@ async def _disconnect_players(*players: Player | None) -> None:
         name = getattr(p, "username", "?")
         try:
             await p.ps_client.stop_listening()
-            print(f"[cleanup] Disconnected {name}", flush=True)
+            log_print(f"[cleanup] Disconnected {name}", flush=True)
         except Exception as e:
-            print(f"[cleanup] Disconnect {name}: {e}", flush=True)
+            log_print(f"[cleanup] Disconnect {name}: {e}", flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -569,7 +570,7 @@ def assign_distinct_showdown_pair(
         base = n1
         n1 = _showdown_name_with_numeric_suffix(base, 1)
         n2 = _showdown_name_with_numeric_suffix(base, 2)
-        print(
+        log_print(
             f"[match] Showdown names collided; using distinct logins: {n1!r} vs {n2!r}",
             flush=True,
         )
@@ -679,7 +680,7 @@ def save_local_replay(player: Player, battle_tag: str) -> Path:
     safe_tag = battle_tag.lstrip(">").replace("/", "_")
     output_path = REPLAY_DIR / f"{safe_tag}.html"
     player.save_replay(battle_tag, output_path)
-    print(f"Saved local replay: {output_path}", flush=True)
+    log_print(f"Saved local replay: {output_path}", flush=True)
     return output_path
 
 
@@ -741,7 +742,7 @@ def save_raw_battle_log(
         "replay_log_lines": replay_lines,
     }
     output_path.write_text(json.dumps(payload, indent=2))
-    print(f"Saved raw log: {output_path}", flush=True)
+    log_print(f"Saved raw log: {output_path}", flush=True)
     return output_path
 
 
@@ -790,13 +791,13 @@ async def run_single_match(
         player1_name, player2_name = o1, o2
         if player1_name == player2_name:
             player2_name = _showdown_name_with_numeric_suffix(player1_name, 2)
-            print(
+            log_print(
                 f"[match] Manager Showdown names collided; using distinct logins: "
                 f"{player1_name!r} vs {player2_name!r}",
                 flush=True,
             )
         else:
-            print(
+            log_print(
                 f"[match] Using manager Showdown logins: {player1_name!r} vs {player2_name!r}",
                 flush=True,
             )
@@ -900,7 +901,7 @@ async def run_single_match(
                     tourney_context=tourney_context,
                     manager_match_id=manager_match_id,
                 )
-                print(f"Live battle detected: {live_battle_tag}", flush=True)
+                log_print(f"Live battle detected: {live_battle_tag}", flush=True)
             await asyncio.sleep(0.3)
 
         await battle_task
@@ -948,7 +949,7 @@ async def run_single_match(
                 player2_name=player2_name,
             )
         except Exception as e:
-            print(f"[memory] post-match memory cycle failed: {e}", flush=True)
+            log_print(f"[memory] post-match memory cycle failed: {e}", flush=True)
             traceback.print_exc()
 
         write_current_battle_state(
@@ -993,7 +994,7 @@ async def run_single_match(
         )
         clear_thoughts_state()
         await _post_thoughts_clear()
-        print(f"Error in match: {e}", flush=True)
+        log_print(f"Error in match: {e}", flush=True)
         traceback.print_exc()
         return MatchResult(
             winner="", loser="", winner_side="",

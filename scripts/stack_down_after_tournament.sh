@@ -206,4 +206,9 @@ if [[ "$POST_DELAY" -gt 0 ]]; then
 fi
 
 echo "${SCRIPT_TAG} Running stack_down.sh ..."
-bash "$ROOT/scripts/stack_down.sh" "${STACK_DOWN_EXTRA[@]}"
+# Bash < 4.4 + set -u treats "${arr[@]}" as unbound when arr is empty; avoid expanding then.
+if [[ ${#STACK_DOWN_EXTRA[@]} -gt 0 ]]; then
+    bash "$ROOT/scripts/stack_down.sh" "${STACK_DOWN_EXTRA[@]}"
+else
+    bash "$ROOT/scripts/stack_down.sh"
+fi

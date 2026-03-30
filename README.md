@@ -161,7 +161,8 @@ All live in `scripts/` (run from repo root). The **web** service must be up for 
 | `healthcheck.sh` | Probe Showdown + web HTTP health (uses `WEB_HOST` / `WEB_PORT` with `OVERLAY_*` fallback). |
 | `restart_stack.sh` | `docker compose` restart for `showdown`, `web`, `agents`; `--stream` includes Twitch capture. |
 | `stack_down.sh` | `docker compose down`; optional `-v` / `--volumes` to drop named volumes; optional post-down sleep (see script `--help`). |
-| `create_match.sh` | Create a match or best-of series via `POST` to `/api/manager` (requires provider/model/persona flags — run `bash scripts/create_match.sh --help`). |
+| `stack_down_after_tournament.sh` | Poll the manager until a tournament is **completed** or **cancelled**, optional post-finish delay, then run `stack_down.sh` (useful after a stream/event — run `bash scripts/stack_down_after_tournament.sh --help`). |
+| `create_match.sh` | Create a match or best-of series via the manager API (requires provider/model/persona flags — run `bash scripts/create_match.sh --help`). |
 | `create_tournament.sh` | Create a tournament (round-robin / elimination) via manager API (`bash scripts/create_tournament.sh --help`). |
 | `set_twitch_title.sh` | Set Twitch title/category using OAuth env vars from `.env`. |
 
@@ -407,6 +408,15 @@ open http://localhost:8080/manager
 open http://localhost:8080/replays
 ```
 
+### Automated tests (optional)
+
+Bracket and round-robin helper logic is covered by **`pytest`** in **`web/manager/verify_brackets_test.py`** (no Docker required). From the **`web/`** directory:
+
+```bash
+pip install -r requirements-dev.txt
+pytest manager/verify_brackets_test.py -v
+```
+
 ### Operations
 
 ```bash
@@ -436,7 +446,7 @@ To update the Twitch channel title (and optional category) programmatically:
    - `TWITCH_CLIENT_ID`
    - `TWITCH_OAUTH_TOKEN` (must include `channel:manage:broadcast`)
    - `TWITCH_BROADCASTER_ID`
-   - Optional: `TWITCH_GAME_ID` (defaults to Pokémon `1982936547`)
+   - Optional: `TWITCH_GAME_ID` (defaults to Pokémon Showdown [`850490686`](https://www.twitch.tv/directory/category/pokemon-showdown))
    - Optional: `TWITCH_STREAM_TITLE`
 2. Run:
 
@@ -562,7 +572,7 @@ Deprecated aliases (still read by agents/stream): `OVERLAY_HOST`, `OVERLAY_PORT`
 | `TWITCH_OAUTH_TOKEN` | No | — | Twitch OAuth token (`channel:manage:broadcast`) |
 | `TWITCH_BROADCASTER_ID` | No | — | Twitch broadcaster user ID |
 | `TWITCH_AUTO_SET_TITLE` | No | `1` | Auto-set title on stream start (`1`/`0`) |
-| `TWITCH_GAME_ID` | No | `1982936547` | Twitch category ID (defaults to Pokémon) |
+| `TWITCH_GAME_ID` | No | `850490686` | Twitch category ID ([Pokémon Showdown](https://www.twitch.tv/directory/category/pokemon-showdown)) |
 | `TWITCH_STREAM_TITLE` | No | `Pokémon Showdown battles with LLMs` | Title for Twitch API updates |
 
 </details>

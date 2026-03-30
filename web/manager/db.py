@@ -872,7 +872,7 @@ async def pop_next_queued_match() -> dict | None:
         cur = await db.execute(
             """SELECT id FROM matches
                WHERE status = 'queued'
-               ORDER BY queued_at ASC
+               ORDER BY queued_at ASC, id ASC
                LIMIT 1"""
         )
         row = await cur.fetchone()
@@ -977,13 +977,20 @@ async def _enrich_victory_context(db: aiosqlite.Connection, m: dict) -> dict:
     sid = m.get("series_id")
     series_clinched = False
     if mid is not None and sid is not None:
-        cur = await db.execute(
-            """SELECT id FROM matches WHERE series_id = ? AND status = 'completed'
-               ORDER BY completed_at DESC, id DESC LIMIT 1""",
-            (sid,),
-        )
-        row = await cur.fetchone()
-        series_clinched = row is not None and int(row[0]) == int(mid)
+        cur = await db.execute("SELECT status FROM series WHERE id = ?", (sid,))
+        srow = await cur.fetchone()
+        series_status = srow[0] if srow else None
+        # Only the match that *decided* the series (parent row completed) may use
+        # stage labels like "R1 Winner". Intermediate BO wins leave the series
+        # in_progress; the latest completed game would wrongly qualify otherwise.
+        if series_status == "completed":
+            cur = await db.execute(
+                """SELECT id FROM matches WHERE series_id = ? AND status = 'completed'
+                   ORDER BY completed_at DESC, id DESC LIMIT 1""",
+                (sid,),
+            )
+            row = await cur.fetchone()
+            series_clinched = row is not None and int(row[0]) == int(mid)
     out["victory_series_clinched"] = series_clinched
 
     tournament_clinched = False
@@ -1036,6 +1043,7 @@ async def get_scoreboard_data(recent_count: int = 10) -> dict:
         recent_cur = await db.execute(
             """SELECT m.id, m.winner, m.loser, m.winner_side, m.completed_at AS timestamp,
                       m.battle_format, m.duration,
+                      m.player1_persona, m.player2_persona,
                       m.series_id, m.tournament_id, m.game_number,
                       t.name AS tournament_name,
                       t.type AS tournament_type,

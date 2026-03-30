@@ -67,7 +67,7 @@
           {% endif %}
         {% endif %}
       {% endfor %}
-      {% for eid, st in ns.standings.items() %}
+      {% for st in ns.standings.values() | sort(attribute='wins', reverse=true) %}
       <tr>
         <td>
           <span class="standings-player-cell">
@@ -98,20 +98,38 @@
     {% endfor %}
     {% for rnd in range(1, max_round.val + 1) %}
     {% set wb_from_end = max_round.val - rnd + 1 %}
-    {% if wb_from_end == 1 %}
-      {% set wb_label = ' (Winners final)' if tournament.type == 'double_elimination' else ' (Final)' %}
-    {% elif wb_from_end == 2 %}
-      {% set wb_label = ' (Semifinals)' %}
-    {% elif wb_from_end == 3 %}
-      {% set wb_label = ' (Quarterfinals)' %}
-    {% elif wb_from_end == 4 %}
-      {% set wb_label = ' (Round of 16)' %}
-    {% elif wb_from_end == 5 %}
-      {% set wb_label = ' (Round of 32)' %}
-    {% elif wb_from_end == 6 %}
-      {% set wb_label = ' (Round of 64)' %}
-    {% elif wb_from_end >= 7 %}
-      {% set wb_label = ' (Round of 128)' %}
+    {% if tournament.type == 'double_elimination' %}
+      {% if wb_from_end == 1 %}
+        {% set wb_label = ' (WB Finals)' %}
+      {% elif wb_from_end == 2 %}
+        {% set wb_label = ' (WB Semifinals)' %}
+      {% elif wb_from_end == 3 %}
+        {% set wb_label = ' (WB Quarterfinals)' %}
+      {% elif wb_from_end == 4 %}
+        {% set wb_label = ' (Round of 16)' %}
+      {% elif wb_from_end == 5 %}
+        {% set wb_label = ' (Round of 32)' %}
+      {% elif wb_from_end == 6 %}
+        {% set wb_label = ' (Round of 64)' %}
+      {% elif wb_from_end >= 7 %}
+        {% set wb_label = ' (Round of 128)' %}
+      {% endif %}
+    {% else %}
+      {% if wb_from_end == 1 %}
+        {% set wb_label = ' (Final)' %}
+      {% elif wb_from_end == 2 %}
+        {% set wb_label = ' (Semifinals)' %}
+      {% elif wb_from_end == 3 %}
+        {% set wb_label = ' (Quarterfinals)' %}
+      {% elif wb_from_end == 4 %}
+        {% set wb_label = ' (Round of 16)' %}
+      {% elif wb_from_end == 5 %}
+        {% set wb_label = ' (Round of 32)' %}
+      {% elif wb_from_end == 6 %}
+        {% set wb_label = ' (Round of 64)' %}
+      {% elif wb_from_end >= 7 %}
+        {% set wb_label = ' (Round of 128)' %}
+      {% endif %}
     {% endif %}
     <div class="bracket-round">
       <div class="bracket-round-label">Round {{ rnd }}{{ wb_label }}</div>

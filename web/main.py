@@ -189,6 +189,18 @@ def _safe_square_portrait_url(slug: str | None) -> str:
     return u or ""
 
 
+def _enrich_match_row_portrait_urls(m: dict) -> dict:
+    """Attach square portrait URLs from stored persona slugs (for last_match / recent rows)."""
+    out = dict(m)
+    out["player1_portrait_square_url"] = _safe_square_portrait_url(
+        out.get("player1_persona")
+    )
+    out["player2_portrait_square_url"] = _safe_square_portrait_url(
+        out.get("player2_persona")
+    )
+    return out
+
+
 def _display_model_id(model_id: str | None) -> str:
     """UI-only label: strip OpenRouter routing prefix; state files keep full ids."""
     if model_id is None:
@@ -205,6 +217,11 @@ def _display_model_id(model_id: str | None) -> str:
 async def get_scoreboard():
     """Scoreboard data sourced from SQLite + live battle state file."""
     scoreboard = await db.get_scoreboard_data(RECENT_MATCHES_COUNT)
+    recent_matches = [
+        _enrich_match_row_portrait_urls(dict(r))
+        for r in scoreboard["recent_matches"]
+    ]
+    last_match_payload = recent_matches[0] if recent_matches else None
     state = _load_current_battle_state()
     if isinstance(state, dict) and state.get("match_id") is not None:
         try:
@@ -258,8 +275,8 @@ async def get_scoreboard():
         "match_id": state.get("match_id"),
         "tournament_context": _tournament_context_from_state(state),
         "tournament_intro_roster": _tournament_intro_roster_for_api(state),
-        "last_match": scoreboard["last_match"],
-        "recent_matches": scoreboard["recent_matches"],
+        "last_match": last_match_payload,
+        "recent_matches": recent_matches,
     }
 
 

@@ -523,6 +523,7 @@ input:focus, select:focus { outline: none; border-color: var(--primary); }
   justify-content: space-between;
   padding: 8px 12px;
   font-size: 0.85rem;
+  align-items: center;
 }
 .bracket-player:first-child { border-bottom: 1px solid var(--border); }
 .bracket-player--winner { color: var(--win-color); font-weight: 600; }

@@ -68,11 +68,17 @@ bash scripts/create_tournament.sh --help
 # Stack shutdown (optional --volumes; optional delay — see script)
 bash scripts/stack_down.sh
 
+# After a tournament finishes: poll manager, then stack down (optional -v)
+bash scripts/stack_down_after_tournament.sh --help
+
 # Stop
 docker compose down
+
+# Bracket / tournament logic tests (install dev deps in web/, then pytest from web/)
+cd web && pip install -r requirements-dev.txt && pytest manager/verify_brackets_test.py -v
 ```
 
-**Scripts:** See `scripts/` — `healthcheck`, `restart_stack`, `stack_down`, `create_match`, `create_tournament`, `set_twitch_title`. The README has a summary table with descriptions and env vars.
+**Scripts:** See `scripts/` — `healthcheck`, `restart_stack`, `stack_down`, `stack_down_after_tournament`, `create_match`, `create_tournament`, `set_twitch_title`. The README has a summary table with descriptions and env vars.
 
 ## Key Endpoints (web service, port 8080)
 
@@ -130,11 +136,12 @@ docker compose down
 - **One folder per service:** Each has its own `Dockerfile` and `requirements.txt`. No monorepo package manager.
 - **Async I/O:** aiohttp for non-blocking HTTP in agents; FastAPI async routes + WebSocket fanout in web.
 - **SQLite (web):** In **`web/manager/db.py`**, use **`async with _db() as db:`** (the bound name `db` is the **connection**, despite the name). From other modules (`routes.py`, `tournament_logic.py`, …), **`from . import db`** then **`async with db._db() as conn:`**. `_db()` is an `@asynccontextmanager` around **`async with aiosqlite.connect(...)`** and sets WAL + `foreign_keys`. Do **not** `await aiosqlite.connect()` and then `async with` the same `Connection`: aiosqlite starts a worker thread on connect/`__aenter__`, and doing both triggers `RuntimeError: threads can only be started once`.
+- **Printing / logs (Python):** Prefer timestamped `log_print()` over raw `print()` so container logs are sortable and multi-process output is readable. Agents use `agents/log_print.py`; stream uses `stream/log_print.py` (each Docker image only includes its own service directory). Keep long-running service entrypoints unbuffered (e.g. `python -u ...`) and use `flush=True` for interactive progress. For warnings/errors, send to stderr (`file=sys.stderr`). It’s fine to leave `traceback.print_exc()` for full stack traces.
 - **LLM output format:** Structured JSON with `action_type`, `index`, `reasoning`, optional `callout` — defined in `ACTION_FORMAT_INSTRUCTIONS` in `match_runner.py` (appended after optional memory blocks in `build_system_prompt()`). Post-match **reflection** uses `reflection_json_completion()` in `llm_player.py` (no tools; JSON object with `memory_entry` and optional `learnings_update`).
 - **Pokédex data layer:** `agents/pokedex.py` provides lookup functions for moves, species, abilities, items, and type matchups. Move/species/type data comes from poke-env `GenData`; item/ability/move text descriptions are extracted from Showdown's upstream repo at build time by `agents/scripts/extract_showdown_data.py` into `/app/data/*.json`.
 - **Inter-service state:** JSON files on shared Docker volumes plus SQLite on `manager-data` are the integration contract between agents and web.
 - **Scripts:** Bash with `set -euo pipefail`.
-- **No test suite:** No `tests/` directory, no CI/CD workflows. Health verification is via `scripts/healthcheck.sh`.
+- **Tests:** Optional **`pytest`** checks for `tournament_logic` bracket behaviour live in **`web/manager/verify_brackets_test.py`** (pure logic, no DB). Config: **`web/pytest.ini`** (`pythonpath = .`). Dev deps: **`web/requirements-dev.txt`** (`pytest>=8.0`). From **`web/`**: `pip install -r requirements-dev.txt` then `pytest manager/verify_brackets_test.py -v`. There is no top-level `tests/` package and no committed CI workflow; routine health verification remains **`scripts/healthcheck.sh`**.
 
 ## Personas
 

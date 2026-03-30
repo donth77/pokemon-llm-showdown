@@ -203,7 +203,7 @@
         text-shadow:
           0 1px 12px rgba(0, 0, 0, 0.85),
           0 0 28px rgba(186, 168, 255, 0.12);
-        margin: 0 0 0 24px;
+        margin: 0 0 0 16px;
       }
 
       @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
@@ -479,6 +479,11 @@
             if (!r.ok) return;
             var data = await r.json();
             pushScoreboardToEmbeds(data);
+            try {
+              if (typeof window.__refreshBattleFromHubScoreboard__ === "function") {
+                window.__refreshBattleFromHubScoreboard__(data);
+              }
+            } catch (_e) {}
           } catch (_e) {}
           finally {
             hubInFlight = false;

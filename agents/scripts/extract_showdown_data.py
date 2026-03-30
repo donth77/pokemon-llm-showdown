@@ -16,6 +16,12 @@ import sys
 import urllib.request
 from pathlib import Path
 
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from log_print import log_print
+
 GITHUB_RAW = "https://raw.githubusercontent.com/smogon/pokemon-showdown/master/data/text"
 FILES = {
     "items": f"{GITHUB_RAW}/items.ts",
@@ -102,17 +108,17 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
 
     for name, url in FILES.items():
-        print(f"Downloading {name} from {url} ...", flush=True)
+        log_print(f"Downloading {name} from {url} ...", flush=True)
         try:
             source = _download(url)
         except Exception as e:
-            print(f"  WARN: failed to download {name}: {e}", file=sys.stderr)
+            log_print(f"  WARN: failed to download {name}: {e}", file=sys.stderr, flush=True)
             continue
 
         data = _parse_ts_text(source)
         dest = out / f"{name}.json"
         dest.write_text(json.dumps(data, indent=1, ensure_ascii=False))
-        print(f"  Wrote {len(data)} entries to {dest}", flush=True)
+        log_print(f"  Wrote {len(data)} entries to {dest}", flush=True)
 
 
 if __name__ == "__main__":

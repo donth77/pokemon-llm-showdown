@@ -413,12 +413,52 @@
         victoryShowDelayMs = 1000;
       }
 
-      // Track the latest completed match by id + timestamp. Relying only on
-      // total_counts missed updates when the first successful poll happened after
-      // a completion, or when count and last_match were briefly inconsistent.
+      // Last completed match (id + timestamp) plus a total_matches cursor. The
+      // fingerprint alone misses: iframe reload (state reset), first hub tick
+      // with the new last_match only (primed without splash), or rare races
+      // between SQLite and the scoreboard row.
+      var CELEBRATED_TOTAL_KEY = "pokemon_showdown_victory_celebrated_total";
       var lastMatchFingerprint = null;
+      var celebratedTotalMemory = null;
       var hideTimer = null;
       var showDelayTimer = null;
+
+      function readCelebratedTotalStored() {
+        try {
+          var s = sessionStorage.getItem(CELEBRATED_TOTAL_KEY);
+          if (s === null || s === "") return null;
+          var n = parseInt(s, 10);
+          return Number.isNaN(n) ? null : n;
+        } catch (_e) {
+          return null;
+        }
+      }
+
+      function writeCelebratedTotalStored(n) {
+        try {
+          sessionStorage.setItem(CELEBRATED_TOTAL_KEY, String(n));
+        } catch (_e) {}
+      }
+
+      function syncCelebratedCursor(tm) {
+        var stored = readCelebratedTotalStored();
+        if (stored !== null) {
+          celebratedTotalMemory = stored;
+        } else if (celebratedTotalMemory === null) {
+          celebratedTotalMemory = tm;
+          writeCelebratedTotalStored(tm);
+        }
+        if (tm < celebratedTotalMemory) {
+          celebratedTotalMemory = tm;
+          writeCelebratedTotalStored(tm);
+        }
+        return celebratedTotalMemory;
+      }
+
+      function advanceCelebratedCursor(tm) {
+        celebratedTotalMemory = tm;
+        writeCelebratedTotalStored(tm);
+      }
 
       function fingerprintLastMatch(m) {
         if (!m || m.id == null) return "";
@@ -649,37 +689,59 @@
         }
       }
 
+      function victorySplashPendingOrVisible() {
+        if (showDelayTimer != null || hideTimer != null) return true;
+        return $splash && $splash.classList.contains("visible");
+      }
+
       function processScoreboardData(data) {
         if (!data) return;
         var st = data.battle_status || "idle";
+        var p1 = data.player1_name || "Player 1";
+        var p2 = data.player2_name || "Player 2";
+        var lm = data.last_match;
+        var fp = fingerprintLastMatch(lm);
+        var tm = Number(data.total_matches) || 0;
+        var celebrated = syncCelebratedCursor(tm);
+        var newByTotal = tm > celebrated;
+        var newByFingerprint =
+          Boolean(fp) &&
+          lastMatchFingerprint !== null &&
+          fp !== lastMatchFingerprint;
+
+        if (newByTotal || newByFingerprint) {
+          advanceCelebratedCursor(tm);
+          if (fp) {
+            lastMatchFingerprint = fp;
+          }
+          if (lm) {
+            var vP1 = (lm && lm.player1_name) || p1;
+            var vP2 = (lm && lm.player2_name) || p2;
+            var vP1portrait =
+              (lm && lm.player1_portrait_square_url) ||
+              data.player1_portrait_square_url ||
+              "";
+            var vP2portrait =
+              (lm && lm.player2_portrait_square_url) ||
+              data.player2_portrait_square_url ||
+              "";
+            var vP1sprite = (lm && lm.player1_sprite_url) || "";
+            var vP2sprite = (lm && lm.player2_sprite_url) || "";
+            showVictory(lm, vP1, vP2, vP1portrait, vP2portrait, vP1sprite, vP2sprite);
+          }
+        } else if (lastMatchFingerprint === null && fp) {
+          lastMatchFingerprint = fp;
+        }
+
         if (
           st === "tournament_intro" ||
           st === "intro_gap" ||
           st === "starting" ||
           st === "live"
         ) {
-          hideVictorySplashImmediately();
-        }
-        var p1 = data.player1_name || "Player 1";
-        var p2 = data.player2_name || "Player 2";
-        var lm = data.last_match;
-        var fp = fingerprintLastMatch(lm);
-
-        if (lastMatchFingerprint === null) {
-          lastMatchFingerprint = fp;
-          return;
-        }
-        if (fp && fp !== lastMatchFingerprint) {
-          lastMatchFingerprint = fp;
-          showVictory(
-            lm,
-            p1,
-            p2,
-            data.player1_portrait_square_url,
-            data.player2_portrait_square_url,
-            data.player1_sprite_url,
-            data.player2_sprite_url
-          );
+          if (!victorySplashPendingOrVisible()) {
+            hideVictorySplashImmediately();
+          }
         }
       }
 

@@ -154,7 +154,7 @@
         border-radius: 12px;
         padding: 12px 16px;
         min-width: 0;
-        min-height: 380px;
+        min-height: 375px;
         backdrop-filter: blur(8px);
         display: flex;
         flex-direction: column;
@@ -497,6 +497,7 @@
         var bracket = m.series_bracket;
         var rn = m.series_round_number;
         var maxWb = m.tournament_max_winners_round;
+        var ttype = String(m.tournament_type || "");
         if (bracket === "grand_finals") {
           return "Grand Finals";
         }
@@ -511,11 +512,14 @@
           var mx = Number(maxWb);
           if (Number.isFinite(r) && Number.isFinite(mx) && mx > 0) {
             if (r === mx) {
-              return "Finals";
+              return ttype === "double_elimination" ? "WB Finals" : "Finals";
             }
             /* "Semifinals" only when there is a real penultimate round (3+ WB rounds) */
             if (r === mx - 1 && mx >= 3) {
-              return "Semifinals";
+              return ttype === "double_elimination" ? "WB Semifinals" : "Semifinals";
+            }
+            if (r === mx - 2 && mx >= 4) {
+              return ttype === "double_elimination" ? "WB Quarterfinals" : "Quarterfinals";
             }
           }
         }

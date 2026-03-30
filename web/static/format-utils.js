@@ -60,10 +60,10 @@ function formatTournamentStageLabel(m) {
         return "Finals";
       }
       if (r === mx - 1 && mx >= 3) {
-        return "Semifinals";
+        return ttype === "double_elimination" ? "WB Semifinals" : "Semifinals";
       }
       if (r === mx - 2 && mx >= 4) {
-        return "Quarterfinals";
+        return ttype === "double_elimination" ? "WB Quarterfinals" : "Quarterfinals";
       }
     }
   }

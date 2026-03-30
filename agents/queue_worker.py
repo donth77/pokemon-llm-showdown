@@ -12,6 +12,7 @@ from pathlib import Path
 
 import aiohttp
 
+from log_print import log_print
 from match_runner import (
     load_persona,
     run_single_match,
@@ -60,7 +61,7 @@ async def _fetch_series_snapshot(
                 "player2_wins": s["player2_wins"],
             }
     except Exception as e:
-        print(f"[queue] Could not load series #{series_id}: {e}", flush=True)
+        log_print(f"[queue] Could not load series #{series_id}: {e}", flush=True)
         return None
 
 
@@ -78,7 +79,7 @@ def _merge_series_snapshot_into_current_battle(snapshot: dict) -> None:
         data["series_player2_wins"] = snapshot["player2_wins"]
         write_json_atomic(CURRENT_BATTLE_FILE, data)
     except Exception as e:
-        print(f"[queue] Could not merge series into current_battle: {e}", flush=True)
+        log_print(f"[queue] Could not merge series into current_battle: {e}", flush=True)
 
 
 def _tourney_context_from_match(match: dict) -> dict | None:
@@ -151,15 +152,15 @@ async def _fetch_next_match(session: aiohttp.ClientSession) -> dict | None:
                 return await resp.json()
             body = (await resp.text()).strip()
             if body:
-                print(
+                log_print(
                     f"[queue] Unexpected status {resp.status} from queue/next — body: {body[:800]}",
                     flush=True,
                 )
             else:
-                print(f"[queue] Unexpected status {resp.status} from queue/next", flush=True)
+                log_print(f"[queue] Unexpected status {resp.status} from queue/next", flush=True)
             return None
     except Exception as e:
-        print(f"[queue] Error fetching next match: {e}", flush=True)
+        log_print(f"[queue] Error fetching next match: {e}", flush=True)
         return None
 
 
@@ -176,7 +177,7 @@ async def _report_complete(
             timeout=aiohttp.ClientTimeout(total=10),
         ) as resp:
             if resp.status == 200:
-                print(f"[queue] Reported match #{match_id} complete", flush=True)
+                log_print(f"[queue] Reported match #{match_id} complete", flush=True)
                 try:
                     body = await resp.json()
                     snap = body.get("series_snapshot") if isinstance(body, dict) else None
@@ -186,9 +187,9 @@ async def _report_complete(
                     pass
             else:
                 text = await resp.text()
-                print(f"[queue] Failed to report #{match_id}: {resp.status} {text}", flush=True)
+                log_print(f"[queue] Failed to report #{match_id}: {resp.status} {text}", flush=True)
     except Exception as e:
-        print(f"[queue] Error reporting match #{match_id}: {e}", flush=True)
+        log_print(f"[queue] Error reporting match #{match_id}: {e}", flush=True)
 
 
 async def _report_error(
@@ -203,17 +204,17 @@ async def _report_error(
             timeout=aiohttp.ClientTimeout(total=10),
         ) as resp:
             if resp.status == 200:
-                print(f"[queue] Reported match #{match_id} error", flush=True)
+                log_print(f"[queue] Reported match #{match_id} error", flush=True)
     except Exception as e:
-        print(f"[queue] Error reporting error for #{match_id}: {e}", flush=True)
+        log_print(f"[queue] Error reporting error for #{match_id}: {e}", flush=True)
 
 
 async def main() -> None:
-    print("=" * 50, flush=True)
-    print("Queue Worker starting", flush=True)
-    print(f"Web / manager API: {API_BASE}", flush=True)
-    print(f"Poll interval: {QUEUE_POLL_INTERVAL}s", flush=True)
-    print("=" * 50, flush=True)
+    log_print("=" * 50, flush=True)
+    log_print("Queue Worker starting", flush=True)
+    log_print(f"Web / manager API: {API_BASE}", flush=True)
+    log_print(f"Poll interval: {QUEUE_POLL_INTERVAL}s", flush=True)
+    log_print("=" * 50, flush=True)
 
     await wait_for_showdown()
 
@@ -226,11 +227,11 @@ async def main() -> None:
                     timeout=aiohttp.ClientTimeout(total=5),
                 ) as resp:
                     if resp.status == 200:
-                        print("[queue] Web service is up!", flush=True)
+                        log_print("[queue] Web service is up!", flush=True)
                         break
             except Exception:
                 pass
-            print("[queue] Waiting for web service...", flush=True)
+            log_print("[queue] Waiting for web service...", flush=True)
             await asyncio.sleep(2)
 
         while True:
@@ -241,16 +242,16 @@ async def main() -> None:
                 continue
 
             match_id = match["id"]
-            print(f"\n{'=' * 50}", flush=True)
-            print(f"[queue] Running match #{match_id}", flush=True)
-            print(
+            log_print(f"\n{'=' * 50}", flush=True)
+            log_print(f"[queue] Running match #{match_id}", flush=True)
+            log_print(
                 f"  {match['player1_provider']}/{match['player1_model']} ({match['player1_persona']})"
                 f" vs "
                 f"{match['player2_provider']}/{match['player2_model']} ({match['player2_persona']})",
                 flush=True,
             )
-            print(f"  Format: {match['battle_format']}", flush=True)
-            print(f"{'=' * 50}", flush=True)
+            log_print(f"  Format: {match['battle_format']}", flush=True)
+            log_print(f"{'=' * 50}", flush=True)
 
             series_snapshot = None
             sid = match.get("series_id")
@@ -270,7 +271,7 @@ async def main() -> None:
                         p1 = load_persona(match["player1_persona"])
                         p2 = load_persona(match["player2_persona"])
                     except Exception as e:
-                        print(
+                        log_print(
                             f"[queue] Tournament intro skipped (persona load): {e}",
                             flush=True,
                         )
@@ -306,7 +307,7 @@ async def main() -> None:
                         tournament_intro_roster=roster,
                         tournament_best_of=t_bo,
                     )
-                    print(
+                    log_print(
                         f"[queue] Tournament intro hold {TOURNAMENT_INTRO_SECONDS}s "
                         f"(tournament #{tid})",
                         flush=True,
@@ -329,7 +330,7 @@ async def main() -> None:
                             manager_match_id=int(match_id),
                             tournament_best_of=t_bo,
                         )
-                        print(
+                        log_print(
                             f"[queue] Tournament intro delay "
                             f"{TOURNAMENT_INTRO_DELAY_SECONDS}s (tournament #{tid})",
                             flush=True,
@@ -367,9 +368,9 @@ async def main() -> None:
                         "battle_tag": result.battle_tag,
                     },
                 )
-                print(f"[queue] Match #{match_id}: {result.winner} wins!", flush=True)
+                log_print(f"[queue] Match #{match_id}: {result.winner} wins!", flush=True)
 
-            print(f"[queue] Next poll in {DELAY_BETWEEN_MATCHES}s ...", flush=True)
+            log_print(f"[queue] Next poll in {DELAY_BETWEEN_MATCHES}s ...", flush=True)
             await asyncio.sleep(DELAY_BETWEEN_MATCHES)
 
 

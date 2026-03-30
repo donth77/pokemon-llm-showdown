@@ -235,8 +235,8 @@ ENV_REGISTRY: tuple[EnvVarDef, ...] = (
     EnvVarDef(
         "TWITCH_GAME_ID",
         "Twitch",
-        "Twitch category ID (default Pokémon).",
-        "1982936547",
+        "Twitch category ID (Pokémon Showdown; https://www.twitch.tv/directory/category/pokemon-showdown).",
+        "850490686",
         "stream",
     ),
     EnvVarDef(

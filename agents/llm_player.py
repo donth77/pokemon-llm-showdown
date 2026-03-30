@@ -35,6 +35,7 @@ from pokedex import (
     gen_from_format,
 )
 from provider_model_validate import validate_provider_model
+from log_print import log_print
 
 
 def _patch_poke_env_pseudo_move_entries() -> None:
@@ -136,7 +137,7 @@ def _openrouter_fetch_structured_model_ids() -> set[str] | None:
         r.raise_for_status()
         payload = r.json()
     except Exception as e:
-        print(
+        log_print(
             f"  [openrouter] Structured-output model list unavailable ({e}); "
             "using json_object",
             flush=True,
@@ -361,7 +362,7 @@ async def _post_thought_to_overlay(
             ):
                 pass
     except Exception as e:
-        print(f"  [web] Failed to post thought: {e}", flush=True)
+        log_print(f"  [web] Failed to post thought: {e}", flush=True)
 
 
 def _pokemon_summary(pokemon: Pokemon, is_opponent: bool = False) -> str:
@@ -832,7 +833,7 @@ def _openrouter_extra_body() -> dict | None:
     try:
         extra = json.loads(raw)
     except json.JSONDecodeError:
-        print(
+        log_print(
             "  [openrouter] Invalid OPENROUTER_EXTRA_BODY_JSON, ignoring",
             flush=True,
         )
@@ -1146,7 +1147,7 @@ class LLMPlayer(Player):
         if _POKEDEX_AUTO_ENRICH:
             pdex_flags.append("auto_enrich")
         if pdex_flags:
-            print(
+            log_print(
                 f"  [{self.username}] Pokédex enabled: {', '.join(pdex_flags)}",
                 flush=True,
             )
@@ -1240,7 +1241,7 @@ class LLMPlayer(Player):
                     gen,
                 )
                 lookups_done += 1
-                print(
+                log_print(
                     f"  [{self.username}] Pokédex lookup #{lookups_done}: "
                     f"{pokedex_block.name}({getattr(pokedex_block, 'input', {})}) "
                     f"-> {result_text[:120]}",
@@ -1259,7 +1260,7 @@ class LLMPlayer(Player):
 
                 if lookups_done >= _POKEDEX_MAX_LOOKUPS:
                     tool_choice = {"type": "tool", "name": "submit_action"}
-                    print(
+                    log_print(
                         f"  [{self.username}] Pokédex lookup limit reached "
                         f"({_POKEDEX_MAX_LOOKUPS}), forcing submit_action",
                         flush=True,
@@ -1343,7 +1344,7 @@ class LLMPlayer(Player):
                                 if isinstance(choice0, dict)
                                 else []
                             )
-                            print(
+                            log_print(
                                 f"  [openrouter] No assistant text in raw response "
                                 f"(finish_reason={finish!r}, model={model!r}, choice_keys={ckeys})",
                                 flush=True,
@@ -1356,7 +1357,7 @@ class LLMPlayer(Player):
                     if use_schema and attempt == 0:
                         with _openrouter_structured_deny_lock:
                             _openrouter_structured_deny.add(self._model_id)
-                        print(
+                        log_print(
                             f"  [openrouter] json_schema rejected for "
                             f"{self._model_id!r}; falling back to json_object ({e})",
                             flush=True,
@@ -1394,7 +1395,7 @@ class LLMPlayer(Player):
             enrich = auto_enrich_battle_context(battle, gen=self._current_gen)
             if enrich:
                 note_count = enrich.count("\n")
-                print(
+                log_print(
                     f"  [{self.username}] Pokédex auto-enrich: "
                     f"{note_count} notes injected",
                     flush=True,
@@ -1447,7 +1448,7 @@ class LLMPlayer(Player):
                 rp_show = (rp[:100] + "…") if len(rp) > 100 else rp
                 co = (callout or "").strip()
                 co_part = f" callout={co!r}" if co else ""
-                print(
+                log_print(
                     f"  [{self.username}] {self._provider} choice: {action} "
                     f"reasoning={rp_show!r}{co_part}",
                     flush=True,
@@ -1478,14 +1479,14 @@ class LLMPlayer(Player):
                     return self.create_order(battle.available_switches[idx])
 
             preview = reply[:200] + ("…" if len(reply) > 200 else "")
-            print(
+            log_print(
                 f"  [{self.username}] Could not parse action (reply_len={len(reply)}), "
                 f"preview={preview!r}, falling back to random",
                 flush=True,
             )
 
         except Exception as e:
-            print(
+            log_print(
                 f"  [{self.username}] {self._provider} API error: {e}, falling back to random",
                 flush=True,
             )
