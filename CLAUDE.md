@@ -11,11 +11,11 @@ Four Docker services on a shared bridge network (`battle-net`), plus repo-root *
 | Service | Dir | Port | Role |
 |---------|-----|------|------|
 | `showdown` | `showdown/` | 8000 | Local Pokémon Showdown battle server (Node 20, no auth) |
-| `web` | `web/` | 8080 | FastAPI: scoreboard, `/manager` + tournament API, broadcast, victory splash, thoughts WebSocket, replay index |
+| `web` | `web/` | 8080 | FastAPI: scoreboard + **`/scoreboard/stream`** (`scoreboard_stream.py`), manager UI + API + **`/api/manager/stream`** (`manager_stream.py`), broadcast, victory splash, thoughts (`GET /thoughts`, `/thoughts/ws`), replay index; optional **`WEB_DEBUG`** via `web_debug.py` |
 | `agents` | `agents/` | — | LLM battle agents (Python, poke-env); queue worker polls `/api/manager` for matches |
 | `stream` | `stream/` | 9222 | Xvfb + Chromium + FFmpeg → Twitch RTMP capture pipeline |
 
-**Data flow:** Agents ↔ Showdown (WebSocket game protocol) · Agents → Web (`/thought`, match completion via `/api/manager/matches/{id}/complete`, plus `current_battle.json` / `thoughts.json` on `state-data`) · Optional persona memory files on `state-data` (`/state/personas/{slug}/memory.md`, `learnings.md`, `_memory_state.json` when `ENABLE_MEMORY=1`) · Stream → Web + Showdown (HTTP, for browser capture only)
+**Data flow:** Agents ↔ Showdown (WebSocket game protocol) · Agents → Web (`/thought`, match completion via `/api/manager/matches/{id}/complete`, plus `current_battle.json` / `thoughts.json` on `state-data`) · Optional persona memory files on `state-data` (`/state/personas/{slug}/memory.md`, `learnings.md`, `_memory_state.json` when `ENABLE_MEMORY=true`) · Stream → Web + Showdown (HTTP, for browser capture only)
 
 **Shared Docker volumes:**
 - `web-data` → `/data` (legacy flat `results.json` if used; scoreboard primarily reads SQLite on `manager-data`)
@@ -34,10 +34,10 @@ Four Docker services on a shared bridge network (`battle-net`), plus repo-root *
 ## Tech Stack
 
 - **Agents:** Python 3.11, poke-env, asyncio, **aiohttp**, Anthropic SDK, OpenAI-compatible SDK (DeepSeek / OpenRouter), optional Pokédex data layer (`agents/pokedex.py`), optional **persona adaptive memory** (`match_runner.py` + `reflection_json_completion` in `llm_player.py`, default off via `ENABLE_MEMORY`)
-- **Web:** Python 3.11, **FastAPI**, **Uvicorn**, **Starlette**, **Jinja2**, **aiosqlite** (async SQLite). App code under `web/`; tournament/match persistence and API in `web/manager/` (`db.py`, `routes.py`, `tournament_logic.py`, `tournament_definition.py` — plaintext tournament parse/validate, `env_registry.py`, `env_host_file.py`, `personas_store.py`, `showdown_accounts.py`)
+- **Web:** Python 3.11, **FastAPI**, **Uvicorn**, **Starlette**, **Jinja2**, **aiosqlite** (async SQLite). App code under `web/`; tournament/match persistence and API in `web/manager/` (`db.py`, `routes.py`, `tournament_logic.py`, `tournament_definition.py` — plaintext tournament parse/validate, `env_registry.py`, `env_host_file.py`, `personas_store.py`, `showdown_accounts.py`). **SSE:** `web/scoreboard_stream.py` (full scoreboard snapshots for `/broadcast` and overlays), `web/manager_stream.py` (debounced refresh hints for manager dashboard / tournament / series pages — consumed by `web/static/manager-stream-client.js`).
 - **Showdown:** Node 20, upstream [pokemon-showdown](https://github.com/smogon/pokemon-showdown) repo
 - **Stream:** Python 3.11, Playwright (Chromium), Xvfb, FFmpeg, PulseAudio
-- **Infra:** Docker Compose v2, bridge network, named volumes; `web` mounts `./agents/personas` at `PERSONAS_DIR` (default `/personas`), `./assets/static/trainers` → `/app/static/trainers`, `./assets/static/portraits` → `/app/static/portraits`. Optional: `./.env` → `/app/host.env` with `MANAGER_HOST_ENV_FILE=/app/host.env` so `/manager/config` can edit the project env file (restart stack to apply to all services). Broadcast timing env vars (`MATCH_INTRO_SECONDS`, `VICTORY_MODAL_SECONDS`, `TOURNAMENT_VICTORY_MODAL_SECONDS`, `VICTORY_SHOW_DELAY_SECONDS`, …) must be listed on the **`web`** service in `docker-compose.yml` to take effect in containers (not only present in the mounted host file).
+- **Infra:** Docker Compose v2, bridge network, named volumes; `web` mounts `./agents/personas` at `PERSONAS_DIR` (default `/personas`), `./assets/static/trainers` → `/app/static/trainers`, `./assets/static/portraits` → `/app/static/portraits`. Optional: `./.env` → `/app/host.env` with `MANAGER_HOST_ENV_FILE=/app/host.env` so `/manager/config` can edit the project env file (restart stack to apply to all services). Broadcast timing env vars (`MATCH_INTRO_SECONDS`, `VICTORY_MODAL_SECONDS`, `TOURNAMENT_VICTORY_MODAL_SECONDS`, `VICTORY_SHOW_DELAY_SECONDS`, `BATTLE_IFRAME_OUTRO_SECONDS`, …) must be listed on the **`web`** service in `docker-compose.yml` to take effect in containers (not only present in the mounted host file).
 
 ## Quick Commands
 
@@ -78,7 +78,7 @@ docker compose down
 cd web && pip install -r requirements-dev.txt && pytest manager/verify_brackets_test.py -v
 ```
 
-**Scripts:** See `scripts/` — `healthcheck`, `restart_stack`, `stack_down`, `stack_down_after_tournament`, `create_match`, `create_tournament`, `set_twitch_title`. The README has a summary table with descriptions and env vars.
+**Scripts:** See `scripts/` — `healthcheck`, `refresh_stream_browser`, `restart_stack`, `stack_down`, `stack_down_after_tournament`, `create_match`, `create_tournament`, `set_twitch_title`. The README has a summary table with descriptions and env vars.
 
 ## Key Endpoints (web service, port 8080)
 
@@ -109,12 +109,15 @@ cd web && pip install -r requirements-dev.txt && pytest manager/verify_brackets_
 | `/api/manager/matches/{mid}/error` | POST | Worker: fail + bracket side-effects |
 | `/api/manager/queue/next` | GET | Worker: dequeue next match (404 if none) |
 | `/api/manager/queue/depth` | GET | Queued match count |
+| `/api/manager/queue/upcoming` | GET | Queued matches (oldest first) for UI; query `limit`, `offset` (defaults **10** / **0**, cap **200**). At `offset=0`, may append tournament “pending opponent” placeholder rows after the slice |
 | `/api/manager/queue/running` | GET | Running match JSON or `null` |
 | `/api/manager/results` | GET | Completed matches |
 | `/api/manager/stats` | GET | Analytics aggregates |
+| `/api/manager/stream` | GET | **SSE:** debounced `{ "seq", "queue", "tournament_ids", "series_ids" }` refresh hints for manager UI (`manager_stream.py`; client `web/static/manager-stream-client.js`). Disable proxy buffering like `/scoreboard/stream`. |
 | `/scoreboard` | GET | Win/loss records, player info, recent matches (JSON) |
+| `/scoreboard/stream` | GET | **SSE** (`text/event-stream`): ordered `{ "seq", "payload" }` snapshots when scoreboard data changes; initial event on connect. **`/broadcast`** hub and standalone overlay/modals use **`EventSource`** with **`GET /scoreboard`** fallback if the stream stays closed. **Reverse proxies:** disable buffering for this route (e.g. nginx `proxy_buffering off`, `X-Accel-Buffering: no`). |
 | `/result` | POST | Legacy: append match to DB (optional; worker uses manager API) |
-| `/broadcast` | GET | Full broadcast scene: battle iframe + scoreboard `/overlay` route + thoughts. Parent polls **`/scoreboard` every 250ms** and fans out to embedded **`/overlay`**, **`/match_intro`**, **`/victory`** (`?embed=broadcast`) via **`postMessage`**; thoughts use the **`broadcast_scoreboard`** `CustomEvent`. Standalone pages keep their own intervals. |
+| `/broadcast` | GET | Full broadcast scene: battle iframe + scoreboard `/overlay` route + thoughts. Parent subscribes to **`/scoreboard/stream`**, dedupes by **`seq`**, fans out to embedded **`/overlay`**, **`/match_intro`**, **`/victory`** (`?embed=broadcast`) via **`postMessage`** (optional **`seq`** on the bus); thoughts use the **`broadcast_scoreboard`** `CustomEvent`. Falls back to polling **`/scoreboard`** if SSE disconnects. Standalone overlay/intros/victory also use **`attachScoreboardStream`** (`web/static/scoreboard-stream-client.js`). |
 | `/broadcast/battle_frame` | GET | Showdown iframe + battle sync + callouts (OBS layering) |
 | `/match_intro` | GET | Matchup intro card (`MATCH_INTRO_SECONDS`; iframe child of `/broadcast`) |
 | `/tournament_intro` | GET | Tournament opener before the first match only (`TOURNAMENT_INTRO_SECONDS` on agents; iframe child of `/broadcast`) |
@@ -129,6 +132,8 @@ cd web && pip install -r requirements-dev.txt && pytest manager/verify_brackets_
 | `/thoughts/clear` | POST | Clear thought history |
 | `/thoughts/ws` | WebSocket | Real-time thought stream |
 | `/health` | GET | Health check |
+
+**Offset pagination (HTML):** `/manager` (`upcoming_offset`, `upcoming_limit`), `/manager/tournaments` (`offset`, `limit`), `/manager/results` (`matches_offset` / `matches_limit`, `series_offset` / `series_limit`), and `/replays` (`offset`, `limit`) use the same pattern: default page size **10**, max **200** (`_HTML_LIST_DEFAULT` / `_HTML_LIST_MAX` in `web/manager/routes.py`; replays use `_REPLAYS_PAGE_*` in `web/main.py`).
 
 ## Code Conventions
 
@@ -149,7 +154,7 @@ Persona files live in `agents/personas/*.md`. Each has YAML front matter (`name`
 
 Shipped example slugs include `aggro`, `stall`, `nerd`, `neutral`, `gambler`, `zoomer`, `villain`, `racer` (see repo `agents/personas/`).
 
-**Adaptive memory (optional, default off):** When `ENABLE_MEMORY=1`, `match_runner._load_persona_memory_texts()` reads `/state/personas/{slug}/memory.md` and `learnings.md`; `build_system_prompt()` injects them before `ACTION_FORMAT_INSTRUCTIONS`. After each successful match, `_post_match_persona_memory()` may call `_run_one_persona_reflection()` (same provider/model as that side) to append a `## Match ...` diary block and optionally rewrite learnings; intervals and caps via `MEMORY_REFLECTION_INTERVAL`, `LEARNINGS_UPDATE_INTERVAL`, `MAX_MEMORY_ENTRIES`, `MAX_LEARNINGS_BULLETS`. Same persona slug on both sides: one reflection per match for that slug (deduped `seen_slug` set). Counter persisted in `_memory_state.json`.
+**Adaptive memory (optional, default off):** When `ENABLE_MEMORY=true`, `match_runner._load_persona_memory_texts()` reads `/state/personas/{slug}/memory.md` and `learnings.md`; `build_system_prompt()` injects them before `ACTION_FORMAT_INSTRUCTIONS`. After each successful match, `_post_match_persona_memory()` may call `_run_one_persona_reflection()` (same provider/model as that side) to append a `## Match ...` diary block and optionally rewrite learnings; intervals and caps via `MEMORY_REFLECTION_INTERVAL`, `LEARNINGS_UPDATE_INTERVAL`, `MAX_MEMORY_ENTRIES`, `MAX_LEARNINGS_BULLETS`. Same persona slug on both sides: one reflection per match for that slug (deduped `seen_slug` set). Counter persisted in `_memory_state.json`.
 
 Match participants are configured via the **manager** (`/manager` or API), not env-only.
 
@@ -223,18 +228,21 @@ All config is via environment variables. Copy `.env.example` to `.env` and edit.
 - **Stream:** `TWITCH_STREAM_KEY`, `STREAM_VIEW_URL`, `STREAM_AUDIO_SOURCE`
 - **Network:** `SHOWDOWN_HOST`, `SHOWDOWN_PORT`, `WEB_HOST`, `WEB_PORT` (deprecated aliases: `OVERLAY_HOST`, `OVERLAY_PORT` still read by agents/stream for migration)
 - **Twitch API (optional):** `TWITCH_CLIENT_ID`, `TWITCH_OAUTH_TOKEN`, `TWITCH_BROADCASTER_ID`, `TWITCH_AUTO_SET_TITLE`
-- **Broadcast / web UI timing:** `MATCH_INTRO_SECONDS`, `VICTORY_MODAL_SECONDS`, `TOURNAMENT_VICTORY_MODAL_SECONDS`, `VICTORY_SHOW_DELAY_SECONDS`, `HIDE_BATTLE_UI`, `STREAM_TITLE`, `SHOWDOWN_VIEW_BASE` — listed on the **`web`** service in `docker-compose.yml`; **`stream`** receives a smaller subset (e.g. `HIDE_BATTLE_UI`). Defaults apply if omitted from host `.env`.
+- **Broadcast / web UI timing:** `MATCH_INTRO_SECONDS`, `VICTORY_MODAL_SECONDS`, `TOURNAMENT_VICTORY_MODAL_SECONDS`, `VICTORY_SHOW_DELAY_SECONDS`, `BATTLE_IFRAME_OUTRO_SECONDS`, `HIDE_BATTLE_UI`, `STREAM_TITLE`, `SHOWDOWN_VIEW_BASE` — listed on the **`web`** service in `docker-compose.yml`; **`stream`** receives a smaller subset (e.g. `HIDE_BATTLE_UI`). Defaults apply if omitted from host `.env`.
+- **Web debug (web):** `WEB_DEBUG=true` — enables extra operational **INFO** logs (currently includes each scoreboard SSE publish: **`seq`**, subscriber queue count). Add more call sites via **`web_debug.web_debug_enabled()`** as needed. Listed on **`web`** in `docker-compose.yml`.
 - **Mount paths (web):** `TRAINERS_DIR`, `PORTRAITS_DIR` (defaults `/app/static/trainers`, `/app/static/portraits` under Compose)
 - **Manager Config page:** `MANAGER_HOST_ENV_FILE` (in-container path to mounted host `.env`; `docker-compose.yml` sets `/app/host.env`). Only keys listed in `web/manager/env_registry.py` are editable in `/manager/config`.
 
 See `.env.example` for the full documented list with defaults.
 
+**Boolean env vars** are documented as **`true`** / **`false`**; runtime parsing (via `parse_env_bool` in `agents/env_bool.py`, `web/env_bool.py`, `stream/env_bool.py`) also accepts **`1`** / **`0`**, **`yes`** / **`no`**, and **`on`** / **`off`**.
+
 ## Pokédex Tools
 
 Optional feature gated by env vars (default off). Two independent modes:
 
-- **Tool calling** (`POKEDEX_TOOL_ENABLED=1`): Anthropic models get five `pokedex_lookup_*` tools alongside `submit_action`. The `_anthropic_completion` method loops up to `POKEDEX_MAX_LOOKUPS` times, executing lookups and appending tool results, then forces `submit_action`. DeepSeek/OpenRouter are unaffected (they don't use Anthropic-style tool calling).
-- **Auto-enrich** (`POKEDEX_AUTO_ENRICH=1`): A `=== POKEDEX NOTES ===` block is appended to the battle state text in `choose_move` for ALL providers. Adds ~100-200 tokens per turn with ability/item/move descriptions.
+- **Tool calling** (`POKEDEX_TOOL_ENABLED=true`): Anthropic models get five `pokedex_lookup_*` tools alongside `submit_action`. The `_anthropic_completion` method loops up to `POKEDEX_MAX_LOOKUPS` times, executing lookups and appending tool results, then forces `submit_action`. DeepSeek/OpenRouter are unaffected (they don't use Anthropic-style tool calling).
+- **Auto-enrich** (`POKEDEX_AUTO_ENRICH=true`): A `=== POKEDEX NOTES ===` block is appended to the battle state text in `choose_move` for ALL providers. Adds ~100-200 tokens per turn with ability/item/move descriptions.
 
 Data layer: `agents/pokedex.py` — lookup functions return formatted strings. `GenData` (poke-env) provides move stats, species data, type chart. Extracted JSON in `/app/data/` provides text descriptions for items, abilities, and moves (built at Docker image time by `agents/scripts/extract_showdown_data.py`).
 
@@ -251,11 +259,12 @@ Data layer: `agents/pokedex.py` — lookup functions return formatted strings. `
 - **Clearing persisted data:** Replays, logs, and live JSON state use **`replay-data`**, **`log-data`**, **`state-data`** (and legacy **`web-data`** for flat `results.json`). Manager tournaments/matches use **`manager-data`**. Dropping **all** named volumes: **`docker compose down -v`** or **`bash scripts/stack_down.sh -v`**. Manager-only reset: remove `manager.db` (and `-wal`/`-shm` if present) under **`/manager-data`** in the **`web`** container, then restart **`web`**.
 - **Failed tournament matches:** A match reported to `/api/manager/matches/{id}/error` cancels its parent **series** (and any still-queued games in that series). **Round-robin** tournaments may then mark **completed** once every series is finished or cancelled. **Single/double elimination** may still need a manual **tournament cancel** in the UI if the bracket depended on that series; the error JSON may include a `recovery_hint`.
 - **Legacy `POST /result`:** Prefer sending `winner_side` or `player1_name` / `player2_name` plus provider/model/persona fields so `/stats` stays accurate (queue worker uses the manager complete endpoint instead).
-- `HIDE_BATTLE_UI` defaults to `1` in `docker-compose.yml` for **`web`** and **`stream`**; override in `.env` (also documented in `.env.example`).
+- `HIDE_BATTLE_UI` defaults to `true` in `docker-compose.yml` for **`web`** and **`stream`**; override in `.env` (also documented in `.env.example`).
 - Persona prompt templates use Python `str.format()` with two variables: `{player_name}` and `{opponent_name}`. Other placeholders will raise `KeyError`.
 - Showdown is cloned and built inside its Docker image from the upstream smogon/pokemon-showdown repo. Config overrides are in `showdown/config/config.js`.
 - The stream container needs `shm_size: 2gb` for Chromium.
 - Storage paths like `/replays`, `/logs`, `/state`, `/data`, `/manager-data` are in-container paths backed by Docker named volumes, not host mounts.
 - Pokédex text data (`/app/data/*.json`) is extracted at Docker build time from GitHub. If the build runs without network access, the files will be empty and lookups will return "not found" — the agent still functions (falls back gracefully).
 - `POKEDEX_TOOL_ENABLED` only affects Anthropic; DeepSeek/OpenRouter ignore it. `POKEDEX_AUTO_ENRICH` affects all providers.
-- **Persona memory:** Default `ENABLE_MEMORY=0` — no extra tokens or reflection calls until enabled. Reflection uses the battle JSON log when `LOG_RAW_BATTLE=1`, else log lines extracted from the saved replay HTML. Wiping **`state-data`** removes memory files; they are **not** stored under `agents/personas/` (source personas stay clean).
+- **Persona memory:** Default `ENABLE_MEMORY=false` — no extra tokens or reflection calls until enabled. Reflection uses the battle JSON log when `LOG_RAW_BATTLE=true`, else log lines extracted from the saved replay HTML. Wiping **`state-data`** removes memory files; they are **not** stored under `agents/personas/` (source personas stay clean).
+- **SSE behind nginx/Caddy:** If `/scoreboard/stream` or **`/api/manager/stream`** never updates in the browser, confirm **`X-Accel-Buffering: no`** / **`proxy_buffering off`** for those locations and avoid gzip buffering SSE responses.
