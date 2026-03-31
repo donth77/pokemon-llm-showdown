@@ -5,43 +5,71 @@ The route ``/overlay`` is still the transparent scoreboard page for stream compo
 the Docker service is named ``web``.
 
 OBS / multi-source layouts can use ``/thoughts_overlay``, ``/broadcast/top_bar``,
-and ``/broadcast/battle_frame`` alongside ``/overlay``, ``/victory``, and ``/match_intro`` (see README).
+and ``/broadcast/battle_frame`` alongside ``/overlay`` and unified splashes at ``/victory`` / ``/splash`` (also ``/match_intro``, ``/tournament_intro``; template ``splash.html``; see README).
 """
 
+import asyncio
 import json
 import os
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
+from urllib.parse import urlencode
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from env_bool import parse_env_bool
 from manager import db
+from manager.env_host_file import configured_host_env_path, load_host_env_map
 from manager.personas_store import resolve_portrait_url
 from manager.routes import router as manager_router
+from scoreboard_stream import (
+    request_scoreboard_publish,
+    scoreboard_sse,
+    set_scoreboard_payload_builder,
+    start_scoreboard_state_poll,
+)
+
+REPLAY_DIR = Path("/replays")
+LOG_DIR = Path("/logs")
+_REPLAYS_PAGE_DEFAULT = 10
+_REPLAYS_PAGE_MAX = 200
+
+
+def _clamp_replay_offset(offset: int, limit: int, total: int) -> int:
+    if total <= 0:
+        return 0
+    max_off = max(0, ((total - 1) // limit) * limit)
+    return min(max(0, offset), max_off)
+
+
+STATE_FILE = Path("/state/current_battle.json")
+THOUGHTS_FILE = Path("/state/thoughts.json")
+STREAM_TITLE = os.getenv("STREAM_TITLE", "Pokémon Showdown battles with LLMs")
+HIDE_BATTLE_UI = parse_env_bool("HIDE_BATTLE_UI", default=True)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await db.init_db()
-    yield
+    set_scoreboard_payload_builder(build_scoreboard_payload)
+    poll_task = start_scoreboard_state_poll(STATE_FILE)
+    try:
+        yield
+    finally:
+        poll_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await poll_task
 
 
-app = FastAPI(title="Pokémon LLM Showdown — Web", lifespan=lifespan)
+app = FastAPI(title="Gotta Prompt 'Em All — Web", lifespan=lifespan)
 app.include_router(manager_router)
 templates = Jinja2Templates(directory="templates")
 _BOOT_TS = str(int(time.time()))
 templates.env.globals["cache_bust"] = _BOOT_TS
-
-REPLAY_DIR = Path("/replays")
-LOG_DIR = Path("/logs")
-STATE_FILE = Path("/state/current_battle.json")
-THOUGHTS_FILE = Path("/state/thoughts.json")
-STREAM_TITLE = os.getenv("STREAM_TITLE", "Pokémon Showdown battles with LLMs")
-HIDE_BATTLE_UI = os.getenv("HIDE_BATTLE_UI", "1").strip() in ("1", "true", "yes")
 
 
 def _positive_int_env(name: str, default: int) -> int:
@@ -62,12 +90,61 @@ def _non_negative_int_env(name: str, default: int) -> int:
         return default
 
 
-VICTORY_MODAL_MS = _positive_int_env("VICTORY_MODAL_SECONDS", 30) * 1000
-TOURNAMENT_VICTORY_MODAL_MS = _positive_int_env(
-    "TOURNAMENT_VICTORY_MODAL_SECONDS", 60
-) * 1000
-VICTORY_SHOW_DELAY_MS = _non_negative_int_env("VICTORY_SHOW_DELAY_SECONDS", 1) * 1000
-MATCH_INTRO_MS = _non_negative_int_env("MATCH_INTRO_SECONDS", 5) * 1000
+# When MANAGER_HOST_ENV_FILE is mounted, splash timing can be changed without restarting web
+# by editing that file (mtime-bounded cache); otherwise only process env applies until restart.
+_host_env_cache: tuple[float, dict[str, str]] | None = None
+
+
+def _cached_host_env_map() -> dict[str, str]:
+    global _host_env_cache
+    path = configured_host_env_path()
+    if path is None or not path.is_file():
+        _host_env_cache = None
+        return {}
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return {}
+    if _host_env_cache is not None and _host_env_cache[0] == mtime:
+        return _host_env_cache[1]
+    m = load_host_env_map(path)
+    _host_env_cache = (mtime, m)
+    return m
+
+
+def _live_env_raw(name: str) -> str | None:
+    host = _cached_host_env_map()
+    if name in host:
+        return host[name]
+    return os.getenv(name)
+
+
+def _live_positive_int(name: str, default: int) -> int:
+    raw = _live_env_raw(name)
+    if raw is None:
+        return default
+    raw = raw.strip()
+    try:
+        v = int(raw, 10)
+        return v if v > 0 else default
+    except ValueError:
+        return default
+
+
+def _live_non_negative_int(name: str, default: int) -> int:
+    raw = _live_env_raw(name)
+    if raw is None:
+        return default
+    raw = raw.strip()
+    try:
+        v = int(raw, 10)
+        return v if v >= 0 else default
+    except ValueError:
+        return default
+
+
+# Hold Showdown iframe on the finished battle (ms) after status→idle so win text/animations can play.
+BATTLE_IFRAME_OUTRO_MS = _non_negative_int_env("BATTLE_IFRAME_OUTRO_SECONDS", 5) * 1000
 
 MAX_THOUGHTS_PER_PLAYER = 80
 _thought_store: dict[str, list[dict]] = {}
@@ -85,6 +162,7 @@ async def _broadcast(message: dict) -> None:
         except Exception:
             dead.add(ws)
     _ws_clients.difference_update(dead)
+
 
 RECENT_MATCHES_COUNT = 10
 
@@ -213,13 +291,11 @@ def _display_model_id(model_id: str | None) -> str:
     return s
 
 
-@app.get("/scoreboard", response_class=JSONResponse)
-async def get_scoreboard():
-    """Scoreboard data sourced from SQLite + live battle state file."""
+async def build_scoreboard_payload() -> dict:
+    """Scoreboard JSON for GET /scoreboard and SSE snapshots (SQLite + live state file)."""
     scoreboard = await db.get_scoreboard_data(RECENT_MATCHES_COUNT)
     recent_matches = [
-        _enrich_match_row_portrait_urls(dict(r))
-        for r in scoreboard["recent_matches"]
+        _enrich_match_row_portrait_urls(dict(r)) for r in scoreboard["recent_matches"]
     ]
     last_match_payload = recent_matches[0] if recent_matches else None
     state = _load_current_battle_state()
@@ -277,7 +353,19 @@ async def get_scoreboard():
         "tournament_intro_roster": _tournament_intro_roster_for_api(state),
         "last_match": last_match_payload,
         "recent_matches": recent_matches,
+        "battle_iframe_outro_ms": BATTLE_IFRAME_OUTRO_MS,
     }
+
+
+@app.get("/scoreboard", response_class=JSONResponse)
+async def get_scoreboard():
+    return await build_scoreboard_payload()
+
+
+@app.get("/scoreboard/stream")
+async def get_scoreboard_stream(request: Request):
+    """Ordered full snapshots (seq + payload) for the broadcast hub; see scoreboard_stream."""
+    return await scoreboard_sse(request)
 
 
 def _legacy_result_winner_side(body: dict) -> str:
@@ -332,8 +420,13 @@ async def post_result(request: Request):
         duration=duration,
     )
 
+    await request_scoreboard_publish()
     scoreboard = await db.get_scoreboard_data()
-    return {"status": "ok", "total_matches": scoreboard["total_matches"], "wins": scoreboard["wins"]}
+    return {
+        "status": "ok",
+        "total_matches": scoreboard["total_matches"],
+        "wins": scoreboard["wins"],
+    }
 
 
 @app.get("/overlay", response_class=HTMLResponse)
@@ -345,59 +438,93 @@ async def get_overlay(request: Request):
     )
 
 
+def _splash_context() -> dict:
+    return {
+        "victory_modal_ms": _live_positive_int("VICTORY_MODAL_SECONDS", 30) * 1000,
+        "tournament_victory_modal_ms": _live_positive_int(
+            "TOURNAMENT_VICTORY_MODAL_SECONDS", 60
+        )
+        * 1000,
+        "victory_show_delay_ms": _live_non_negative_int("VICTORY_SHOW_DELAY_SECONDS", 1)
+        * 1000,
+        "match_intro_ms": _live_non_negative_int("MATCH_INTRO_SECONDS", 5) * 1000,
+        "bracket_interstitial_ms": _live_non_negative_int(
+            "BRACKET_INTERSTITIAL_SECONDS", 0
+        )
+        * 1000,
+    }
+
+
 @app.get("/victory", response_class=HTMLResponse)
+@app.get("/splash", response_class=HTMLResponse)
 async def get_victory_splash(request: Request):
-    """Full-frame transparent overlay: animated winner announcement after each battle."""
-    return templates.TemplateResponse(
-        request=request,
-        name="victory.html",
-        context={
-            "request": request,
-            "victory_modal_ms": VICTORY_MODAL_MS,
-            "tournament_victory_modal_ms": TOURNAMENT_VICTORY_MODAL_MS,
-            "victory_show_delay_ms": VICTORY_SHOW_DELAY_MS,
-        },
-    )
+    """Full-frame overlay: unified splashes (``splash.html``: tournament intro, victory, bracket/upcoming, matchup)."""
+    ctx = {"request": request, **_splash_context()}
+    return templates.TemplateResponse(request=request, name="splash.html", context=ctx)
 
 
 @app.get("/match_intro", response_class=HTMLResponse)
 async def get_match_intro(request: Request):
-    """Transparent overlay: matchup card when agents set current_battle status ``starting``."""
-    return templates.TemplateResponse(
-        request=request,
-        name="match_intro.html",
-        context={
-            "request": request,
-            "match_intro_ms": MATCH_INTRO_MS,
-        },
-    )
+    """Backward-compatible URL: same unified splash page as ``/victory``."""
+    ctx = {"request": request, **_splash_context()}
+    return templates.TemplateResponse(request=request, name="splash.html", context=ctx)
 
 
 @app.get("/tournament_intro", response_class=HTMLResponse)
 async def get_tournament_intro(request: Request):
-    """Transparent overlay: opening card before the first match of a tournament."""
-    return templates.TemplateResponse(
-        request=request,
-        name="tournament_intro.html",
-        context={"request": request},
-    )
+    """Backward-compatible URL: same unified splash page as ``/victory``."""
+    ctx = {"request": request, **_splash_context()}
+    return templates.TemplateResponse(request=request, name="splash.html", context=ctx)
 
 
 @app.get("/replays", response_class=HTMLResponse)
-async def get_replays(request: Request):
+async def get_replays(
+    request: Request,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(_REPLAYS_PAGE_DEFAULT, ge=1, le=_REPLAYS_PAGE_MAX),
+):
     REPLAY_DIR.mkdir(parents=True, exist_ok=True)
     replay_files = sorted(
         REPLAY_DIR.glob("*.html"), key=lambda p: p.stat().st_mtime, reverse=True
     )
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_files = {p.stem for p in LOG_DIR.glob("*.json")}
+    names = [p.name for p in replay_files]
+    total = len(names)
+    offset = _clamp_replay_offset(offset, limit, total)
+    page_names = names[offset : offset + limit]
+    path = str(request.url.path)
+
+    def make_url(new_off: int) -> str:
+        return (
+            f"{path}?{urlencode({'offset': str(max(0, new_off)), 'limit': str(limit)})}"
+        )
+
+    prev_url = None
+    if offset > 0:
+        prev_url = make_url(max(0, offset - limit))
+    next_url = None
+    if offset + limit < total:
+        next_url = make_url(offset + limit)
+    end = min(offset + limit, total)
+    start = offset + 1 if total else 0
+    replay_pagination = None
+    if total > 0:
+        replay_pagination = {
+            "total": total,
+            "start": start,
+            "end": end,
+            "prev_url": prev_url,
+            "next_url": next_url,
+        }
     return templates.TemplateResponse(
         request=request,
         name="replays.html",
         context={
             "request": request,
-            "replay_files": [p.name for p in replay_files],
+            "replay_files": page_names,
             "log_files": log_files,
+            "replay_pagination": replay_pagination,
         },
     )
 
@@ -470,17 +597,22 @@ async def get_broadcast_battle_frame(request: Request):
 
 @app.get("/current_battle", response_class=JSONResponse)
 async def get_current_battle():
+    outro = {"battle_iframe_outro_ms": BATTLE_IFRAME_OUTRO_MS}
     if not STATE_FILE.exists():
-        return {"status": "idle", "battle_tag": None}
+        return {"status": "idle", "battle_tag": None, **outro}
     try:
-        data = json.loads(STATE_FILE.read_text())
+        raw = json.loads(STATE_FILE.read_text())
     except Exception:
-        return {"status": "error", "battle_tag": None}
-    if isinstance(data, dict) and data.get("match_id") is not None:
+        return {"status": "error", "battle_tag": None, **outro}
+    if not isinstance(raw, dict):
+        return {"status": "error", "battle_tag": None, **outro}
+    data = dict(raw)
+    if data.get("match_id") is not None:
         try:
             data = await _hydrate_current_battle_tournament(data)
         except Exception:
             pass
+    data.update(outro)
     return data
 
 
@@ -541,9 +673,7 @@ async def thoughts_ws(ws: WebSocket):
     await ws.accept()
     _ws_clients.add(ws)
     try:
-        await ws.send_text(
-            json.dumps({"type": "history", "players": _thought_store})
-        )
+        await ws.send_text(json.dumps({"type": "history", "players": _thought_store}))
         while True:
             await ws.receive_text()
     except WebSocketDisconnect:

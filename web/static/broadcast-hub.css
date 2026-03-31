@@ -1,0 +1,162 @@
+/* /broadcast hub only: scene, iframes, thought panels (not /broadcast/top_bar). */
+
+.scene {
+  position: relative;
+  width: 1280px;
+  height: 720px;
+  overflow: hidden;
+}
+
+.battle-frame {
+  position: absolute;
+  inset: 0;
+  width: 1280px;
+  height: 720px;
+  border: 0;
+  background: #0b1020;
+}
+
+.overlay-frame {
+  position: absolute;
+  inset: 0;
+  width: 1280px;
+  height: 720px;
+  border: 0;
+  background: transparent;
+  pointer-events: none;
+}
+
+/* Single iframe: tournament intro, victory, bracket/upcoming, matchup (one at a time in-page). */
+.splash-stack {
+  position: absolute;
+  inset: 0;
+  width: 1280px;
+  height: 720px;
+  z-index: 20;
+  pointer-events: none;
+  isolation: isolate;
+}
+
+.broadcast-splashes-frame {
+  position: absolute;
+  inset: 0;
+  width: 1280px;
+  height: 720px;
+  border: 0;
+  background: transparent;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.thoughts-wrap {
+  position: absolute;
+  left: 4px;
+  right: 645px;
+  bottom: 5px;
+  z-index: 12;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  pointer-events: none;
+}
+
+.thoughts-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: rgba(4, 10, 24, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 10px;
+  backdrop-filter: blur(8px);
+  padding: 10px 12px;
+  height: 136px;
+  overflow: hidden;
+}
+
+.thoughts-panel-head {
+  flex-shrink: 0;
+  margin-bottom: 6px;
+}
+
+.thoughts-title {
+  font-size: 14px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.8);
+  margin: 0;
+  font-weight: 700;
+  line-height: 1.25;
+  word-break: break-word;
+}
+
+.thoughts-portrait {
+  float: right;
+  width: 40px;
+  height: 40px;
+  margin: 0 0 6px 10px;
+  border-radius: 8px;
+  object-fit: cover;
+  object-position: center top;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  display: none;
+  pointer-events: none;
+  shape-outside: margin-box;
+}
+
+.thoughts-portrait.is-visible {
+  display: block;
+}
+
+/* Match overlay scoreboard .player-name.red / .blue (via broadcast-tokens.css). */
+.thoughts-title.red {
+  color: var(--broadcast-side-red);
+}
+
+.thoughts-title.blue {
+  color: var(--broadcast-side-blue);
+}
+
+.thoughts-scroll {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.thoughts-scroll-body {
+  min-width: 0;
+  padding-bottom: 10px;
+  font-size: 14px;
+}
+
+.thoughts-scroll::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+.thought-line {
+  font-size: 1em;
+  line-height: 1.35;
+  color: rgba(255, 255, 255, 0.9);
+  margin-bottom: 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.thought-line--long {
+  font-size: 0.82em;
+}
+
+.thought-line .meta {
+  display: inline-block;
+  margin-right: 6px;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.786em;
+  font-weight: 600;
+}

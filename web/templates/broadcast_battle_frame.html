@@ -1,10 +1,10 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=1280,height=720" />
-    <title>Showdown — battle</title>
-    <style>
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=1280,height=720" />
+        <title>Showdown — battle</title>
+        <style>
       html,
       body {
         margin: 0;
@@ -28,20 +28,18 @@
         border: 0;
         background: #0b1020;
       }
-    </style>
-    <script src="/static/format-utils.js?v={{ cache_bust }}"></script>
-  </head>
-
-  <body>
-    <iframe
-      class="battle-frame"
-      id="battle-frame"
-      src="{{ showdown_internal_url }}"
-      title="Pokémon Showdown"
-      allow="autoplay; fullscreen"
-      allowfullscreen
-    ></iframe>
-    <script>
+        </style>
+        <script src="/static/format-utils.js?v={{ cache_bust }}"></script>
+        <script src="/static/scoreboard-stream-client.js?v={{ cache_bust }}"></script>
+    </head>
+    <body>
+        <iframe class="battle-frame"
+                id="battle-frame"
+                src="{{ showdown_internal_url }}"
+                title="Pokémon Showdown"
+                allow="autoplay; fullscreen"
+                allowfullscreen></iframe>
+        <script>
       window.__BATTLE_CORE__ = {
         battleFrameId: "battle-frame",
         formatLabelId: null,
@@ -54,8 +52,8 @@
         panels: null,
         calloutIframeId: "battle-frame",
       };
-    </script>
-    <script src="/static/broadcast-battle-core.js?v={{ cache_bust }}"></script>
-    <script src="/static/broadcast-thoughts-feed.js?v={{ cache_bust }}"></script>
-  </body>
+        </script>
+        <script src="/static/broadcast-battle-core.js?v={{ cache_bust }}"></script>
+        <script src="/static/broadcast-thoughts-feed.js?v={{ cache_bust }}"></script>
+    </body>
 </html>

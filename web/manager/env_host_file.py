@@ -25,7 +25,12 @@ def host_env_status() -> dict:
         return {"configured": False, "exists": False, "writable": False, "path": ""}
     exists = path.is_file()
     writable = exists and os.access(path, os.W_OK)
-    return {"configured": True, "exists": exists, "writable": writable, "path": str(path)}
+    return {
+        "configured": True,
+        "exists": exists,
+        "writable": writable,
+        "path": str(path),
+    }
 
 
 def parse_env_file(text: str) -> dict[str, str]:

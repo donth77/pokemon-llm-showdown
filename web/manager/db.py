@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS series (
     battle_format   TEXT    NOT NULL,
     round_number    INTEGER,
     match_position  INTEGER,
-    bracket         TEXT    CHECK (bracket IN ('winners', 'losers', 'grand_finals', NULL)),
+    bracket         TEXT    CHECK (bracket IN ('winners', 'losers', 'grand_finals', 'grand_finals_reset', NULL)),
     player1_provider TEXT,
     player1_model    TEXT,
     player1_persona  TEXT,
@@ -173,6 +173,68 @@ async def _migrate_sqlite_columns() -> None:
         await db.commit()
 
 
+async def _migrate_series_bracket_grand_finals_reset() -> None:
+    """
+    Allow series.bracket = 'grand_finals_reset' (SQLite CHECK cannot be altered in place).
+    Rebuilds ``series`` when the live table DDL predates this value.
+    """
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        cur = await db.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='series'"
+        )
+        row = await cur.fetchone()
+        ddl = (row[0] or "") if row else ""
+        if not ddl or "grand_finals_reset" in ddl:
+            return
+        await db.execute("PRAGMA foreign_keys=OFF")
+        await db.executescript(
+            """
+            CREATE TABLE series__gfreset (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                tournament_id   INTEGER REFERENCES tournaments(id) ON DELETE CASCADE,
+                best_of         INTEGER NOT NULL DEFAULT 1,
+                status          TEXT    NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed', 'cancelled')),
+                battle_format   TEXT    NOT NULL,
+                round_number    INTEGER,
+                match_position  INTEGER,
+                bracket         TEXT    CHECK (bracket IN ('winners', 'losers', 'grand_finals', 'grand_finals_reset', NULL)),
+                player1_provider TEXT,
+                player1_model    TEXT,
+                player1_persona  TEXT,
+                player1_entry_id INTEGER REFERENCES tournament_entries(id),
+                player2_provider TEXT,
+                player2_model    TEXT,
+                player2_persona  TEXT,
+                player2_entry_id INTEGER REFERENCES tournament_entries(id),
+                player1_wins    INTEGER NOT NULL DEFAULT 0,
+                player2_wins    INTEGER NOT NULL DEFAULT 0,
+                winner_entry_id INTEGER REFERENCES tournament_entries(id),
+                winner_side     TEXT    CHECK (winner_side IN ('p1', 'p2', NULL)),
+                created_at      REAL    NOT NULL,
+                updated_at      REAL    NOT NULL
+            );
+            INSERT INTO series__gfreset SELECT * FROM series;
+            DROP TABLE series;
+            ALTER TABLE series__gfreset RENAME TO series;
+            """
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_series_tournament ON series(tournament_id)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_series_status ON series(status)"
+        )
+        cur_m = await db.execute("SELECT MAX(id) FROM series")
+        r = await cur_m.fetchone()
+        mx = int(r[0]) if r and r[0] is not None else 0
+        await db.execute("DELETE FROM sqlite_sequence WHERE name='series'")
+        await db.execute(
+            "INSERT INTO sqlite_sequence(name,seq) VALUES ('series', ?)", (mx,)
+        )
+        await db.execute("PRAGMA foreign_keys=ON")
+        await db.commit()
+
+
 async def _migrate_tournament_columns() -> None:
     """Add columns missing from older tournaments table."""
     async with aiosqlite.connect(str(DB_PATH)) as db:
@@ -205,6 +267,7 @@ async def init_db() -> None:
             )
         await db.commit()
     await _migrate_sqlite_columns()
+    await _migrate_series_bracket_grand_finals_reset()
     await _migrate_tournament_columns()
     await _ensure_tournament_presets_table()
 
@@ -307,29 +370,88 @@ async def get_series_bracket_meta(
 
 
 def attach_tournament_persona_display_fields(t: dict[str, Any]) -> None:
-    """Mutate tournament payload: entry persona_display_slug + series player*_persona_display."""
+    """Mutate tournament payload: slug disambiguation + Showdown-style names on entries/series."""
     entries = t.get("entries") or []
     if not entries:
         for s in t.get("series") or []:
             s["player1_persona_display"] = s.get("player1_persona")
             s["player2_persona_display"] = s.get("player2_persona")
-        return
-    emap = entry_rows_to_display_slug_map(entries)
-    for e in entries:
-        e["persona_display_slug"] = emap[int(e["id"])]
-    for s in t.get("series") or []:
-        p1e, p2e = s.get("player1_entry_id"), s.get("player2_entry_id")
-        s["player1_persona_display"] = (
-            emap.get(int(p1e), s.get("player1_persona")) if p1e is not None else s.get("player1_persona")
-        )
-        s["player2_persona_display"] = (
-            emap.get(int(p2e), s.get("player2_persona")) if p2e is not None else s.get("player2_persona")
-        )
+    else:
+        emap = entry_rows_to_display_slug_map(entries)
+        for e in entries:
+            e["persona_display_slug"] = emap[int(e["id"])]
+        for s in t.get("series") or []:
+            p1e, p2e = s.get("player1_entry_id"), s.get("player2_entry_id")
+            s["player1_persona_display"] = (
+                emap.get(int(p1e), s.get("player1_persona"))
+                if p1e is not None
+                else s.get("player1_persona")
+            )
+            s["player2_persona_display"] = (
+                emap.get(int(p2e), s.get("player2_persona"))
+                if p2e is not None
+                else s.get("player2_persona")
+            )
+
+    from .routes import (
+        _battle_name_for_persona_slug,
+        _numbered_battle_name_for_tournament_slot,
+    )
+
+    series_list = t.get("series") or []
+    if not entries:
+        for s in series_list:
+            s1 = (s.get("player1_persona") or "").strip()
+            s2 = (s.get("player2_persona") or "").strip()
+            s["player1_battle_display"] = (
+                _battle_name_for_persona_slug(s1) or "TBD" if s1 else "TBD"
+            )
+            s["player2_battle_display"] = (
+                _battle_name_for_persona_slug(s2) or "TBD" if s2 else "TBD"
+            )
+    else:
+        slugs_by_eid: dict[int, str] = {}
+        emap_eid: dict[int, str] = {}
+        for e in entries:
+            eid = int(e["id"])
+            slug = (e.get("persona_slug") or "").strip()
+            slugs_by_eid[eid] = slug
+            ds = (e.get("persona_display_slug") or slug).strip()
+            emap_eid[eid] = ds
+            if slug:
+                base = _battle_name_for_persona_slug(slug)
+                e["battle_display_name"] = _numbered_battle_name_for_tournament_slot(
+                    base, slug, ds
+                )
+            else:
+                e["battle_display_name"] = (e.get("display_name") or "").strip() or "—"
+
+        for s in series_list:
+            for side in ("player1", "player2"):
+                entry_key = f"{side}_entry_id"
+                persona_key = f"{side}_persona"
+                out_key = f"{side}_battle_display"
+                eid_raw = s.get(entry_key)
+                pslug = (s.get(persona_key) or "").strip()
+                if eid_raw is not None:
+                    eid_i = int(eid_raw)
+                    pslug = slugs_by_eid.get(eid_i) or pslug
+                    ds = emap_eid.get(eid_i, pslug)
+                else:
+                    ds = pslug
+                if not pslug:
+                    s[out_key] = "TBD"
+                else:
+                    base = _battle_name_for_persona_slug(pslug)
+                    s[out_key] = _numbered_battle_name_for_tournament_slot(
+                        base, pslug, ds
+                    )
 
 
 # ---------------------------------------------------------------------------
 # Tournament CRUD
 # ---------------------------------------------------------------------------
+
 
 async def create_tournament(
     *,
@@ -359,7 +481,14 @@ async def create_tournament(
                 """INSERT INTO tournament_entries
                    (tournament_id, provider, model, persona_slug, seed, display_name)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                (tid, e["provider"], e["model"], e["persona_slug"], e.get("seed", i + 1), e.get("display_name", "")),
+                (
+                    tid,
+                    e["provider"],
+                    e["model"],
+                    e["persona_slug"],
+                    e.get("seed", i + 1),
+                    e.get("display_name", ""),
+                ),
             )
         await db.commit()
     return await get_tournament(tid)  # type: ignore[arg-type]
@@ -367,7 +496,9 @@ async def create_tournament(
 
 async def get_tournament(tournament_id: int) -> dict | None:
     async with _db() as db:
-        cur = await db.execute("SELECT * FROM tournaments WHERE id = ?", (tournament_id,))
+        cur = await db.execute(
+            "SELECT * FROM tournaments WHERE id = ?", (tournament_id,)
+        )
         row = await cur.fetchone()
         if not row:
             return None
@@ -486,7 +617,9 @@ async def delete_tournament_preset(preset_id: int) -> bool:
         return cur.rowcount > 0
 
 
-def _winner_entry_from_series(series_completed: list[dict], ttype: str) -> tuple[int | None, bool]:
+def _winner_entry_from_series(
+    series_completed: list[dict], ttype: str
+) -> tuple[int | None, bool]:
     """
     Pick champion entry id for a completed tournament; return (entry_id, tie).
     tie is True for round-robin when multiple entries share the best series-wins count.
@@ -507,6 +640,15 @@ def _winner_entry_from_series(series_completed: list[dict], ttype: str) -> tuple
             return (top[0], False)
         return (None, True)
     if ttype == "double_elimination":
+        gf_reset = [
+            s for s in series_completed if s.get("bracket") == "grand_finals_reset"
+        ]
+        if gf_reset:
+            last = max(
+                gf_reset, key=lambda s: (s.get("updated_at") or 0, s.get("id") or 0)
+            )
+            we = last.get("winner_entry_id")
+            return (int(we), False) if we is not None else (None, False)
         gfs = [s for s in series_completed if s.get("bracket") == "grand_finals"]
         if not gfs:
             return (None, False)
@@ -580,18 +722,40 @@ async def _attach_tournament_winner_fields(
         t["winner_persona_slug"] = None if tie or we is None else slug_by_eid.get(we)
 
 
-async def list_tournaments(*, status: str | None = None) -> list[dict]:
+async def list_tournaments(
+    *,
+    status: str | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+) -> list[dict]:
     async with _db() as db:
+        sql = "SELECT * FROM tournaments"
+        params: list[Any] = []
         if status:
-            cur = await db.execute(
-                "SELECT * FROM tournaments WHERE status = ? ORDER BY created_at DESC",
-                (status,),
-            )
-        else:
-            cur = await db.execute("SELECT * FROM tournaments ORDER BY created_at DESC")
+            sql += " WHERE status = ?"
+            params.append(status)
+        sql += " ORDER BY created_at DESC"
+        if limit is not None:
+            cap = max(1, min(int(limit), 500))
+            off = max(0, int(offset))
+            sql += " LIMIT ? OFFSET ?"
+            params.extend([cap, off])
+        cur = await db.execute(sql, params)
         tournaments = [dict(r) for r in await cur.fetchall()]
         await _attach_tournament_winner_fields(db, tournaments)
         return tournaments
+
+
+async def count_tournaments(*, status: str | None = None) -> int:
+    async with _db() as db:
+        if status:
+            cur = await db.execute(
+                "SELECT COUNT(*) FROM tournaments WHERE status = ?", (status,)
+            )
+        else:
+            cur = await db.execute("SELECT COUNT(*) FROM tournaments")
+        row = await cur.fetchone()
+        return int(row[0]) if row else 0
 
 
 async def update_tournament_status(tournament_id: int, status: str) -> None:
@@ -625,6 +789,7 @@ async def cancel_tournament(tournament_id: int) -> None:
 # Series CRUD
 # ---------------------------------------------------------------------------
 
+
 async def create_series(
     *,
     tournament_id: int | None = None,
@@ -655,11 +820,22 @@ async def create_series(
                 player1_wins, player2_wins, created_at, updated_at)
                VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)""",
             (
-                tournament_id, best_of, battle_format, round_number,
-                match_position, bracket,
-                player1_provider, player1_model, player1_persona, player1_entry_id,
-                player2_provider, player2_model, player2_persona, player2_entry_id,
-                now, now,
+                tournament_id,
+                best_of,
+                battle_format,
+                round_number,
+                match_position,
+                bracket,
+                player1_provider,
+                player1_model,
+                player1_persona,
+                player1_entry_id,
+                player2_provider,
+                player2_model,
+                player2_persona,
+                player2_entry_id,
+                now,
+                now,
             ),
         )
         sid = cur.lastrowid
@@ -674,9 +850,16 @@ async def create_series(
                         queued_at)
                        VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        sid, tournament_id, g, battle_format,
-                        player1_provider, player1_model, player1_persona,
-                        player2_provider, player2_model, player2_persona,
+                        sid,
+                        tournament_id,
+                        g,
+                        battle_format,
+                        player1_provider,
+                        player1_model,
+                        player1_persona,
+                        player2_provider,
+                        player2_model,
+                        player2_persona,
                         now,
                     ),
                 )
@@ -717,9 +900,10 @@ async def list_series(*, tournament_id: int | None = None) -> list[dict]:
         return [dict(r) for r in await cur.fetchall()]
 
 
-async def list_series_results(*, limit: int = 100) -> list[dict]:
+async def list_series_results(*, limit: int = 100, offset: int = 0) -> list[dict]:
     """Completed or cancelled series for the manager results page (newest first)."""
     cap = max(1, min(int(limit), 500))
+    off = max(0, int(offset))
     async with _db() as db:
         cur = await db.execute(
             """SELECT s.*, t.name AS tournament_name
@@ -727,10 +911,20 @@ async def list_series_results(*, limit: int = 100) -> list[dict]:
                LEFT JOIN tournaments t ON s.tournament_id = t.id
                WHERE s.status IN ('completed', 'cancelled')
                ORDER BY s.updated_at DESC
-               LIMIT ?""",
-            (cap,),
+               LIMIT ? OFFSET ?""",
+            (cap, off),
         )
         return [dict(r) for r in await cur.fetchall()]
+
+
+async def count_series_results() -> int:
+    async with _db() as db:
+        cur = await db.execute(
+            """SELECT COUNT(*) FROM series s
+               WHERE s.status IN ('completed', 'cancelled')"""
+        )
+        row = await cur.fetchone()
+        return int(row[0]) if row else 0
 
 
 async def update_series_wins(series_id: int, winner_side: str) -> dict:
@@ -745,7 +939,9 @@ async def update_series_wins(series_id: int, winner_side: str) -> dict:
     return await get_series(series_id)  # type: ignore[return-value]
 
 
-async def complete_series(series_id: int, winner_side: str, winner_entry_id: int | None = None) -> None:
+async def complete_series(
+    series_id: int, winner_side: str, winner_entry_id: int | None = None
+) -> None:
     async with _db() as db:
         await db.execute(
             "UPDATE series SET status = 'completed', winner_side = ?, winner_entry_id = ?, updated_at = ? WHERE id = ?",
@@ -762,6 +958,7 @@ async def complete_series(series_id: int, winner_side: str, winner_entry_id: int
 # ---------------------------------------------------------------------------
 # Match CRUD
 # ---------------------------------------------------------------------------
+
 
 async def create_match(
     *,
@@ -786,9 +983,16 @@ async def create_match(
                 queued_at)
                VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                series_id, tournament_id, game_number, battle_format,
-                player1_provider, player1_model, player1_persona,
-                player2_provider, player2_model, player2_persona,
+                series_id,
+                tournament_id,
+                game_number,
+                battle_format,
+                player1_provider,
+                player1_model,
+                player1_persona,
+                player2_provider,
+                player2_model,
+                player2_persona,
                 now,
             ),
         )
@@ -866,6 +1070,30 @@ async def list_matches(
         return [dict(r) for r in await cur.fetchall()]
 
 
+async def count_matches(
+    *,
+    status: str | None = None,
+    series_id: int | None = None,
+    tournament_id: int | None = None,
+) -> int:
+    clauses: list[str] = []
+    params: list[Any] = []
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    if series_id is not None:
+        clauses.append("series_id = ?")
+        params.append(series_id)
+    if tournament_id is not None:
+        clauses.append("tournament_id = ?")
+        params.append(tournament_id)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    async with _db() as db:
+        cur = await db.execute(f"SELECT COUNT(*) FROM matches{where}", params)
+        row = await cur.fetchone()
+        return int(row[0]) if row else 0
+
+
 async def pop_next_queued_match() -> dict | None:
     """Atomically fetch and mark the next queued match as running."""
     async with _db() as db:
@@ -931,7 +1159,38 @@ async def complete_match(
                  duration = ?, replay_file = ?, log_file = ?, battle_tag = ?,
                  completed_at = ?
                WHERE id = ?""",
-            (winner, loser, winner_side, duration, replay_file, log_file, battle_tag, _now(), match_id),
+            (
+                winner,
+                loser,
+                winner_side,
+                duration,
+                replay_file,
+                log_file,
+                battle_tag,
+                _now(),
+                match_id,
+            ),
+        )
+        await db.commit()
+    return await get_match(match_id)
+
+
+async def update_match_replay_artifacts(
+    match_id: int,
+    *,
+    replay_file: str | None = None,
+    log_file: str | None = None,
+    battle_tag: str | None = None,
+) -> dict | None:
+    """Fill in replay/log paths after an early complete (match already ``completed``)."""
+    async with _db() as db:
+        await db.execute(
+            """UPDATE matches SET
+                 replay_file = COALESCE(?, replay_file),
+                 log_file = COALESCE(?, log_file),
+                 battle_tag = COALESCE(?, battle_tag)
+               WHERE id = ? AND status = 'completed'""",
+            (replay_file, log_file, battle_tag, match_id),
         )
         await db.commit()
     return await get_match(match_id)
@@ -993,6 +1252,17 @@ async def _enrich_victory_context(db: aiosqlite.Connection, m: dict) -> dict:
             series_clinched = row is not None and int(row[0]) == int(mid)
     out["victory_series_clinched"] = series_clinched
 
+    out["victory_de_pending_grand_finals_reset"] = False
+    ts = out.get("tournament_status")
+    if (
+        series_clinched
+        and m.get("tournament_id") is not None
+        and out.get("tournament_type") == "double_elimination"
+        and out.get("series_bracket") == "grand_finals"
+        and ts != "completed"
+    ):
+        out["victory_de_pending_grand_finals_reset"] = True
+
     tournament_clinched = False
     tid = m.get("tournament_id")
     if series_clinched and tid is not None:
@@ -1009,7 +1279,11 @@ async def _enrich_victory_context(db: aiosqlite.Connection, m: dict) -> dict:
                     abs(float(t_updated) - float(m_done)) <= _VICTORY_TOURNEY_TIME_EPS
                 )
             if not tournament_clinched:
-                if m.get("series_bracket") == "grand_finals":
+                sb = m.get("series_bracket")
+                if row[0] == "completed" and sb in (
+                    "grand_finals",
+                    "grand_finals_reset",
+                ):
                     tournament_clinched = True
                 elif m.get("tournament_type") == "single_elimination":
                     bracket = m.get("series_bracket")
@@ -1046,6 +1320,7 @@ async def get_scoreboard_data(recent_count: int = 10) -> dict:
                       m.player1_persona, m.player2_persona,
                       m.series_id, m.tournament_id, m.game_number,
                       t.name AS tournament_name,
+                      t.status AS tournament_status,
                       t.type AS tournament_type,
                       s.bracket AS series_bracket,
                       s.round_number AS series_round_number,
@@ -1071,7 +1346,7 @@ async def get_scoreboard_data(recent_count: int = 10) -> dict:
                  GROUP BY tournament_id
                ) wbmax ON m.tournament_id = wbmax.tournament_id
                WHERE m.status = 'completed'
-               ORDER BY m.completed_at DESC LIMIT ?""",
+               ORDER BY m.completed_at DESC, m.id DESC LIMIT ?""",
             (recent_count,),
         )
         recent_matches = [dict(r) for r in await recent_cur.fetchall()]
@@ -1102,9 +1377,10 @@ async def get_running_match() -> dict | None:
         return dict(row) if row else None
 
 
-async def list_queued_matches(*, limit: int = 50) -> list[dict]:
+async def list_queued_matches(*, limit: int = 50, offset: int = 0) -> list[dict]:
     """Matches waiting for the worker, oldest first (next to run first)."""
     cap = max(1, min(int(limit), 200))
+    off = max(0, int(offset))
     async with _db() as db:
         cur = await db.execute(
             """SELECT m.*, t.name AS tournament_name,
@@ -1112,6 +1388,7 @@ async def list_queued_matches(*, limit: int = 50) -> list[dict]:
                       s.bracket AS series_bracket,
                       s.round_number AS series_round_number,
                       s.match_position AS series_match_position,
+                      s.best_of AS series_best_of,
                       wbmax.max_wr AS tournament_max_winners_round
                FROM matches m
                LEFT JOIN tournaments t ON m.tournament_id = t.id
@@ -1123,8 +1400,8 @@ async def list_queued_matches(*, limit: int = 50) -> list[dict]:
                  GROUP BY tournament_id
                ) wbmax ON m.tournament_id = wbmax.tournament_id
                WHERE m.status = 'queued'
-               ORDER BY m.queued_at ASC LIMIT ?""",
-            (cap,),
+               ORDER BY m.queued_at ASC LIMIT ? OFFSET ?""",
+            (cap, off),
         )
         return [dict(r) for r in await cur.fetchall()]
 
@@ -1173,7 +1450,8 @@ async def list_tournament_series_pending_opponent(*, limit: int = 24) -> list[di
                 WHEN 'winners' THEN 0
                 WHEN 'losers' THEN 1
                 WHEN 'grand_finals' THEN 2
-                ELSE 3
+                WHEN 'grand_finals_reset' THEN 3
+                ELSE 4
               END,
               IFNULL(s.round_number, 0),
               IFNULL(s.match_position, 0),

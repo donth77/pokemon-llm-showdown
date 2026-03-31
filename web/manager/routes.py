@@ -11,10 +11,14 @@ import logging
 import os
 import re
 from pathlib import Path
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+
+from manager_stream import manager_sse, notify_manager_events
+from scoreboard_stream import request_scoreboard_publish
 
 from . import (
     db,
@@ -30,6 +34,63 @@ from .provider_model_validate import validate_provider_model
 router = APIRouter()
 templates = Jinja2Templates(directory="templates")
 _log = logging.getLogger("uvicorn.error")
+
+_HTML_LIST_DEFAULT = 10
+_HTML_LIST_MAX = 200
+
+
+def _series_id_list_from_match(m: dict | None) -> list[int]:
+    if not m:
+        return []
+    sid = m.get("series_id")
+    if sid is None:
+        return []
+    try:
+        return [int(sid)]
+    except (TypeError, ValueError):
+        return []
+
+
+def _clamp_page_offset(offset: int, limit: int, total: int) -> int:
+    if total <= 0:
+        return 0
+    max_off = max(0, ((total - 1) // limit) * limit)
+    return min(max(0, offset), max_off)
+
+
+def _offset_pagination_bar(
+    *,
+    path: str,
+    offset: int,
+    limit: int,
+    total: int,
+    offset_param: str,
+    limit_param: str,
+    preserve: dict[str, int],
+) -> dict[str, str | int | None]:
+    def make_url(new_off: int) -> str:
+        q = {k: str(v) for k, v in preserve.items()}
+        q[offset_param] = str(max(0, new_off))
+        q[limit_param] = str(limit)
+        return f"{path}?{urlencode(q)}"
+
+    prev_url = None
+    if offset > 0:
+        prev_url = make_url(max(0, offset - limit))
+    next_url = None
+    if offset + limit < total:
+        next_url = make_url(offset + limit)
+    end = min(offset + limit, total)
+    start = offset + 1 if total else 0
+    return {
+        "offset": offset,
+        "limit": limit,
+        "total": total,
+        "start": start,
+        "end": end,
+        "prev_url": prev_url,
+        "next_url": next_url,
+    }
 
 
 async def _analytics_format_filter(
@@ -92,8 +153,23 @@ templates.env.filters["timestamp_fmt_slash"] = _timestamp_fmt_slash
 PERSONAS_DIR = Path(os.getenv("PERSONAS_DIR", "/personas"))
 STATE_DIR = Path(os.getenv("STATE_DIR", "/state"))
 CURRENT_BATTLE_FILE = STATE_DIR / "current_battle.json"
+
+
+def _read_persona_adaptive_file(slug: str, relative_name: str) -> str | None:
+    """Return file text if present under STATE_DIR/personas/{slug}/; None if missing or unreadable."""
+    path = STATE_DIR / "personas" / slug / relative_name
+    if not path.is_file():
+        return None
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
 # Browser URL for raw Showdown client (host/port or e.g. https://localhost.psim.us). Default: mapped showdown port.
-SHOWDOWN_VIEW_BASE = os.getenv("SHOWDOWN_VIEW_BASE", "http://localhost:8000").rstrip("/")
+SHOWDOWN_VIEW_BASE = os.getenv("SHOWDOWN_VIEW_BASE", "http://localhost:8000").rstrip(
+    "/"
+)
 _SHOWDOWN_USERNAME_MAX = 18
 
 ALLOWED_PROVIDERS = ["anthropic", "deepseek", "openrouter"]
@@ -104,6 +180,7 @@ def _require_provider_model_pair(label: str, provider: str, model: str) -> None:
         validate_provider_model(provider, model, field_label=label)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from None
+
 
 BATTLE_FORMATS = [
     "gen9randombattle",
@@ -214,6 +291,17 @@ def persona_dashboard_label(slug: str | None) -> str:
             battle = _persona_battle_name(p["name"])
             return f"{battle} ({slug})"
     return slug
+
+
+def tournament_entry_persona_label(entry: dict) -> str:
+    """Roster cell: 'DamageDan (aggro)' or 'DamageDan1 (aggro1)' when the slug repeats in the bracket."""
+    slug = (entry.get("persona_slug") or "").strip()
+    ds = (entry.get("persona_display_slug") or slug).strip()
+    if not slug:
+        return ds or "—"
+    base = _battle_name_for_persona_slug(slug)
+    battle = _numbered_battle_name_for_tournament_slot(base, slug, ds)
+    return f"{battle} ({ds})"
 
 
 def persona_slug_only(battle_or_slug: str | None) -> str:
@@ -430,8 +518,12 @@ async def _enrich_series_api_payload(s: dict) -> dict:
     out["player2_persona_label"] = labs["dash2"]
     out["player1_persona_slug_label"] = labs["slug1"]
     out["player2_persona_slug_label"] = labs["slug2"]
-    out["player1_persona_display_slug"] = labs["ds1"] if out.get("player1_persona") else ""
-    out["player2_persona_display_slug"] = labs["ds2"] if out.get("player2_persona") else ""
+    out["player1_persona_display_slug"] = (
+        labs["ds1"] if out.get("player1_persona") else ""
+    )
+    out["player2_persona_display_slug"] = (
+        labs["ds2"] if out.get("player2_persona") else ""
+    )
     matches_out = []
     for m in out.get("matches") or []:
         md = dict(m)
@@ -454,6 +546,7 @@ def _portrait_square_url_filter(slug: str | None) -> str:
 
 templates.env.filters["persona_slug_label"] = persona_slug_label
 templates.env.filters["persona_dashboard_label"] = persona_dashboard_label
+templates.env.filters["tournament_entry_persona_label"] = tournament_entry_persona_label
 templates.env.filters["persona_slug_only"] = persona_slug_only
 templates.env.filters["persona_battle_label"] = persona_battle_label
 templates.env.filters["portrait_square_url"] = _portrait_square_url_filter
@@ -462,6 +555,7 @@ templates.env.filters["portrait_square_url"] = _portrait_square_url_filter
 # ===================================================================
 # API routes — /api/manager/...
 # ===================================================================
+
 
 @router.get("/api/manager/config", response_class=JSONResponse)
 async def api_config():
@@ -473,6 +567,7 @@ async def api_config():
 
 
 # --- Tournaments ---
+
 
 @router.post("/api/manager/tournaments/parse-definition", response_class=JSONResponse)
 async def api_parse_tournament_definition(request: Request):
@@ -496,7 +591,9 @@ async def api_parse_tournament_definition(request: Request):
 @router.get("/api/manager/tournament-presets", response_class=JSONResponse)
 async def api_list_tournament_presets():
     rows = await db.list_tournament_presets()
-    return [{"id": r["id"], "name": r["name"], "updated_at": r["updated_at"]} for r in rows]
+    return [
+        {"id": r["id"], "name": r["name"], "updated_at": r["updated_at"]} for r in rows
+    ]
 
 
 @router.post("/api/manager/tournament-presets", response_class=JSONResponse)
@@ -513,9 +610,7 @@ async def api_create_tournament_preset(request: Request):
         row = await db.create_tournament_preset(name=name, body=raw_body.strip())
     except ValueError as exc:
         if exc.args and exc.args[0] == db.PRESET_NAME_DUP:
-            raise HTTPException(
-                409, "A preset with this name already exists"
-            ) from None
+            raise HTTPException(409, "A preset with this name already exists") from None
         raise
     return row
 
@@ -548,9 +643,7 @@ async def api_update_tournament_preset(pid: int, request: Request):
         row = await db.update_tournament_preset(pid, name=name, body=raw_body)
     except ValueError as exc:
         if exc.args and exc.args[0] == db.PRESET_NAME_DUP:
-            raise HTTPException(
-                409, "A preset with this name already exists"
-            ) from None
+            raise HTTPException(409, "A preset with this name already exists") from None
         raise
     if not row:
         raise HTTPException(404, "Preset not found")
@@ -596,7 +689,9 @@ async def api_create_tournament(request: Request):
 
     for i, e in enumerate(entries):
         if not e.get("provider") or not e.get("model") or not e.get("persona_slug"):
-            raise HTTPException(400, f"Entry {i+1} missing provider, model, or persona_slug")
+            raise HTTPException(
+                400, f"Entry {i + 1} missing provider, model, or persona_slug"
+            )
         _require_provider_model_pair(f"Entry {i + 1}", e["provider"], e["model"])
 
     tournament = await db.create_tournament(
@@ -608,6 +703,7 @@ async def api_create_tournament(request: Request):
         single_elim_bracket=single_elim_bracket,
     )
     await tournament_logic.generate_bracket(tournament)
+    await notify_manager_events(queue=True, tournament_ids=[int(tournament["id"])])
     return await db.get_tournament(tournament["id"])
 
 
@@ -630,10 +726,12 @@ async def api_cancel_tournament(tid: int):
     if not t:
         raise HTTPException(404, "Tournament not found")
     await db.cancel_tournament(tid)
+    await notify_manager_events(queue=True, tournament_ids=[tid])
     return {"status": "cancelled"}
 
 
 # --- Series ---
+
 
 @router.post("/api/manager/series", response_class=JSONResponse)
 async def api_create_series(request: Request):
@@ -646,11 +744,21 @@ async def api_create_series(request: Request):
         raise HTTPException(400, "best_of must be a positive odd number")
 
     for side in ("player1", "player2"):
-        if not body.get(f"{side}_provider") or not body.get(f"{side}_model") or not body.get(f"{side}_persona"):
-            raise HTTPException(400, f"{side} provider, model, and persona are required")
+        if (
+            not body.get(f"{side}_provider")
+            or not body.get(f"{side}_model")
+            or not body.get(f"{side}_persona")
+        ):
+            raise HTTPException(
+                400, f"{side} provider, model, and persona are required"
+            )
 
-    _require_provider_model_pair("Player 1", body["player1_provider"], body["player1_model"])
-    _require_provider_model_pair("Player 2", body["player2_provider"], body["player2_model"])
+    _require_provider_model_pair(
+        "Player 1", body["player1_provider"], body["player1_model"]
+    )
+    _require_provider_model_pair(
+        "Player 2", body["player2_provider"], body["player2_model"]
+    )
 
     series = await db.create_series(
         best_of=best_of,
@@ -661,6 +769,16 @@ async def api_create_series(request: Request):
         player2_provider=body["player2_provider"],
         player2_model=body["player2_model"],
         player2_persona=body["player2_persona"],
+    )
+    t_extra = (
+        [int(series["tournament_id"])]
+        if series.get("tournament_id") is not None
+        else []
+    )
+    await notify_manager_events(
+        queue=True,
+        series_ids=[int(series["id"])],
+        tournament_ids=t_extra,
     )
     return series
 
@@ -675,6 +793,7 @@ async def api_get_series(sid: int):
 
 # --- Matches ---
 
+
 @router.post("/api/manager/matches", response_class=JSONResponse)
 async def api_create_matches(request: Request):
     """Create standalone match(es) or a best-of-N series."""
@@ -686,11 +805,21 @@ async def api_create_matches(request: Request):
     if not fmt:
         raise HTTPException(400, "Battle format is required")
     for side in ("player1", "player2"):
-        if not body.get(f"{side}_provider") or not body.get(f"{side}_model") or not body.get(f"{side}_persona"):
-            raise HTTPException(400, f"{side} provider, model, and persona are required")
+        if (
+            not body.get(f"{side}_provider")
+            or not body.get(f"{side}_model")
+            or not body.get(f"{side}_persona")
+        ):
+            raise HTTPException(
+                400, f"{side} provider, model, and persona are required"
+            )
 
-    _require_provider_model_pair("Player 1", body["player1_provider"], body["player1_model"])
-    _require_provider_model_pair("Player 2", body["player2_provider"], body["player2_model"])
+    _require_provider_model_pair(
+        "Player 1", body["player1_provider"], body["player1_model"]
+    )
+    _require_provider_model_pair(
+        "Player 2", body["player2_provider"], body["player2_model"]
+    )
 
     # best_of > 0 means create a series; count is ignored
     if best_of > 0:
@@ -706,6 +835,7 @@ async def api_create_matches(request: Request):
             player2_model=body["player2_model"],
             player2_persona=body["player2_persona"],
         )
+        await notify_manager_events(queue=True, series_ids=[int(series["id"])])
         return {"type": "series", "series": series}
 
     # Otherwise create individual matches
@@ -722,6 +852,7 @@ async def api_create_matches(request: Request):
             player2_persona=body["player2_persona"],
         )
         created.append(m)
+    await notify_manager_events(queue=True)
     return {"type": "matches", "matches": created}
 
 
@@ -734,19 +865,30 @@ async def api_list_matches(
     offset: int = 0,
 ):
     return await db.list_matches(
-        status=status, series_id=series_id, tournament_id=tournament_id,
-        limit=limit, offset=offset,
+        status=status,
+        series_id=series_id,
+        tournament_id=tournament_id,
+        limit=limit,
+        offset=offset,
     )
 
 
 # --- Queue (registered before /matches/{mid} for predictable routing) ---
+
+
+@router.get("/api/manager/stream")
+async def api_manager_stream(request: Request):
+    return await manager_sse(request)
+
 
 @router.get("/api/manager/queue/next", response_class=JSONResponse)
 async def api_queue_next():
     try:
         m = await db.pop_next_queued_match()
     except Exception:
-        _log.exception("GET /api/manager/queue/next failed (SQLite schema or DB error?)")
+        _log.exception(
+            "GET /api/manager/queue/next failed (SQLite schema or DB error?)"
+        )
         raise HTTPException(
             500,
             detail="queue_next_failed — check web logs; if the DB predates migrations, delete manager.db (+ wal/shm) on manager-data and restart web",
@@ -758,6 +900,10 @@ async def api_queue_next():
     if a1 and a2:
         m["player1_showdown_account"] = a1
         m["player2_showdown_account"] = a2
+    tids = [int(m["tournament_id"])] if m.get("tournament_id") is not None else []
+    await notify_manager_events(
+        queue=True, tournament_ids=tids, series_ids=_series_id_list_from_match(m)
+    )
     return m
 
 
@@ -769,6 +915,22 @@ async def api_queue_depth():
         _log.exception("GET /api/manager/queue/depth failed")
         raise HTTPException(500, detail="queue_depth_failed") from None
     return {"depth": depth}
+
+
+def _queue_row_game_if_necessary(d: dict) -> bool:
+    """True when this queued game may be cancelled if the series clinches earlier (e.g. Bo5 game 4+)."""
+    gn_raw, bo_raw = d.get("game_number"), d.get("series_best_of")
+    if gn_raw is None or bo_raw is None:
+        return False
+    try:
+        gn_i = int(gn_raw)
+        bo_i = int(bo_raw)
+    except (TypeError, ValueError):
+        return False
+    if bo_i < 2:
+        return False
+    wins_needed = (bo_i + 1) // 2
+    return gn_i > wins_needed
 
 
 async def _enrich_queued_match_for_ui(m: dict) -> dict:
@@ -786,11 +948,18 @@ async def _enrich_queued_match_for_ui(m: dict) -> dict:
         labs["dash2"], d.get("player2_provider"), d.get("player2_model")
     )
     d["player1_stream_label"] = _queue_stream_or_fallback(
-        labs["stream1"], labs["dash1"], d.get("player1_provider"), d.get("player1_model")
+        labs["stream1"],
+        labs["dash1"],
+        d.get("player1_provider"),
+        d.get("player1_model"),
     )
     d["player2_stream_label"] = _queue_stream_or_fallback(
-        labs["stream2"], labs["dash2"], d.get("player2_provider"), d.get("player2_model")
+        labs["stream2"],
+        labs["dash2"],
+        d.get("player2_provider"),
+        d.get("player2_model"),
     )
+    d["queue_game_if_necessary"] = _queue_row_game_if_necessary(d)
     _apply_tournament_opponent_tbd_labels(d)
     return d
 
@@ -823,28 +992,46 @@ async def _enrich_pending_series_row_for_ui(s: dict) -> dict:
         ),
     }
     d["player1_stream_label"] = _queue_stream_or_fallback(
-        labs["stream1"], labs["dash1"], s.get("player1_provider"), s.get("player1_model")
+        labs["stream1"],
+        labs["dash1"],
+        s.get("player1_provider"),
+        s.get("player1_model"),
     )
     d["player2_stream_label"] = _queue_stream_or_fallback(
-        labs["stream2"], labs["dash2"], s.get("player2_provider"), s.get("player2_model")
+        labs["stream2"],
+        labs["dash2"],
+        s.get("player2_provider"),
+        s.get("player2_model"),
     )
+    d["queue_game_if_necessary"] = False
     _apply_tournament_opponent_tbd_labels(d)
     return d
 
 
+async def _compose_queue_upcoming_rows(*, limit: int, offset: int) -> list[dict]:
+    """Queued matches for a window, plus pending opponent placeholders only on the first window."""
+    cap = max(1, min(int(limit), _HTML_LIST_MAX))
+    off = max(0, int(offset))
+    raw = await db.list_queued_matches(limit=cap, offset=off)
+    out: list[dict] = [await _enrich_queued_match_for_ui(m) for m in raw]
+    if off == 0:
+        slot_cap = max(1, min(24, cap))
+        for row in await db.list_tournament_series_pending_opponent(limit=slot_cap):
+            out.append(await _enrich_pending_series_row_for_ui(row))
+    return out
+
+
 @router.get("/api/manager/queue/upcoming", response_class=JSONResponse)
-async def api_queue_upcoming(limit: int = 50):
-    cap = max(1, min(int(limit), 200))
-    slot_cap = max(1, min(24, cap))
+async def api_queue_upcoming(
+    limit: int = Query(_HTML_LIST_DEFAULT, ge=1, le=_HTML_LIST_MAX),
+    offset: int = Query(0, ge=0),
+):
+    cap = max(1, min(int(limit), _HTML_LIST_MAX))
     try:
-        raw = await db.list_queued_matches(limit=cap)
-        pending_rows = await db.list_tournament_series_pending_opponent(limit=slot_cap)
+        out = await _compose_queue_upcoming_rows(limit=cap, offset=offset)
     except Exception:
         _log.exception("GET /api/manager/queue/upcoming failed")
         raise HTTPException(500, detail="queue_upcoming_failed") from None
-    out: list[dict] = [await _enrich_queued_match_for_ui(m) for m in raw]
-    for row in pending_rows:
-        out.append(await _enrich_pending_series_row_for_ui(row))
     return out
 
 
@@ -873,6 +1060,7 @@ async def api_match_start(mid: int):
     m = await db.start_match(mid)
     if not m:
         raise HTTPException(404, "Match not found")
+    await notify_manager_events(queue=True, series_ids=_series_id_list_from_match(m))
     return m
 
 
@@ -885,20 +1073,37 @@ async def api_match_complete(mid: int, request: Request):
     if not winner or not winner_side:
         raise HTTPException(400, "winner and winner_side are required")
 
-    m = await db.complete_match(
-        mid,
-        winner=winner,
-        loser=loser,
-        winner_side=winner_side,
-        duration=body.get("duration"),
-        replay_file=body.get("replay_file"),
-        log_file=body.get("log_file"),
-        battle_tag=body.get("battle_tag"),
-    )
-    if not m:
+    existing = await db.get_match(mid)
+    if not existing:
         raise HTTPException(404, "Match not found")
 
-    await tournament_logic.on_match_completed(m)
+    if existing.get("status") == "completed":
+        m = await db.update_match_replay_artifacts(
+            mid,
+            replay_file=body.get("replay_file"),
+            log_file=body.get("log_file"),
+            battle_tag=body.get("battle_tag"),
+        )
+        if not m:
+            raise HTTPException(404, "Match not found")
+        await notify_manager_events(
+            series_ids=_series_id_list_from_match(m),
+        )
+    else:
+        m = await db.complete_match(
+            mid,
+            winner=winner,
+            loser=loser,
+            winner_side=winner_side,
+            duration=body.get("duration"),
+            replay_file=body.get("replay_file"),
+            log_file=body.get("log_file"),
+            battle_tag=body.get("battle_tag"),
+        )
+        if not m:
+            raise HTTPException(404, "Match not found")
+        await tournament_logic.on_match_completed(m)
+
     payload = dict(m)
     if m.get("series_id"):
         s = await db.get_series(m["series_id"])
@@ -909,6 +1114,14 @@ async def api_match_complete(mid: int, request: Request):
                 "player1_wins": s["player1_wins"],
                 "player2_wins": s["player2_wins"],
             }
+    if existing.get("status") != "completed":
+        tids = [int(m["tournament_id"])] if m.get("tournament_id") is not None else []
+        await notify_manager_events(
+            queue=True,
+            tournament_ids=tids,
+            series_ids=_series_id_list_from_match(m),
+        )
+    await request_scoreboard_publish()
     return payload
 
 
@@ -930,10 +1143,18 @@ async def api_match_error(mid: int, request: Request):
     out = dict(m)
     if hint:
         out["recovery_hint"] = hint
+    tids = [int(m["tournament_id"])] if m.get("tournament_id") is not None else []
+    await notify_manager_events(
+        queue=True,
+        tournament_ids=tids,
+        series_ids=_series_id_list_from_match(m),
+    )
+    await request_scoreboard_publish()
     return out
 
 
 # --- Results & Stats ---
+
 
 @router.get("/api/manager/results", response_class=JSONResponse)
 async def api_results(
@@ -961,14 +1182,30 @@ async def api_stats(formats: list[str] = Query(default=[])):
 # HTML page routes — /manager/...
 # ===================================================================
 
+
 @router.get("/manager", response_class=HTMLResponse)
-async def page_dashboard(request: Request):
+async def page_dashboard(
+    request: Request,
+    upcoming_offset: int = Query(0, ge=0),
+    upcoming_limit: int = Query(_HTML_LIST_DEFAULT, ge=1, le=_HTML_LIST_MAX),
+):
     queue_depth = await db.get_queue_depth()
+    upcoming_offset = _clamp_page_offset(upcoming_offset, upcoming_limit, queue_depth)
     running = await db.get_running_match()
     if running:
         running = await _enrich_queued_match_for_ui(running)
-    raw_q = await db.list_queued_matches(limit=50)
-    queued = [await _enrich_queued_match_for_ui(m) for m in raw_q]
+    queued = await _compose_queue_upcoming_rows(
+        limit=upcoming_limit, offset=upcoming_offset
+    )
+    upcoming_pagination = _offset_pagination_bar(
+        path=str(request.url.path),
+        offset=upcoming_offset,
+        limit=upcoming_limit,
+        total=queue_depth,
+        offset_param="upcoming_offset",
+        limit_param="upcoming_limit",
+        preserve={},
+    )
     recent = await db.list_matches(status="completed", limit=10)
     tournaments = await db.list_tournaments()
     return templates.TemplateResponse(
@@ -979,6 +1216,7 @@ async def page_dashboard(request: Request):
             "queue_depth": queue_depth,
             "running_match": running,
             "queued_matches": queued,
+            "upcoming_pagination": upcoming_pagination,
             "recent_matches": recent,
             "tournaments": tournaments[:5],
             "showdown_view_base": SHOWDOWN_VIEW_BASE,
@@ -988,12 +1226,32 @@ async def page_dashboard(request: Request):
 
 
 @router.get("/manager/tournaments", response_class=HTMLResponse)
-async def page_tournament_list(request: Request):
-    tournaments = await db.list_tournaments()
+async def page_tournament_list(
+    request: Request,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(_HTML_LIST_DEFAULT, ge=1, le=_HTML_LIST_MAX),
+):
+    path = request.url.path
+    total = await db.count_tournaments()
+    offset = _clamp_page_offset(offset, limit, total)
+    tournaments = await db.list_tournaments(limit=limit, offset=offset)
+    pagination = _offset_pagination_bar(
+        path=path,
+        offset=offset,
+        limit=limit,
+        total=total,
+        offset_param="offset",
+        limit_param="limit",
+        preserve={},
+    )
     return templates.TemplateResponse(
         request=request,
         name="manager/tournament_list.html",
-        context={"request": request, "tournaments": tournaments},
+        context={
+            "request": request,
+            "tournaments": tournaments,
+            "tournament_pagination": pagination,
+        },
     )
 
 
@@ -1085,10 +1343,41 @@ async def page_series_detail(request: Request, sid: int):
 
 
 @router.get("/manager/results", response_class=HTMLResponse)
-async def page_results(request: Request):
-    matches = await db.list_matches(status="completed", limit=200)
-    raw_series = await db.list_series_results(limit=100)
+async def page_results(
+    request: Request,
+    matches_offset: int = Query(0, ge=0),
+    matches_limit: int = Query(_HTML_LIST_DEFAULT, ge=1, le=_HTML_LIST_MAX),
+    series_offset: int = Query(0, ge=0),
+    series_limit: int = Query(_HTML_LIST_DEFAULT, ge=1, le=_HTML_LIST_MAX),
+):
+    path = request.url.path
+    match_total = await db.count_matches(status="completed")
+    matches_offset = _clamp_page_offset(matches_offset, matches_limit, match_total)
+    matches = await db.list_matches(
+        status="completed", limit=matches_limit, offset=matches_offset
+    )
+    series_total = await db.count_series_results()
+    series_offset = _clamp_page_offset(series_offset, series_limit, series_total)
+    raw_series = await db.list_series_results(limit=series_limit, offset=series_offset)
     series_results = [await _enrich_series_api_payload(s) for s in raw_series]
+    matches_pagination = _offset_pagination_bar(
+        path=path,
+        offset=matches_offset,
+        limit=matches_limit,
+        total=match_total,
+        offset_param="matches_offset",
+        limit_param="matches_limit",
+        preserve={"series_offset": series_offset, "series_limit": series_limit},
+    )
+    series_pagination = _offset_pagination_bar(
+        path=path,
+        offset=series_offset,
+        limit=series_limit,
+        total=series_total,
+        offset_param="series_offset",
+        limit_param="series_limit",
+        preserve={"matches_offset": matches_offset, "matches_limit": matches_limit},
+    )
     return templates.TemplateResponse(
         request=request,
         name="manager/results.html",
@@ -1096,6 +1385,8 @@ async def page_results(request: Request):
             "request": request,
             "matches": matches,
             "series_results": series_results,
+            "matches_pagination": matches_pagination,
+            "series_pagination": series_pagination,
         },
     )
 
@@ -1179,7 +1470,12 @@ async def page_config_update(key: str = Form(...), value: str = Form("")):
     defn = REGISTRY_BY_KEY[key]
     st = envfile.host_env_status()
     path = envfile.configured_host_env_path()
-    if not st.get("configured") or not st.get("exists") or not st.get("writable") or path is None:
+    if (
+        not st.get("configured")
+        or not st.get("exists")
+        or not st.get("writable")
+        or path is None
+    ):
         raise HTTPException(
             400,
             detail="Host environment file is not mounted or not writable (check docker-compose and MANAGER_HOST_ENV_FILE)",
@@ -1275,7 +1571,9 @@ async def action_persona_create(
     return RedirectResponse(url="/manager/personas", status_code=303)
 
 
-async def _maybe_save_persona_sprite_upload(slug: str, sprite_file: UploadFile | None) -> None:
+async def _maybe_save_persona_sprite_upload(
+    slug: str, sprite_file: UploadFile | None
+) -> None:
     if sprite_file is None or not sprite_file.filename:
         return
     data = await sprite_file.read()
@@ -1312,6 +1610,29 @@ async def _maybe_save_persona_portrait_uploads(
             pstore.save_portrait_upload(slug, uf.filename, data, square=square)
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
+
+
+@router.get("/manager/personas/{slug}/memory", response_class=HTMLResponse)
+async def page_persona_memory(request: Request, slug: str):
+    try:
+        data = pstore.read_persona(slug)
+    except FileNotFoundError:
+        raise HTTPException(404, "Persona not found") from None
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    slug_ok = data["slug"]
+    return templates.TemplateResponse(
+        request=request,
+        name="manager/persona_memory.html",
+        context={
+            "request": request,
+            "p": data,
+            "persona_memory_text": _read_persona_adaptive_file(slug_ok, "memory.md"),
+            "persona_learnings_text": _read_persona_adaptive_file(
+                slug_ok, "learnings.md"
+            ),
+        },
+    )
 
 
 @router.get("/manager/personas/{slug}/edit", response_class=HTMLResponse)

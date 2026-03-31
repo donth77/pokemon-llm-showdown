@@ -2,7 +2,10 @@
 
 
 def validate_provider_model(
-    provider: str, model: str, *, field_label: str = "",
+    provider: str,
+    model: str,
+    *,
+    field_label: str = "",
 ) -> None:
     """Raise ValueError if ``model`` does not match the selected ``provider``."""
     p = (provider or "").strip().lower()
@@ -30,7 +33,7 @@ def validate_provider_model(
         if not low.startswith("openrouter") and "/" not in m_raw:
             raise ValueError(
                 f'{label}OpenRouter expects a vendor/model slug containing "/" '
-                f'(e.g. anthropic/claude-3.5-sonnet, deepseek/deepseek-chat) '
+                f"(e.g. anthropic/claude-3.5-sonnet, deepseek/deepseek-chat) "
                 f'or a model id starting with "openrouter"; got {m_raw!r}'
             )
     else:

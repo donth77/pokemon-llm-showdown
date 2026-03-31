@@ -1,188 +1,233 @@
 {% extends "manager/_base.html" %}
 {% set active_page = "stats" %}
 {% block title %}Analytics{% endblock %}
-
 {% block content %}
-<div class="page-header">
-  <h1>Analytics</h1>
-</div>
-
-{% if all_battle_formats %}
-<section class="card stats-filter-card">
-  <h2>Battle format</h2>
-  <form method="get" action="/manager/results/stats" class="stats-filter-form">
-    <details class="stats-format-dropdown">
-      <summary class="stats-format-dropdown-trigger">
-        <span class="stats-format-dropdown-label" id="stats-format-dropdown-label">Formats</span>
-        <span class="stats-format-dropdown-chevron" aria-hidden="true"></span>
-      </summary>
-      <div class="stats-format-dropdown-panel">
-        <div class="stats-filter-checkboxes" role="group" aria-labelledby="stats-format-dropdown-label">
-          {% for fmt in all_battle_formats %}
-          <label class="stats-filter-label">
-            <input type="checkbox" name="formats" value="{{ fmt }}" {% if selected_formats is none or fmt in selected_formats %}checked{% endif %}>
-            <span class="stats-filter-format-id">{{ fmt }}</span>
-          </label>
-          {% endfor %}
-        </div>
-      </div>
-    </details>
-    <div class="stats-filter-actions">
-      <button type="submit" class="btn btn-primary btn-sm">Apply</button>
-      <a href="/manager/results/stats" class="btn btn-secondary btn-sm">All formats</a>
+    <div class="page-header">
+        <h1>Analytics</h1>
     </div>
-  </form>
-</section>
-{% endif %}
-
-<!-- Model Performance -->
-<section class="card">
-  <h2>Model Performance</h2>
-  {% if stats.model_stats %}
-  <div class="stats-chart-wrap"><canvas id="chart-models" aria-label="Model wins and losses"></canvas></div>
-  <table class="table">
-    <thead>
-      <tr><th>Model</th><th>Wins</th><th>Losses</th><th>Total</th><th>Win Rate</th><th></th></tr>
-    </thead>
-    <tbody>
-      {% for model, s in stats.model_stats.items() %}
-      <tr>
-        <td><strong>{{ model }}</strong></td>
-        <td class="text-win">{{ s.wins }}</td>
-        <td class="text-loss">{{ s.losses }}</td>
-        <td class="text-muted">{{ s.total }}</td>
-        <td>{{ s.win_rate }}%</td>
-        <td>
-          <div class="bar-container">
-            <div class="bar bar-win" style="width: {{ s.win_rate }}%"></div>
-          </div>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p class="text-muted">No data yet. Complete some matches to see model stats.</p>
-  {% endif %}
-</section>
-
-<!-- Persona Performance -->
-<section class="card">
-  <h2>Persona Performance</h2>
-  {% if stats.persona_stats %}
-  <div class="stats-chart-wrap"><canvas id="chart-personas" aria-label="Persona wins and losses"></canvas></div>
-  <table class="table">
-    <thead>
-      <tr><th>Persona</th><th>Wins</th><th>Losses</th><th>Total</th><th>Win Rate</th><th></th></tr>
-    </thead>
-    <tbody>
-      {% for persona, s in stats.persona_stats.items() %}
-      <tr>
-        <td><strong>{{ persona }}</strong></td>
-        <td class="text-win">{{ s.wins }}</td>
-        <td class="text-loss">{{ s.losses }}</td>
-        <td class="text-muted">{{ s.total }}</td>
-        <td>{{ s.win_rate }}%</td>
-        <td>
-          <div class="bar-container">
-            <div class="bar bar-win" style="width: {{ s.win_rate }}%"></div>
-          </div>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p class="text-muted">No data yet.</p>
-  {% endif %}
-</section>
-
-<!-- Head to Head -->
-<section class="card">
-  <h2>Head-to-Head</h2>
-  <p class="text-muted stats-h2-note">Counts are from player 1 vs player 2 sides (same ordering as queued matches).</p>
-
-  <h3 class="stats-subsection-title">By model</h3>
-  {% if stats.head_to_head %}
-  <table class="table">
-    <thead>
-      <tr><th>Model (P1)</th><th>Model (P2)</th><th>P1 wins</th><th>P2 wins</th><th>Total</th></tr>
-    </thead>
-    <tbody>
-      {% for h in stats.head_to_head %}
-      <tr>
-        <td><strong>{{ h.model1 }}</strong></td>
-        <td><strong>{{ h.model2 }}</strong></td>
-        <td class="{% if h.model1_wins > h.model2_wins %}text-win{% endif %}">{{ h.model1_wins }}</td>
-        <td class="{% if h.model2_wins > h.model1_wins %}text-win{% endif %}">{{ h.model2_wins }}</td>
-        <td class="text-muted">{{ h.total }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p class="text-muted">No model head-to-head data yet.</p>
-  {% endif %}
-
-  <h3 class="stats-subsection-title">By persona pairing</h3>
-  {% if stats.head_to_head_personas %}
-  <table class="table">
-    <thead>
-      <tr><th>Persona (P1)</th><th>Persona (P2)</th><th>P1 wins</th><th>P2 wins</th><th>Total</th></tr>
-    </thead>
-    <tbody>
-      {% for h in stats.head_to_head_personas %}
-      <tr>
-        <td><strong>{{ h.persona1 or '—' }}</strong></td>
-        <td><strong>{{ h.persona2 or '—' }}</strong></td>
-        <td class="{% if h.persona1_wins > h.persona2_wins %}text-win{% endif %}">{{ h.persona1_wins }}</td>
-        <td class="{% if h.persona2_wins > h.persona1_wins %}text-win{% endif %}">{{ h.persona2_wins }}</td>
-        <td class="text-muted">{{ h.total }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p class="text-muted">No persona pairing data yet.</p>
-  {% endif %}
-
-  <h3 class="stats-subsection-title">By model and persona</h3>
-  {% if stats.head_to_head_model_persona %}
-  <table class="table table-stats-lineup">
-    <thead>
-      <tr>
-        <th>Model (P1)</th>
-        <th>Persona (P1)</th>
-        <th>Model (P2)</th>
-        <th>Persona (P2)</th>
-        <th>P1 wins</th>
-        <th>P2 wins</th>
-        <th>Total</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for h in stats.head_to_head_model_persona %}
-      <tr>
-        <td><strong>{{ h.model1 }}</strong></td>
-        <td class="text-muted">{{ h.persona1 or '—' }}</td>
-        <td><strong>{{ h.model2 }}</strong></td>
-        <td class="text-muted">{{ h.persona2 or '—' }}</td>
-        <td class="{% if h.model1_wins > h.model2_wins %}text-win{% endif %}">{{ h.model1_wins }}</td>
-        <td class="{% if h.model2_wins > h.model1_wins %}text-win{% endif %}">{{ h.model2_wins }}</td>
-        <td class="text-muted">{{ h.total }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p class="text-muted">No model/persona matchup data yet.</p>
-  {% endif %}
-</section>
+    {% if all_battle_formats %}
+        <section class="card stats-filter-card">
+            <h2>Battle format</h2>
+            <form method="get"
+                  action="/manager/results/stats"
+                  class="stats-filter-form">
+                <details class="stats-format-dropdown">
+                    <summary class="stats-format-dropdown-trigger">
+                        <span class="stats-format-dropdown-label" id="stats-format-dropdown-label">Formats</span>
+                        <span class="stats-format-dropdown-chevron" aria-hidden="true"></span>
+                    </summary>
+                    <div class="stats-format-dropdown-panel">
+                        <div class="stats-filter-checkboxes"
+                             role="group"
+                             aria-labelledby="stats-format-dropdown-label">
+                            {% for fmt in all_battle_formats %}
+                                <label class="stats-filter-label">
+                                    <input type="checkbox"
+                                           name="formats"
+                                           value="{{ fmt }}"
+                                           {% if selected_formats is none or fmt in selected_formats %}checked{% endif %}>
+                                    <span class="stats-filter-format-id">{{ fmt }}</span>
+                                </label>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </details>
+                <div class="stats-filter-actions">
+                    <button type="submit" class="btn btn-primary btn-sm">Apply</button>
+                    <a href="/manager/results/stats" class="btn btn-secondary btn-sm">All formats</a>
+                </div>
+            </form>
+        </section>
+    {% endif %}
+    <!-- Model Performance -->
+    <section class="card">
+        <h2>Model Performance</h2>
+        {% if stats.model_stats %}
+            <div class="stats-chart-wrap">
+                <canvas id="chart-models" aria-label="Model wins and losses"></canvas>
+            </div>
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Model</th>
+                        <th>Wins</th>
+                        <th>Losses</th>
+                        <th>Total</th>
+                        <th>Win Rate</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for model, s in stats.model_stats.items() %}
+                        <tr>
+                            <td>
+                                <strong>{{ model }}</strong>
+                            </td>
+                            <td class="text-win">{{ s.wins }}</td>
+                            <td class="text-loss">{{ s.losses }}</td>
+                            <td class="text-muted">{{ s.total }}</td>
+                            <td>{{ s.win_rate }}%</td>
+                            <td>
+                                <div class="bar-container">
+                                    <div class="bar bar-win" style="width: {{ s.win_rate }}%"></div>
+                                </div>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <p class="text-muted">No data yet. Complete some matches to see model stats.</p>
+        {% endif %}
+    </section>
+    <!-- Persona Performance -->
+    <section class="card">
+        <h2>Persona Performance</h2>
+        {% if stats.persona_stats %}
+            <div class="stats-chart-wrap">
+                <canvas id="chart-personas" aria-label="Persona wins and losses"></canvas>
+            </div>
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Persona</th>
+                        <th>Wins</th>
+                        <th>Losses</th>
+                        <th>Total</th>
+                        <th>Win Rate</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for persona, s in stats.persona_stats.items() %}
+                        <tr>
+                            <td>
+                                <strong>{{ persona }}</strong>
+                            </td>
+                            <td class="text-win">{{ s.wins }}</td>
+                            <td class="text-loss">{{ s.losses }}</td>
+                            <td class="text-muted">{{ s.total }}</td>
+                            <td>{{ s.win_rate }}%</td>
+                            <td>
+                                <div class="bar-container">
+                                    <div class="bar bar-win" style="width: {{ s.win_rate }}%"></div>
+                                </div>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <p class="text-muted">No data yet.</p>
+        {% endif %}
+    </section>
+    <!-- Head to Head -->
+    <section class="card">
+        <h2>Head-to-Head</h2>
+        <p class="text-muted stats-h2-note">Counts are from player 1 vs player 2 sides (same ordering as queued matches).</p>
+        <h3 class="stats-subsection-title">By model</h3>
+        {% if stats.head_to_head %}
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Model (P1)</th>
+                        <th>Model (P2)</th>
+                        <th>P1 wins</th>
+                        <th>P2 wins</th>
+                        <th>Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for h in stats.head_to_head %}
+                        <tr>
+                            <td>
+                                <strong>{{ h.model1 }}</strong>
+                            </td>
+                            <td>
+                                <strong>{{ h.model2 }}</strong>
+                            </td>
+                            <td class="{% if h.model1_wins > h.model2_wins %}text-win{% endif %}">{{ h.model1_wins }}</td>
+                            <td class="{% if h.model2_wins > h.model1_wins %}text-win{% endif %}">{{ h.model2_wins }}</td>
+                            <td class="text-muted">{{ h.total }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <p class="text-muted">No model head-to-head data yet.</p>
+        {% endif %}
+        <h3 class="stats-subsection-title">By persona pairing</h3>
+        {% if stats.head_to_head_personas %}
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Persona (P1)</th>
+                        <th>Persona (P2)</th>
+                        <th>P1 wins</th>
+                        <th>P2 wins</th>
+                        <th>Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for h in stats.head_to_head_personas %}
+                        <tr>
+                            <td>
+                                <strong>{{ h.persona1 or '—' }}</strong>
+                            </td>
+                            <td>
+                                <strong>{{ h.persona2 or '—' }}</strong>
+                            </td>
+                            <td class="{% if h.persona1_wins > h.persona2_wins %}text-win{% endif %}">{{ h.persona1_wins }}</td>
+                            <td class="{% if h.persona2_wins > h.persona1_wins %}text-win{% endif %}">{{ h.persona2_wins }}</td>
+                            <td class="text-muted">{{ h.total }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <p class="text-muted">No persona pairing data yet.</p>
+        {% endif %}
+        <h3 class="stats-subsection-title">By model and persona</h3>
+        {% if stats.head_to_head_model_persona %}
+            <table class="table table-stats-lineup">
+                <thead>
+                    <tr>
+                        <th>Model (P1)</th>
+                        <th>Persona (P1)</th>
+                        <th>Model (P2)</th>
+                        <th>Persona (P2)</th>
+                        <th>P1 wins</th>
+                        <th>P2 wins</th>
+                        <th>Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for h in stats.head_to_head_model_persona %}
+                        <tr>
+                            <td>
+                                <strong>{{ h.model1 }}</strong>
+                            </td>
+                            <td class="text-muted">{{ h.persona1 or '—' }}</td>
+                            <td>
+                                <strong>{{ h.model2 }}</strong>
+                            </td>
+                            <td class="text-muted">{{ h.persona2 or '—' }}</td>
+                            <td class="{% if h.model1_wins > h.model2_wins %}text-win{% endif %}">{{ h.model1_wins }}</td>
+                            <td class="{% if h.model2_wins > h.model1_wins %}text-win{% endif %}">{{ h.model2_wins }}</td>
+                            <td class="text-muted">{{ h.total }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <p class="text-muted">No model/persona matchup data yet.</p>
+        {% endif %}
+    </section>
 {% endblock %}
-
 {% block scripts %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js" crossorigin="anonymous"></script>
-<script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"
+            crossorigin="anonymous"></script>
+    <script>
 (function () {
   var form = document.querySelector(".stats-filter-form");
   if (!form) return;
@@ -332,5 +377,5 @@
   makeStackedHBar("chart-models", rowsFromDict(modelStats));
   makeStackedHBar("chart-personas", rowsFromDict(personaStats));
 })();
-</script>
+    </script>
 {% endblock %}

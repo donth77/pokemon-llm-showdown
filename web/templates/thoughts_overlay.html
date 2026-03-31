@@ -1,10 +1,10 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=1280,height=720" />
-    <title>Thoughts — {{ stream_title }}</title>
-    <style>
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=1280,height=720" />
+        <title>Thoughts — {{ stream_title }}</title>
+        <style>
       html,
       body {
         margin: 0;
@@ -58,7 +58,7 @@
       }
 
       .thoughts-title {
-        font-size: 12px;
+        font-size: 14px;
         letter-spacing: 1.2px;
         text-transform: uppercase;
         color: rgba(255, 255, 255, 0.8);
@@ -98,6 +98,8 @@
       .thoughts-scroll {
         flex: 1;
         min-height: 0;
+        min-width: 0;
+        overflow-x: hidden;
         overflow-y: auto;
         scrollbar-width: none;
         -ms-overflow-style: none;
@@ -106,6 +108,7 @@
       .thoughts-scroll-body {
         min-width: 0;
         padding-bottom: 10px;
+        font-size: 14px;
       }
 
       .thoughts-scroll::-webkit-scrollbar {
@@ -115,48 +118,52 @@
       }
 
       .thought-line {
-        font-size: 12px;
+        font-size: 1em;
         line-height: 1.35;
         color: rgba(255, 255, 255, 0.9);
         margin-bottom: 6px;
         white-space: pre-wrap;
         word-break: break-word;
+        overflow-wrap: anywhere;
+      }
+
+      .thought-line--long {
+        font-size: 0.82em;
       }
 
       .thought-line .meta {
         display: inline-block;
         margin-right: 6px;
         color: rgba(255, 255, 255, 0.55);
-        font-size: 11px;
+        font-size: 0.786em;
         font-weight: 600;
       }
-    </style>
-  </head>
-
-  <body>
-    <div class="scene">
-      <div class="thoughts-wrap">
-        <section class="thoughts-panel">
-          <div class="thoughts-panel-head">
-            <div class="thoughts-title red" id="thoughts-title-p1">Player 1</div>
-          </div>
-          <div class="thoughts-scroll">
-            <img class="thoughts-portrait" id="thoughts-portrait-p1" alt="" />
-            <div class="thoughts-scroll-body" id="thoughts-p1"></div>
-          </div>
-        </section>
-        <section class="thoughts-panel">
-          <div class="thoughts-panel-head">
-            <div class="thoughts-title blue" id="thoughts-title-p2">Player 2</div>
-          </div>
-          <div class="thoughts-scroll">
-            <img class="thoughts-portrait" id="thoughts-portrait-p2" alt="" />
-            <div class="thoughts-scroll-body" id="thoughts-p2"></div>
-          </div>
-        </section>
-      </div>
-    </div>
-    <script>
+        </style>
+    </head>
+    <body>
+        <div class="scene">
+            <div class="thoughts-wrap">
+                <section class="thoughts-panel">
+                    <div class="thoughts-panel-head">
+                        <div class="thoughts-title red" id="thoughts-title-p1">Player 1</div>
+                    </div>
+                    <div class="thoughts-scroll">
+                        <img class="thoughts-portrait" id="thoughts-portrait-p1" alt="" />
+                        <div class="thoughts-scroll-body" id="thoughts-p1"></div>
+                    </div>
+                </section>
+                <section class="thoughts-panel">
+                    <div class="thoughts-panel-head">
+                        <div class="thoughts-title blue" id="thoughts-title-p2">Player 2</div>
+                    </div>
+                    <div class="thoughts-scroll">
+                        <img class="thoughts-portrait" id="thoughts-portrait-p2" alt="" />
+                        <div class="thoughts-scroll-body" id="thoughts-p2"></div>
+                    </div>
+                </section>
+            </div>
+        </div>
+        <script>
       window.__THOUGHTS_FEED__ = {
         hideBattleUi: {{ hide_battle_ui | tojson }},
         syncHeightsIframeId: null,
@@ -170,7 +177,7 @@
         },
         calloutIframeId: null,
       };
-    </script>
-    <script src="/static/broadcast-thoughts-feed.js?v={{ cache_bust }}"></script>
-  </body>
+        </script>
+        <script src="/static/broadcast-thoughts-feed.js?v={{ cache_bust }}"></script>
+    </body>
 </html>

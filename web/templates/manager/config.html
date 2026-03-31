@@ -1,92 +1,106 @@
 {% extends "manager/_base.html" %}
 {% set active_page = "config" %}
 {% block title %}Config{% endblock %}
-
 {% block content %}
-<div class="page-header">
-  <h1>Config</h1>
-</div>
-
-{% if saved %}
-<div class="config-banner config-banner--success">
-  Saved project <code>.env</code>. Run <code>docker compose up -d</code> (or <code>bash scripts/restart_stack.sh</code>) so services reload variables from Compose.
-</div>
-{% endif %}
-
-{% if env_status.configured and env_status.exists %}
-  {% if env_status.writable %}
-    <div class="config-banner config-banner--info">
-      Editing <code>{{ env_status.path }}</code> on the host. Other keys can still appear in that file; this page only edits keys defined in <code>web/manager/env_registry.py</code>. Secrets are masked; leave a secret field empty to keep the current value.
+    <div class="page-header">
+        <h1>Config</h1>
     </div>
-  {% else %}
-    <div class="config-banner config-banner--warn">
-      File exists at <code>{{ env_status.path }}</code> but is not writable from this container.
-    </div>
-  {% endif %}
-{% elif env_status.configured and not env_status.exists %}
-  <div class="config-banner config-banner--warn">
-    Expected host env at <code>{{ env_status.path }}</code> but the file is missing. On the host, copy <code>.env.example</code> to <code>.env</code> and rebuild or restart the <code>web</code> service.
-  </div>
-{% else %}
-  <div class="config-banner config-banner--warn">
-    Host <code>.env</code> is not mounted for editing. The <code>web</code> service should set <code>MANAGER_HOST_ENV_FILE</code> and bind-mount the project <code>.env</code> (see <code>docker-compose.yml</code>).
-  </div>
-{% endif %}
-
-<p class="config-security-note">The manager UI is not authenticated. Anyone who can reach this port can view which keys are set and change your project <code>.env</code> when the file is mounted writable. Do not expose port 8080 to the public internet without a reverse proxy and access control.</p>
-
-{% for cat in categories %}
-<section class="card config-section">
-  <h2>{{ cat }}</h2>
-  <div class="table-scroll">
-    <table class="table config-table">
-      <thead>
-        <tr>
-          <th>Variable</th>
-          <th>Services</th>
-          <th>Value</th>
-          <th>Source</th>
-          {% if env_status.writable %}<th></th>{% endif %}
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in rows_by_cat[cat] %}
-        {% set e = row.entry %}
-        <tr>
-          <td class="config-key"><code>{{ e.key }}</code></td>
-          <td class="text-muted">{{ e.services }}</td>
-          <td class="config-value">
-            {% if row.masked_display %}
-              <span class="mono">{{ row.masked_display }}</span>
-            {% elif e.default %}
-              <span class="text-muted config-italic">unset</span>
-              <span class="config-default-hint" title="Documented default">({{ e.default[:48] }}{% if e.default|length > 48 %}…{% endif %})</span>
-            {% else %}
-              <span class="text-muted">—</span>
-            {% endif %}
-          </td>
-          <td><span class="badge badge-queued">{{ row.source }}</span></td>
-          {% if env_status.writable %}
-          <td>
-            <form method="post" action="/manager/config/update" class="config-inline-form">
-              <input type="hidden" name="key" value="{{ e.key }}">
-              {% if e.sensitive %}
-              <input type="password" name="value" autocomplete="off" placeholder="New value" class="input config-input" aria-label="New value for {{ e.key }}">
-              {% else %}
-              <input type="text" name="value" value="{{ row.raw }}" class="input config-input" aria-label="Value for {{ e.key }}">
-              {% endif %}
-              <button type="submit" class="btn btn-sm btn-primary">Save</button>
-            </form>
-          </td>
-          {% endif %}
-        </tr>
-        <tr class="config-desc-row">
-          <td colspan="{% if env_status.writable %}5{% else %}4{% endif %}">{{ e.description }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</section>
-{% endfor %}
+    {% if saved %}
+        <div class="config-banner config-banner--success">
+            Saved project <code>.env</code>. Run <code>docker compose up -d</code> (or <code>bash scripts/restart_stack.sh</code>) so services reload variables from Compose.
+        </div>
+    {% endif %}
+    {% if env_status.configured and env_status.exists %}
+        {% if env_status.writable %}
+            <div class="config-banner config-banner--info">
+                Editing <code>{{ env_status.path }}</code> on the host. Other keys can still appear in that file; this page only edits keys defined in <code>web/manager/env_registry.py</code>. Secrets are masked; leave a secret field empty to keep the current value.
+            </div>
+        {% else %}
+            <div class="config-banner config-banner--warn">
+                File exists at <code>{{ env_status.path }}</code> but is not writable from this container.
+            </div>
+        {% endif %}
+    {% elif env_status.configured and not env_status.exists %}
+        <div class="config-banner config-banner--warn">
+            Expected host env at <code>{{ env_status.path }}</code> but the file is missing. On the host, copy <code>.env.example</code> to <code>.env</code> and rebuild or restart the <code>web</code> service.
+        </div>
+    {% else %}
+        <div class="config-banner config-banner--warn">
+            Host <code>.env</code> is not mounted for editing. The <code>web</code> service should set <code>MANAGER_HOST_ENV_FILE</code> and bind-mount the project <code>.env</code> (see <code>docker-compose.yml</code>).
+        </div>
+    {% endif %}
+    <p class="config-security-note">
+        The manager UI is not authenticated. Anyone who can reach this port can view which keys are set and change your project <code>.env</code> when the file is mounted writable. Do not expose port 8080 to the public internet without a reverse proxy and access control.
+    </p>
+    {% for cat in categories %}
+        <section class="card config-section">
+            <h2>{{ cat }}</h2>
+            <div class="table-scroll">
+                <table class="table config-table">
+                    <thead>
+                        <tr>
+                            <th>Variable</th>
+                            <th>Services</th>
+                            <th>Value</th>
+                            <th>Source</th>
+                            {% if env_status.writable %}<th></th>{% endif %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in rows_by_cat[cat] %}
+                            {% set e = row.entry %}
+                            <tr>
+                                <td class="config-key">
+                                    <code>{{ e.key }}</code>
+                                </td>
+                                <td class="text-muted">{{ e.services }}</td>
+                                <td class="config-value">
+                                    {% if row.masked_display %}
+                                        <span class="mono">{{ row.masked_display }}</span>
+                                    {% elif e.default %}
+                                        <span class="text-muted config-italic">unset</span>
+                                        <span class="config-default-hint" title="Documented default">({{ e.default[:48] }}
+                                            {% if e.default|length > 48 %}…{% endif %}
+                                        )</span>
+                                    {% else %}
+                                        <span class="text-muted">—</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <span class="badge badge-queued">{{ row.source }}</span>
+                                </td>
+                                {% if env_status.writable %}
+                                    <td>
+                                        <form method="post"
+                                              action="/manager/config/update"
+                                              class="config-inline-form">
+                                            <input type="hidden" name="key" value="{{ e.key }}">
+                                            {% if e.sensitive %}
+                                                <input type="password"
+                                                       name="value"
+                                                       autocomplete="off"
+                                                       placeholder="New value"
+                                                       class="input config-input"
+                                                       aria-label="New value for {{ e.key }}">
+                                            {% else %}
+                                                <input type="text"
+                                                       name="value"
+                                                       value="{{ row.raw }}"
+                                                       class="input config-input"
+                                                       aria-label="Value for {{ e.key }}">
+                                            {% endif %}
+                                            <button type="submit" class="btn btn-sm btn-primary">Save</button>
+                                        </form>
+                                    </td>
+                                {% endif %}
+                            </tr>
+                            <tr class="config-desc-row">
+                                <td colspan="{% if env_status.writable %}5{% else %}4{% endif %}">{{ e.description }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    {% endfor %}
 {% endblock %}

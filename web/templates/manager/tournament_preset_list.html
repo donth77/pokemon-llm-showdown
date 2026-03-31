@@ -1,48 +1,55 @@
 {% extends "manager/_base.html" %}
 {% set active_page = "tournament_presets" %}
 {% block title %}Tournament presets{% endblock %}
-
 {% block content %}
-<div class="page-header">
-  <h1>Tournament presets</h1>
-  <div class="header-actions">
-    <a href="/manager/tournament-presets/new" class="btn btn-primary">New preset</a>
-    <a href="/manager/tournaments/new" class="btn btn-secondary">New tournament</a>
-  </div>
-</div>
-
-<p class="text-muted text-small">
-  Presets are saved <strong>definitions</strong> (same plaintext format as &quot;Import from plaintext&quot; on the new tournament page).
-  They live in the <strong>manager SQLite database</strong> on the <code>manager-data</code> Docker volume (<code>/manager-data/manager.db</code>), alongside tournaments — no extra volume or bind-mount.
-</p>
-
-{% if presets %}
-<table class="table">
-  <thead>
-    <tr><th>Name</th><th>Updated</th><th></th></tr>
-  </thead>
-  <tbody>
-    {% for p in presets %}
-    <tr>
-      <td><a href="/manager/tournament-presets/{{ p.id }}/edit">{{ p.name }}</a></td>
-      <td class="text-muted"><span data-local-ts="{{ p.updated_at }}">{{ p.updated_at | timestamp_fmt }}</span></td>
-      <td>
-        <button type="button" class="btn btn-sm btn-danger" data-preset-delete="{{ p.id }}" data-preset-name="{{ p.name | e }}">Delete</button>
-      </td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-{% else %}
-<div class="empty-state">
-  <p>No presets yet.</p>
-  <a href="/manager/tournament-presets/new" class="btn btn-primary">Create a preset</a>
-</div>
-{% endif %}
+    <div class="page-header">
+        <h1>Tournament presets</h1>
+        <div class="header-actions">
+            <a href="/manager/tournament-presets/new" class="btn btn-primary">New preset</a>
+            <a href="/manager/tournaments/new" class="btn btn-secondary">New tournament</a>
+        </div>
+    </div>
+    <p class="text-muted text-small">
+        Presets are saved <strong>definitions</strong> (same plaintext format as &quot;Import from plaintext&quot; on the new tournament page).
+        They live in the <strong>manager SQLite database</strong> on the <code>manager-data</code> Docker volume (<code>/manager-data/manager.db</code>), alongside tournaments — no extra volume or bind-mount.
+    </p>
+    {% if presets %}
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Updated</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for p in presets %}
+                    <tr>
+                        <td>
+                            <a href="/manager/tournament-presets/{{ p.id }}/edit">{{ p.name }}</a>
+                        </td>
+                        <td class="text-muted">
+                            <span data-local-ts="{{ p.updated_at }}">{{ p.updated_at | timestamp_fmt }}</span>
+                        </td>
+                        <td>
+                            <button type="button"
+                                    class="btn btn-sm btn-danger"
+                                    data-preset-delete="{{ p.id }}"
+                                    data-preset-name="{{ p.name | e }}">Delete</button>
+                        </td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <div class="empty-state">
+            <p>No presets yet.</p>
+            <a href="/manager/tournament-presets/new" class="btn btn-primary">Create a preset</a>
+        </div>
+    {% endif %}
 {% endblock %}
-
 {% block scripts %}
-<script>
+    <script>
 document.querySelectorAll('[data-preset-delete]').forEach(function (btn) {
   btn.addEventListener('click', async function () {
     var id = btn.getAttribute('data-preset-delete');
@@ -57,5 +64,5 @@ document.querySelectorAll('[data-preset-delete]').forEach(function (btn) {
     location.reload();
   });
 });
-</script>
+    </script>
 {% endblock %}

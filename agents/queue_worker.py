@@ -79,7 +79,9 @@ def _merge_series_snapshot_into_current_battle(snapshot: dict) -> None:
         data["series_player2_wins"] = snapshot["player2_wins"]
         write_json_atomic(CURRENT_BATTLE_FILE, data)
     except Exception as e:
-        log_print(f"[queue] Could not merge series into current_battle: {e}", flush=True)
+        log_print(
+            f"[queue] Could not merge series into current_battle: {e}", flush=True
+        )
 
 
 def _tourney_context_from_match(match: dict) -> dict | None:
@@ -157,7 +159,10 @@ async def _fetch_next_match(session: aiohttp.ClientSession) -> dict | None:
                     flush=True,
                 )
             else:
-                log_print(f"[queue] Unexpected status {resp.status} from queue/next", flush=True)
+                log_print(
+                    f"[queue] Unexpected status {resp.status} from queue/next",
+                    flush=True,
+                )
             return None
     except Exception as e:
         log_print(f"[queue] Error fetching next match: {e}", flush=True)
@@ -180,14 +185,19 @@ async def _report_complete(
                 log_print(f"[queue] Reported match #{match_id} complete", flush=True)
                 try:
                     body = await resp.json()
-                    snap = body.get("series_snapshot") if isinstance(body, dict) else None
+                    snap = (
+                        body.get("series_snapshot") if isinstance(body, dict) else None
+                    )
                     if isinstance(snap, dict):
                         _merge_series_snapshot_into_current_battle(snap)
                 except Exception:
                     pass
             else:
                 text = await resp.text()
-                log_print(f"[queue] Failed to report #{match_id}: {resp.status} {text}", flush=True)
+                log_print(
+                    f"[queue] Failed to report #{match_id}: {resp.status} {text}",
+                    flush=True,
+                )
     except Exception as e:
         log_print(f"[queue] Error reporting match #{match_id}: {e}", flush=True)
 
@@ -345,8 +355,12 @@ async def main() -> None:
                 player2_provider=match["player2_provider"],
                 player2_model=match["player2_model"],
                 player2_persona_slug=match["player2_persona"],
-                player1_account_name=_optional_showdown_account(match, "player1_showdown_account"),
-                player2_account_name=_optional_showdown_account(match, "player2_showdown_account"),
+                player1_account_name=_optional_showdown_account(
+                    match, "player1_showdown_account"
+                ),
+                player2_account_name=_optional_showdown_account(
+                    match, "player2_showdown_account"
+                ),
                 series_snapshot=series_snapshot,
                 tourney_context=tourney_ctx,
                 manager_match_id=int(match_id),
@@ -368,7 +382,9 @@ async def main() -> None:
                         "battle_tag": result.battle_tag,
                     },
                 )
-                log_print(f"[queue] Match #{match_id}: {result.winner} wins!", flush=True)
+                log_print(
+                    f"[queue] Match #{match_id}: {result.winner} wins!", flush=True
+                )
 
             log_print(f"[queue] Next poll in {DELAY_BETWEEN_MATCHES}s ...", flush=True)
             await asyncio.sleep(DELAY_BETWEEN_MATCHES)

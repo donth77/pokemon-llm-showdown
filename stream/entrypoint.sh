@@ -11,13 +11,18 @@ set -euo pipefail
 
 export DISPLAY=:99
 STREAM_AUDIO_SOURCE="${STREAM_AUDIO_SOURCE:-pulse}"
-TWITCH_AUTO_SET_TITLE="${TWITCH_AUTO_SET_TITLE:-1}"
+TWITCH_AUTO_SET_TITLE="${TWITCH_AUTO_SET_TITLE:-true}"
 
 maybe_set_twitch_title() {
-    if [[ "${TWITCH_AUTO_SET_TITLE}" != "1" ]]; then
-        echo "[entrypoint] Skipping Twitch title update (TWITCH_AUTO_SET_TITLE=${TWITCH_AUTO_SET_TITLE})."
-        return
-    fi
+    local _ta
+    _ta="$(echo "${TWITCH_AUTO_SET_TITLE}" | tr '[:upper:]' '[:lower:]')"
+    case "${_ta}" in
+        1|true|yes|on) ;;
+        *)
+            echo "[entrypoint] Skipping Twitch title update (TWITCH_AUTO_SET_TITLE=${TWITCH_AUTO_SET_TITLE})."
+            return
+            ;;
+    esac
 
     local client_id="${TWITCH_CLIENT_ID:-}"
     local oauth_token="${TWITCH_OAUTH_TOKEN:-}"

@@ -59,26 +59,26 @@
       (function () {
         // Inject aggressive CSS to hide non-battle UI elements.
         if (__hideBattleUI) {
-        var styleEl = document.getElementById("hide-battle-ui-style");
-        if (styleEl) {
-          styleEl.textContent =
-            ".ps-overlay, #header, .mainmenu, .mainmenufooter, .rightmenu, " +
-            "#mainmenu, #room-lobby, #room-, #room-battles, .chat-log-add, " +
-            "ul.battle-userlist, .battle-log-add { display: none !important; } " +
-            "body, .ps-room-opaque { background-image: none !important; background-color: #0b1020 !important; } " +
-            ".battle-log { height: 100% !important; width: 324px !important; background: #101728 !important; color: #d4d9e6 !important; border-left: 1px solid rgba(255,255,255,0.08) !important; scrollbar-width: none !important; -ms-overflow-style: none !important; } " +
-            ".battle-log::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none !important; } " +
-            ".battle-log .inner, .battle-log .chat, .battle-log .battle-history, .battle-log .message-log { background: #101728 !important; color: #d4d9e6 !important; } " +
-            ".battle-log div.battle-history, .battle-log div.battle-history small, .battle-log div.battle-history strong { font-family: 'Press Start 2P', 'VT323', 'Courier New', monospace !important; letter-spacing: 0.2px !important; font-size: 0.9em !important; line-height: 14px !important; } " +
-            ".battle-log .messagebar.message, .battle-log .messagebar.message p, .battle-log .messagebar.message small, .battle-log .messagebar.message strong { font-family: 'Press Start 2P', 'VT323', 'Courier New', monospace !important; letter-spacing: 0.2px !important; font-size: 0.9em !important; } " +
-            ".battle-log h2.battle-history { background: #263554 !important; color: #dbe2f2 !important; } " +
-            ".battle-log .chat em, .battle-log .small, .battle-log .timestamp { color: #9ea6b8 !important; } " +
-            ".battle-log .battle-history .battle-hist-player-p1 { color: #ff6b82 !important; font-weight: 700 !important; } " +
-            ".battle-log .battle-history .battle-hist-player-p2 { color: #7aa3ff !important; font-weight: 700 !important; } " +
-            ".battle-log .battle-history .battle-hist-species { color: #e4b86a !important; font-weight: 600 !important; } " +
-            ".battle-log .battle-history .battle-hist-move { color: #5fd4c8 !important; font-weight: 600 !important; } " +
-            ".battle-options { display: none !important; }";
-        }
+          var styleEl = document.getElementById("hide-battle-ui-style");
+          if (styleEl) {
+            styleEl.textContent =
+              ".ps-overlay, #header, .mainmenu, .mainmenufooter, .rightmenu, " +
+              "#mainmenu, #room-lobby, #room-, #room-battles, .chat-log-add, " +
+              "ul.battle-userlist, .battle-log-add { display: none !important; } " +
+              "body, .ps-room-opaque { background-image: none !important; background-color: #0b1020 !important; } " +
+              ".battle-log { height: 100% !important; width: 324px !important; background: #101728 !important; color: #d4d9e6 !important; border-left: 1px solid rgba(255,255,255,0.08) !important; scrollbar-width: none !important; -ms-overflow-style: none !important; } " +
+              ".battle-log::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none !important; } " +
+              ".battle-log .inner, .battle-log .chat, .battle-log .battle-history, .battle-log .message-log { background: #101728 !important; color: #d4d9e6 !important; } " +
+              ".battle-log div.battle-history, .battle-log div.battle-history small, .battle-log div.battle-history strong { font-family: 'Press Start 2P', 'VT323', 'Courier New', monospace !important; letter-spacing: 0.2px !important; font-size: 0.9em !important; line-height: 14px !important; } " +
+              ".battle-log .messagebar.message, .battle-log .messagebar.message p, .battle-log .messagebar.message small, .battle-log .messagebar.message strong { font-family: 'Press Start 2P', 'VT323', 'Courier New', monospace !important; letter-spacing: 0.2px !important; font-size: 0.9em !important; } " +
+              ".battle-log h2.battle-history { background: #263554 !important; color: #dbe2f2 !important; } " +
+              ".battle-log .chat em, .battle-log .small, .battle-log .timestamp { color: #9ea6b8 !important; } " +
+              ".battle-log .battle-history .battle-hist-player-p1 { color: #ff6b82 !important; font-weight: 700 !important; } " +
+              ".battle-log .battle-history .battle-hist-player-p2 { color: #7aa3ff !important; font-weight: 700 !important; } " +
+              ".battle-log .battle-history .battle-hist-species { color: #e4b86a !important; font-weight: 600 !important; } " +
+              ".battle-log .battle-history .battle-hist-move { color: #5fd4c8 !important; font-weight: 600 !important; } " +
+              ".battle-options { display: none !important; }";
+          }
         }
 
         var HIDE_SELS = [
@@ -470,8 +470,10 @@
             <div id="loading-message" class="mainmessage">
               Initializing...
               <noscript
-                >FAILED<br /><br />Pok&eacute;mon Showdown requires
-                JavaScript.</noscript
+                >FAILED
+                <br />
+                <br />
+                Pok&eacute;mon Showdown requires JavaScript.</noscript
               >
             </div>
           </div>
@@ -499,12 +501,10 @@
         </div>
       </div>
     </div>
-
     <script>
       document.getElementById("loading-message").innerHTML +=
         " DONE<br />Loading libraries...";
     </script>
-
     <script
       nomodule
       src="https://play.pokemonshowdown.com/js/lib/ps-polyfill.js"
@@ -537,13 +537,11 @@
     <script src="https://play.pokemonshowdown.com/js/lib/lodash.core.js"></script>
     <script src="https://play.pokemonshowdown.com/js/lib/backbone.js"></script>
     <script src="https://play.pokemonshowdown.com/js/lib/d3.v3.min.js"></script>
-
     <script>
       document.getElementById("loading-message").innerHTML +=
         " DONE<br />Loading data...";
       window.exports = window;
     </script>
-
     <script src="https://play.pokemonshowdown.com/js/server/chat-formatter.js"></script>
     <script src="https://play.pokemonshowdown.com/js/battledata.js"></script>
     <script>
@@ -563,7 +561,6 @@
     <script src="https://play.pokemonshowdown.com/js/battle.js"></script>
     <script src="https://play.pokemonshowdown.com/js/lib/sockjs-1.4.0-nwjsfix.min.js"></script>
     <script src="https://play.pokemonshowdown.com/js/lib/color-thief.min.js"></script>
-
     <script>
       document.getElementById("loading-message").innerHTML +=
         " DONE<br />Loading client...";
@@ -580,10 +577,7 @@
           sjs.addEventListener("message", function (evt) {
             try {
               var data = typeof evt.data === "string" ? evt.data : "";
-              if (
-                window.__psBattleLog &&
-                window.__psBattleLog.ingestProtocol
-              ) {
+              if (window.__psBattleLog && window.__psBattleLog.ingestProtocol) {
                 window.__psBattleLog.ingestProtocol(data);
               }
               if (window.__emitBattleActionEvents) {
@@ -601,7 +595,6 @@
         }
       })();
     </script>
-
     <script src="https://play.pokemonshowdown.com/js/client.js"></script>
     <script src="https://play.pokemonshowdown.com/js/client-topbar.js"></script>
     <script src="https://play.pokemonshowdown.com/js/client-mainmenu.js"></script>
@@ -614,17 +607,14 @@
     <script src="https://play.pokemonshowdown.com/js/client-rooms.js"></script>
     <script src="https://play.pokemonshowdown.com/js/storage.js"></script>
     <script src="https://play.pokemonshowdown.com/data/graphics.js"></script>
-
     <script src="https://play.pokemonshowdown.com/data/pokedex.js"></script>
     <script src="https://play.pokemonshowdown.com/data/moves.js"></script>
     <script src="https://play.pokemonshowdown.com/data/items.js"></script>
     <script src="https://play.pokemonshowdown.com/data/abilities.js"></script>
-
     <script src="https://play.pokemonshowdown.com/data/search-index.js"></script>
     <script src="https://play.pokemonshowdown.com/data/teambuilder-tables.js"></script>
     <script src="https://play.pokemonshowdown.com/js/battle-dex-search.js"></script>
     <script src="https://play.pokemonshowdown.com/js/search.js"></script>
-
     <script
       src="https://play.pokemonshowdown.com/data/aliases.js"
       async="async"
@@ -633,7 +623,6 @@
       src="https://play.pokemonshowdown.com/data/commands.js"
       async="async"
     ></script>
-
     <script>
       window.onload = function () {
         var CDN = "https://play.pokemonshowdown.com/";
@@ -776,11 +765,36 @@
       (function () {
         var p1Name = "";
         var p2Name = "";
-        var colorizeMicrotaskPending = false;
-        var BATTLE_START_RE =
-          /Battle started between\s+(.+?)\s+and\s+(.+?)!/i;
+        var colorizeDebounceTimer = null;
+        var COLORIZE_DEBOUNCE_MS = 50;
+        var BATTLE_START_RE = /Battle started between\s+(.+?)\s+and\s+(.+?)!/i;
         var HIGHLIGHT_SPAN_SEL =
           ".battle-hist-player-p1, .battle-hist-player-p2, .battle-hist-species, .battle-hist-move";
+
+        function termStateKeyFromTerms(terms) {
+          var out = [];
+          for (var i = 0; i < terms.length; i++) {
+            out.push(terms[i].cls + "\x00" + terms[i].name);
+          }
+          return out.join("\x1e");
+        }
+
+        function battleHistoryStructureSig(el) {
+          return (
+            el.querySelectorAll(HIGHLIGHT_SPAN_SEL).length +
+            ":" +
+            el.childNodes.length
+          );
+        }
+
+        function clearBattleLogColorCache() {
+          var nodes = document.querySelectorAll(
+            ".battle-log .battle-history[data-ps-colorize]",
+          );
+          for (var i = 0; i < nodes.length; i++) {
+            delete nodes[i].dataset.psColorize;
+          }
+        }
 
         function mutationTouchesBattleLog(mutation) {
           var t = mutation.target;
@@ -792,7 +806,8 @@
             if (n.nodeType !== 1) continue;
             if (n.classList && n.classList.contains("battle-log")) return true;
             if (n.closest && n.closest(".battle-log")) return true;
-            if (n.querySelector && n.querySelector(".battle-history")) return true;
+            if (n.querySelector && n.querySelector(".battle-history"))
+              return true;
           }
           return false;
         }
@@ -873,7 +888,8 @@
           var st = window.__psBattleLog;
           if (st && st.species && st.moves) {
             for (var sp in st.species) {
-              if (!Object.prototype.hasOwnProperty.call(st.species, sp)) continue;
+              if (!Object.prototype.hasOwnProperty.call(st.species, sp))
+                continue;
               if (sp === p1Name || sp === p2Name) continue;
               out.push({ name: sp, cls: "battle-hist-species", prio: 1 });
             }
@@ -898,7 +914,11 @@
 
         function colorizeBattleHistoryElement(el, terms) {
           if (!el || !terms.length) return;
-          var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+          var walker = document.createTreeWalker(
+            el,
+            NodeFilter.SHOW_TEXT,
+            null,
+          );
           var textNodes = [];
           var n;
           while ((n = walker.nextNode())) {
@@ -913,13 +933,24 @@
         }
 
         function colorizeBattleLog() {
-          colorizeMicrotaskPending = false;
           tryLearnNamesFromBattleLog();
           var terms = buildHighlightTerms();
           if (!terms.length) return;
+          var tkey = termStateKeyFromTerms(terms);
           var blocks = document.querySelectorAll(".battle-log .battle-history");
           for (var b = 0; b < blocks.length; b++) {
-            colorizeBattleHistoryElement(blocks[b], terms);
+            var el = blocks[b];
+            var text = el.textContent || "";
+            var structSig = battleHistoryStructureSig(el);
+            var cacheKey = tkey + "\x1e" + text + "\x1e" + structSig;
+            if (el.dataset.psColorize === cacheKey) continue;
+            colorizeBattleHistoryElement(el, terms);
+            el.dataset.psColorize =
+              tkey +
+              "\x1e" +
+              (el.textContent || "") +
+              "\x1e" +
+              battleHistoryStructureSig(el);
           }
         }
 
@@ -934,21 +965,23 @@
             }
             if (!relevant) return;
           }
-          if (colorizeMicrotaskPending) return;
-          colorizeMicrotaskPending = true;
-          queueMicrotask(colorizeBattleLog);
+          if (colorizeDebounceTimer) clearTimeout(colorizeDebounceTimer);
+          colorizeDebounceTimer = setTimeout(function () {
+            colorizeDebounceTimer = null;
+            colorizeBattleLog();
+          }, COLORIZE_DEBOUNCE_MS);
         }
 
-        window.addEventListener("hashchange", resetPlayerNames);
+        window.addEventListener("hashchange", function () {
+          resetPlayerNames();
+          clearBattleLogColorCache();
+        });
 
         if (document.body) {
           var mo = new MutationObserver(scheduleColorize);
           mo.observe(document.body, { childList: true, subtree: true });
         }
         scheduleColorize(null);
-        setInterval(function () {
-          scheduleColorize(null);
-        }, 1500);
       })();
     </script>
     <script>
@@ -1102,7 +1135,7 @@
             document.body.clientHeight ||
             720;
           var left = side === "near" ? viewportW * 0.32 : viewportW * 0.68;
-          var top = side === "near" ? viewportH * 0.70 : viewportH * 0.30;
+          var top = side === "near" ? viewportH * 0.7 : viewportH * 0.3;
           positionPillInViewport(pill, left, top);
         }
 

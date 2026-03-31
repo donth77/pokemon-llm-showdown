@@ -1,0 +1,52 @@
+{% extends "manager/_base.html" %}
+{% set active_page = "personas" %}
+{% block title %}Adaptive memory — {{ p.slug }}{% endblock %}
+{% block content %}
+    <div class="page-header">
+        <h1>
+            Adaptive memory — <code>{{ p.slug }}</code>
+        </h1>
+        <div class="header-actions">
+            <a href="/manager/personas/{{ p.slug }}/edit" class="btn btn-secondary">Edit persona</a>
+            <a href="/manager/personas" class="btn btn-secondary">All personas</a>
+        </div>
+    </div>
+    <div class="import-def-block import-def-collapsible persona-runtime-memory"
+         style="margin-top: 0">
+        <div class="import-def-collapsible-body" style="padding-top: 0">
+            <p class="text-muted" style="font-size: 0.85rem; margin: 0 0 12px">
+                Episodic <code>memory.md</code> and tactical <code>learnings.md</code> from
+                <code>STATE_DIR/personas/{{ p.slug }}/</code> when <code>ENABLE_MEMORY=true</code> in agents.
+                This page only displays them; clearing or editing is done on the state volume (or by leaving memory disabled).
+            </p>
+            {% if persona_memory_text is none and persona_learnings_text is none %}
+                <p class="text-muted" style="margin: 0">No memory files on disk for this slug yet.</p>
+            {% else %}
+                <details class="persona-memory-subdetail" open>
+                    <summary>
+                        <code>memory.md</code>
+                    </summary>
+                    {% if persona_memory_text is none %}
+                        <p class="text-muted" style="margin: 8px 0 0">Not present.</p>
+                    {% elif not persona_memory_text.strip() %}
+                        <p class="text-muted" style="margin: 8px 0 0">File is empty.</p>
+                    {% else %}
+                        <pre class="format-ref-pre persona-memory-pre">{{ persona_memory_text }}</pre>
+                    {% endif %}
+                </details>
+                <details class="persona-memory-subdetail" open>
+                    <summary>
+                        <code>learnings.md</code>
+                    </summary>
+                    {% if persona_learnings_text is none %}
+                        <p class="text-muted" style="margin: 8px 0 0">Not present.</p>
+                    {% elif not persona_learnings_text.strip() %}
+                        <p class="text-muted" style="margin: 8px 0 0">File is empty.</p>
+                    {% else %}
+                        <pre class="format-ref-pre persona-memory-pre">{{ persona_learnings_text }}</pre>
+                    {% endif %}
+                </details>
+            {% endif %}
+        </div>
+    </div>
+{% endblock %}

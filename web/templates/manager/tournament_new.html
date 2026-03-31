@@ -1,114 +1,107 @@
 {% extends "manager/_base.html" %}
 {% set active_page = "tournaments" %}
 {% block title %}New Tournament{% endblock %}
-
 {% block content %}
-<div class="page-header">
-  <h1>New Tournament</h1>
-</div>
-
-<form id="tournament-form" class="card form-card" novalidate>
-  <div class="form-group">
-    <label for="name">Tournament Name</label>
-    <input type="text" id="name" placeholder="LLM Battle Royale">
-  </div>
-
-  <div class="form-row">
-    <div class="form-group">
-      <label for="type">Type</label>
-      <select id="type">
-        <option value="round_robin">Round Robin</option>
-        <option value="single_elimination">Single Elimination</option>
-        <option value="double_elimination">Double Elimination</option>
-      </select>
+    <div class="page-header">
+        <h1>New Tournament</h1>
     </div>
-    <div class="form-group">
-      <label for="battle_format">Battle Format</label>
-      <select id="battle_format">
-        {% for fmt in battle_formats %}
-        <option value="{{ fmt }}">{{ fmt }}</option>
-        {% endfor %}
-      </select>
-      <input type="text" id="battle_format_custom" placeholder="Or type a custom format..." class="mt-1">
-    </div>
-    <div class="form-group">
-      <label for="best_of">Best Of (per series)</label>
-      <select id="best_of">
-        <option value="1">Bo1</option>
-        <option value="3" selected>Bo3</option>
-        <option value="5">Bo5</option>
-        <option value="7">Bo7</option>
-        <option value="9">Bo9</option>
-      </select>
-    </div>
-  </div>
-
-  <div class="form-group" id="single-elim-bracket-wrap" style="display: none">
-    <label for="single_elim_bracket">Winners bracket layout</label>
-    <select id="single_elim_bracket">
-      <option value="compact" selected>
-        Compact — everyone plays round 1 when possible (e.g. 6 players → 3 games)
-      </option>
-      <option value="power_of_two">
-        Power of 2 — pad to the next 2^n slot tree (classic first-round byes)
-      </option>
-    </select>
-    <p class="text-muted text-small mt-1">
-      Applies to the <strong>winners bracket</strong> in single and double elimination. Ignored for round robin.
-    </p>
-  </div>
-
-  <div class="form-group">
-    <label>Participants</label>
-    <div id="entries-container"></div>
-    <button type="button" class="btn btn-secondary mt-1" id="add-entry-btn" onclick="addEntry()">+ Add Participant</button>
-  </div>
-
-  <details class="import-def-block import-def-collapsible" id="import-def-section" aria-labelledby="import-def-heading">
-    <summary class="import-def-summary import-def-collapsible-summary" id="import-def-heading">
-      Import from plaintext or .txt file (optional)
-    </summary>
-    <div class="import-def-collapsible-body">
-    <p class="text-muted text-small mt-1">
-      Paste a definition or choose a file below.
-      If this box contains any non-empty text when you click <strong>Create Tournament</strong>, that definition is parsed and used instead of the fields above.
-      Headers use <code>Key: value</code>. Line comments start with <code>#</code>.
-      After a <code>Participants:</code> line, each participant is
-      <code>provider, model, persona</code> or pipe-separated; optional 4th field is <code>seed</code>
-      (then every line must include a seed). Use <code>|</code> if a model id contains commas.
-    </p>
-    <div class="form-group mt-1">
-      <label for="preset-load">Load saved preset</label>
-      <div class="form-row" style="align-items: center; flex-wrap: wrap; gap: 8px">
-        <select id="preset-load" style="max-width: 22rem">
-          <option value="">— None —</option>
-          {% for pr in tournament_presets %}
-          <option value="{{ pr.id }}">{{ pr.name }}</option>
-          {% endfor %}
-        </select>
-        <a href="/manager/tournament-presets" class="text-small">Manage presets…</a>
-      </div>
-    </div>
-    <textarea id="tournament-def-text" class="code-editor" rows="14" spellcheck="false" placeholder="# Example
-Name: LLM Battle Royale
-Type: Single Elimination
-Battle Format: gen9randombattle
-Best Of: Bo3
-Single Elim Bracket: compact
-
-Participants:
-anthropic, claude-sonnet-4-20250514, aggro
-deepseek | deepseek-chat | stall"></textarea>
-    <div class="form-row mt-1" style="align-items: center; flex-wrap: wrap; gap: 8px">
-      <input type="file" id="tournament-def-file" accept=".txt,text/plain,text/*">
-      <button type="button" class="btn btn-secondary btn-sm" id="import-clear-btn">
-        Clear
-      </button>
-    </div>
-    <details class="text-small mt-1 import-format-ref-details">
-      <summary>Full format reference</summary>
-      <pre class="format-ref-pre text-small mt-1"># One tournament per file. Blank lines ignored.
-
+    <form id="tournament-form" class="card form-card" novalidate>
+        <div class="form-group">
+            <label for="name">Tournament Name</label>
+            <input type="text" id="name" placeholder="LLM Battle Royale">
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="type">Type</label>
+                <select id="type">
+                    <option value="round_robin">Round Robin</option>
+                    <option value="single_elimination">Single Elimination</option>
+                    <option value="double_elimination">Double Elimination</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="battle_format">Battle Format</label>
+                <select id="battle_format">
+                    {% for fmt in battle_formats %}<option value="{{ fmt }}">{{ fmt }}</option>{% endfor %}
+                </select>
+                <input type="text"
+                       id="battle_format_custom"
+                       placeholder="Or type a custom format..."
+                       class="mt-1">
+            </div>
+            <div class="form-group">
+                <label for="best_of">Best Of (per series)</label>
+                <select id="best_of">
+                    <option value="1">Bo1</option>
+                    <option value="3" selected>Bo3</option>
+                    <option value="5">Bo5</option>
+                    <option value="7">Bo7</option>
+                    <option value="9">Bo9</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-group"
+             id="single-elim-bracket-wrap"
+             style="display: none">
+            <label for="single_elim_bracket">Winners bracket layout</label>
+            <select id="single_elim_bracket">
+                <option value="compact" selected>Compact — everyone plays round 1 when possible (e.g. 6 players → 3 games)</option>
+                <option value="power_of_two">Power of 2 — pad to the next 2^n slot tree (classic first-round byes)</option>
+            </select>
+            <p class="text-muted text-small mt-1">
+                Applies to the <strong>winners bracket</strong> in single and double elimination. Ignored for round robin.
+            </p>
+        </div>
+        <div class="form-group">
+            <label>Participants</label>
+            <div id="entries-container"></div>
+            <button type="button"
+                    class="btn btn-secondary mt-1"
+                    id="add-entry-btn"
+                    onclick="addEntry()">+ Add Participant</button>
+        </div>
+        <details class="import-def-block import-def-collapsible"
+                 id="import-def-section"
+                 aria-labelledby="import-def-heading">
+            <summary class="import-def-summary import-def-collapsible-summary"
+                     id="import-def-heading">Import from plaintext or .txt file (optional)</summary>
+            <div class="import-def-collapsible-body">
+                <p class="text-muted text-small mt-1">
+                    Paste a definition or choose a file below.
+                    If this box contains any non-empty text when you click <strong>Create Tournament</strong>, that definition is parsed and used instead of the fields above.
+                    Headers use <code>Key: value</code>. Line comments start with <code>#</code>.
+                    After a <code>Participants:</code> line, each participant is
+                    <code>provider, model, persona</code> or pipe-separated; optional 4th field is <code>seed</code>
+                    (then every line must include a seed). Use <code>|</code> if a model id contains commas.
+                </p>
+                <div class="form-group mt-1">
+                    <label for="preset-load">Load saved preset</label>
+                    <div class="form-row"
+                         style="align-items: center;
+                                flex-wrap: wrap;
+                                gap: 8px">
+                        <select id="preset-load" style="max-width: 22rem">
+                            <option value="">— None —</option>
+                            {% for pr in tournament_presets %}<option value="{{ pr.id }}">{{ pr.name }}</option>{% endfor %}
+                        </select>
+                        <a href="/manager/tournament-presets" class="text-small">Manage presets…</a>
+                    </div>
+                </div>
+                <textarea id="tournament-def-text"
+                          class="code-editor"
+                          rows="14"
+                          spellcheck="false"
+                          placeholder="# Example Name: LLM Battle Royale Type: Single Elimination Battle Format: gen9randombattle Best Of: Bo3 Single Elim Bracket: compact  Participants: anthropic, claude-sonnet-4-20250514, aggro deepseek | deepseek-chat | stall"></textarea>
+                <div class="form-row mt-1"
+                     style="align-items: center;
+                            flex-wrap: wrap;
+                            gap: 8px">
+                    <input type="file" id="tournament-def-file" accept=".txt,text/plain,text/*">
+                    <button type="button" class="btn btn-secondary btn-sm" id="import-clear-btn">Clear</button>
+                </div>
+                <details class="text-small mt-1 import-format-ref-details">
+                    <summary>Full format reference</summary>
+                    <pre class="format-ref-pre text-small mt-1"># One tournament per file. Blank lines ignored.
 Name: &lt;string&gt;
 Type: round robin | single elimination | double elimination
   (snake_case ids also work, e.g. single_elimination)
@@ -123,23 +116,23 @@ Participants:
   # persona_slug: filename in /personas (e.g. aggro, stall)
 
 # Validation runs the same provider/model checks as the form; unknown persona slugs are rejected.</pre>
-    </details>
-    <div id="import-def-feedback" class="form-error import-def-feedback" style="display:none" role="alert"></div>
-    </div>
-  </details>
-
-  <div id="form-error" class="form-error" style="display:none"></div>
-
-  <div class="form-actions form-actions--after-import">
-    <button type="submit" class="btn btn-primary">Create Tournament</button>
-    <a href="/manager/tournaments" class="btn btn-secondary">Cancel</a>
-  </div>
-</form>
+                </details>
+                <div id="import-def-feedback"
+                     class="form-error import-def-feedback"
+                     style="display:none"
+                     role="alert"></div>
+            </div>
+        </details>
+        <div id="form-error" class="form-error" style="display:none"></div>
+        <div class="form-actions form-actions--after-import">
+            <button type="submit" class="btn btn-primary">Create Tournament</button>
+            <a href="/manager/tournaments" class="btn btn-secondary">Cancel</a>
+        </div>
+    </form>
 {% endblock %}
-
 {% block scripts %}
-<script src="/static/provider-model-validate.js"></script>
-<script>
+    <script src="/static/provider-model-validate.js"></script>
+    <script>
 const providers = {{ providers | tojson }};
 const personas = {{ personas | tojson }};
 
@@ -358,5 +351,5 @@ document.getElementById('tournament-form').addEventListener('submit', async (e) 
     errEl.style.display = 'block';
   }
 });
-</script>
+    </script>
 {% endblock %}

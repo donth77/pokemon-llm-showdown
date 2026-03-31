@@ -36,6 +36,7 @@ from pokedex import (
 )
 from provider_model_validate import validate_provider_model
 from log_print import log_print
+from env_bool import parse_env_bool
 
 
 def _patch_poke_env_pseudo_move_entries() -> None:
@@ -91,9 +92,7 @@ def _make_deepseek_client() -> OpenAI:
 def _make_openrouter_client() -> OpenAI:
     return OpenAI(
         api_key=os.getenv("OPENROUTER_API_KEY"),
-        base_url=os.getenv(
-            "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
-        ),
+        base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
         timeout=_LLM_REQUEST_TIMEOUT,
         default_headers={
             "HTTP-Referer": "https://github.com/pokemon-llm-showdown",
@@ -103,9 +102,16 @@ def _make_openrouter_client() -> OpenAI:
 
 
 def _openrouter_api_base_for_rest() -> str:
-    return (
-        os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
-    )
+    return os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
+
+
+# JSON ``reasoning`` field: shared by OpenRouter schema, chat templates, Anthropic tool schema.
+_REASONING_JSON_VALUE_HELP = (
+    "Short spectator blurb only: at most 3 sentences and about 60 words total, first person, "
+    "persona voice. Do not put long analysis, damage math, type charts, or multi-paragraph "
+    "simulations in this field — decide privately, then summarize the choice briefly. "
+    "Plain text only (no markdown). Direct prose only — no leading labels or headings."
+)
 
 
 def _openrouter_structured_output_mode() -> str:
@@ -206,9 +212,7 @@ def _openrouter_battle_response_format(use_json_schema: bool) -> dict:
                     },
                     "reasoning": {
                         "type": "string",
-                        "description": (
-                            "1–3 sentences, first person, in your persona voice."
-                        ),
+                        "description": _REASONING_JSON_VALUE_HELP,
                     },
                     "callout": {
                         "type": "string",
@@ -232,12 +236,15 @@ WEB_PORT = int(os.getenv("WEB_PORT") or os.getenv("OVERLAY_PORT", "8080"))
 
 DEFAULT_PROVIDER: Provider = "anthropic"
 DEFAULT_TURN_DELAY_SECONDS = float(os.getenv("TURN_DELAY_SECONDS") or "0")
-# Cap on model output per turn (tool JSON or chat JSON). Verbose personas need headroom.
+# Cap on model output per turn (tool JSON, chat JSON, OpenRouter completions).
+# Reasoning/thinking on some providers counts toward this budget — keep high enough to
+# avoid truncated JSON (default 4096 when env unset).
 _LLM_MAX_OUTPUT_TOKENS = int(
     os.getenv("LLM_MAX_OUTPUT_TOKENS")
     or os.getenv("CHAT_COMPLETION_MAX_TOKENS")
-    or "512"
+    or "4096"
 )
+
 THOUGHTS_FILE = os.getenv("THOUGHTS_FILE", "/state/thoughts.json")
 MAX_THOUGHTS_PER_PLAYER = int(os.getenv("MAX_THOUGHTS_PER_PLAYER", "80"))
 _thoughts_lock = threading.Lock()
@@ -249,12 +256,8 @@ _LLM_MEMORY_REFLECTION_MAX_TOKENS = int(
     os.getenv("LLM_MEMORY_REFLECTION_MAX_TOKENS") or "2048"
 )
 
-_POKEDEX_TOOL_ENABLED = (os.getenv("POKEDEX_TOOL_ENABLED") or "").strip().lower() in (
-    "1", "true", "yes", "on",
-)
-_POKEDEX_AUTO_ENRICH = (os.getenv("POKEDEX_AUTO_ENRICH") or "").strip().lower() in (
-    "1", "true", "yes", "on",
-)
+_POKEDEX_TOOL_ENABLED = parse_env_bool("POKEDEX_TOOL_ENABLED", default=False)
+_POKEDEX_AUTO_ENRICH = parse_env_bool("POKEDEX_AUTO_ENRICH", default=False)
 _POKEDEX_MAX_LOOKUPS = int(os.getenv("POKEDEX_MAX_LOOKUPS") or "3")
 
 
@@ -514,6 +517,25 @@ def _estimate_hazard_damage(pokemon: Pokemon, side_conditions: dict) -> float:
     return dmg
 
 
+def _opponent_unseen_bench_count(battle: Battle) -> int | None:
+    """How many of the opponent's team have never been sent in (not in opponent_team).
+
+    poke-env only registers opponent Pokémon after they appear in the protocol;
+    |teamsize| gives their total roster size for this battle.
+    """
+    if battle.teampreview:
+        return None
+    opp_role = battle.opponent_role
+    if not opp_role:
+        return None
+    sizes = getattr(battle, "_team_size", None) or {}
+    total = sizes.get(opp_role)
+    if total is None:
+        return None
+    known = len(battle.opponent_team)
+    return max(0, int(total) - known)
+
+
 def format_battle_state(battle: Battle) -> str:
     """Build a text description of the current battle state for the LLM."""
     lines: list[str] = []
@@ -595,9 +617,19 @@ def format_battle_state(battle: Battle) -> str:
         for pkmn in opp_bench:
             lines.append(f"  {_pokemon_summary(pkmn, is_opponent=True)}")
 
+    unseen_bench = _opponent_unseen_bench_count(battle)
+    if unseen_bench is not None:
+        lines.append(
+            f"\nOpponent unseen bench (never sent in, identity unknown): {unseen_bench}"
+        )
+
     your_remaining = sum(1 for p in battle.team.values() if not p.fainted)
     opp_remaining = sum(1 for p in battle.opponent_team.values() if not p.fainted)
-    lines.append(f"\nPokemon remaining: you={your_remaining}  opponent={opp_remaining}")
+    lines.append(
+        "\nRemaining non-fainted Pokémon: "
+        f"you={your_remaining}  opponent={opp_remaining} "
+        "(opponent: revealed / entered battle only; excludes unseen bench)"
+    )
 
     lines.append("\n=== VALID ACTIONS ===")
     actions = []
@@ -610,14 +642,136 @@ def format_battle_state(battle: Battle) -> str:
     return "\n".join(lines)
 
 
-def _parse_json_action_payload(reply: str) -> dict | None:
+# Protocol lines poke-env stores in `_replay_data` even when it skips them in `parse_message`
+# (e.g. `-fail`, `-immune`). Surfaced to the LLM as human-readable failed-outcome hints.
+_FAILED_OUTCOME_PROTOCOL_KINDS = frozenset({"-fail", "-immune", "-miss"})
+_FAIL_STATUS_LABELS: dict[str, str] = {
+    "brn": "already burned",
+    "par": "already paralyzed",
+    "slp": "already asleep",
+    "frz": "already frozen",
+    "psn": "already poisoned",
+    "tox": "already badly poisoned",
+}
+_MAX_FAILED_OUTCOME_BULLETS = 3
+
+
+def _protocol_battle_side(slot_ident: str) -> str | None:
+    s = (slot_ident or "").strip()
+    if len(s) >= 2 and s.startswith("p") and s[1] in "12":
+        return s[:2]
+    return None
+
+
+def _pretty_protocol_subject(raw: str) -> str:
+    raw = (raw or "").strip()
+    if ":" in raw:
+        slot, name = raw.split(":", 1)
+        return f"{slot.strip()} ({name.strip()})"
+    return raw
+
+
+def _format_failed_outcome_line(ev: list[str], my_role: str | None) -> str | None:
+    if len(ev) < 2 or ev[1] not in _FAILED_OUTCOME_PROTOCOL_KINDS:
+        return None
+    kind = ev[1]
+
+    if kind == "-miss":
+        if not my_role or len(ev) < 3:
+            return None
+        atk_side = _protocol_battle_side(ev[2])
+        if atk_side != my_role:
+            return None
+        attacker = _pretty_protocol_subject(ev[2])
+        target = _pretty_protocol_subject(ev[3]) if len(ev) > 3 else "the target"
+        return f"Your Pokémon's attack missed ({attacker} → {target})."
+
+    if kind == "-immune":
+        if len(ev) < 3:
+            return None
+        subj = _pretty_protocol_subject(ev[2])
+        extra = " ".join(x.strip() for x in ev[3:] if x.strip())
+        if extra:
+            return f"{subj}: immune — the attack had no effect ({extra})."
+        return f"{subj}: immune — the attack had no effect."
+
+    if kind == "-fail":
+        if len(ev) < 3:
+            return None
+        subj = _pretty_protocol_subject(ev[2])
+        if len(ev) == 3:
+            return f"{subj}: a move or effect failed."
+        reason = (ev[3] or "").strip()
+        label = _FAIL_STATUS_LABELS.get(reason)
+        if label:
+            return f"{subj}: {label} (no additional effect from this attempt)."
+        rest = " ".join(x.strip() for x in ev[3:] if x.strip())
+        if rest.startswith("[from]"):
+            return f"{subj}: failed ({rest})."
+        if rest:
+            return f"{subj}: failed — {rest}."
+        return f"{subj}: a move or effect failed."
+
+    return None
+
+
+def _consume_new_failed_outcomes(
+    battle: Battle,
+    start_idx: int,
+    turn_before_slice: int | None,
+) -> tuple[str, int, int | None]:
+    """Humanized failed-outcome lines for new protocol rows, new cursor, last |turn| in slice."""
+    data = getattr(battle, "_replay_data", None)
+    if not isinstance(data, list):
+        return "", start_idx, turn_before_slice
+    n = len(data)
+    my_role = battle.player_role
+    if start_idx >= n:
+        return "", n, turn_before_slice
+
+    replay_turn = turn_before_slice
+    bullets: list[str] = []
+    seen: set[str] = set()
+    for ev in data[start_idx:n]:
+        if len(bullets) >= _MAX_FAILED_OUTCOME_BULLETS:
+            break
+        if not isinstance(ev, list) or len(ev) < 2:
+            continue
+        if ev[1] == "turn" and len(ev) >= 3:
+            try:
+                replay_turn = int(ev[2])
+            except (TypeError, ValueError):
+                pass
+            continue
+        line = _format_failed_outcome_line(ev, my_role)
+        if not line:
+            continue
+        if replay_turn is not None:
+            display = f"[turn {replay_turn}] {line}"
+        else:
+            display = line
+        if display not in seen:
+            seen.add(display)
+            bullets.append(display)
+
+    if not bullets:
+        return "", n, replay_turn
+    block = (
+        "=== FAILED OR NO-EFFECT OUTCOMES (since your last decision) ===\n"
+        + "\n".join(f"  • {b}" for b in bullets)
+    )
+    return block, n, replay_turn
+
+
+def _parse_json_action_payload(reply: str) -> tuple[dict | None, str]:
     """
-    Many chat models (including some OpenRouter free tiers) return JSON wrapped in
-    markdown fences or with leading prose. Extract and parse the first JSON object.
+    Many chat models return JSON wrapped in markdown fences or with leading prose.
+    Prefer the last JSON object that looks like a battle action (move/switch + index)
+    so chatty models can narrate first and append JSON at the end.
     """
     text = (reply or "").strip()
     if not text:
-        return None
+        return None, ""
 
     if text.startswith("```"):
         lines = text.split("\n")
@@ -630,16 +784,35 @@ def _parse_json_action_payload(reply: str) -> dict | None:
         text = "\n".join(lines).strip()
 
     decoder = json.JSONDecoder()
-    for i, ch in enumerate(text):
-        if ch != "{":
-            continue
+    brace_positions = [i for i, ch in enumerate(text) if ch == "{"]
+
+    def decode_dict_at(i: int) -> tuple[dict, int] | None:
         try:
-            obj, _ = decoder.raw_decode(text, i)
+            obj, end = decoder.raw_decode(text, i)
         except json.JSONDecodeError:
-            continue
+            return None
         if isinstance(obj, dict):
-            return obj
-    return None
+            return obj, end
+        return None
+
+    for i in reversed(brace_positions):
+        got = decode_dict_at(i)
+        if got is None:
+            continue
+        obj, end = got
+        if _json_payload_looks_like_battle_action(obj):
+            suf = text[end:].strip()[:4000]
+            return obj, suf
+
+    for i in brace_positions:
+        got = decode_dict_at(i)
+        if got is None:
+            continue
+        obj, end = got
+        suf = text[end:].strip()[:4000]
+        return obj, suf
+
+    return None, ""
 
 
 def _coerce_action_index(raw: object) -> int | None:
@@ -669,6 +842,13 @@ def _normalize_json_action_type(raw: object) -> str:
     if s in ("switches", "swap"):
         return "switch"
     return ""
+
+
+def _json_payload_looks_like_battle_action(obj: dict) -> bool:
+    at = _normalize_json_action_type(obj.get("action_type") or obj.get("actionType"))
+    if at not in ("move", "switch"):
+        return False
+    return _coerce_action_index(obj.get("index")) is not None
 
 
 def _action_string_from_json_fields(
@@ -729,7 +909,7 @@ def _preamble_reasoning_from_reply(reply: str, max_chars: int = 4000) -> str:
         if nl != -1:
             text = text[nl + 1 :].strip()
         if text.endswith("```"):
-            text = text[: -3].strip()
+            text = text[:-3].strip()
     brace = text.find("{")
     if brace < 0:
         return text[:max_chars].strip()
@@ -741,6 +921,12 @@ def _preamble_reasoning_from_reply(reply: str, max_chars: int = 4000) -> str:
 def _openrouter_message_text_chunks(msg: dict) -> list[str]:
     """Collect visible strings from an OpenAI-style chat message object."""
     out: list[str] = []
+    # Reasoning models often put assistant ``content`` first (strict JSON) and chain-of-thought
+    # in ``reasoning``. Merge reasoning first so ``_preamble_reasoning_from_reply`` sees prose
+    # before the opening ``{``.
+    r = msg.get("reasoning")
+    if isinstance(r, str) and r.strip():
+        out.append(r.strip())
     c = msg.get("content")
     if isinstance(c, str) and c.strip():
         out.append(c.strip())
@@ -748,16 +934,11 @@ def _openrouter_message_text_chunks(msg: dict) -> list[str]:
         for part in c:
             if not isinstance(part, dict):
                 continue
-            t = None
-            if part.get("type") in ("text", "output_text"):
-                t = part.get("text")
+            t = part.get("text")
             if t is None:
-                t = part.get("text") or part.get("content")
+                t = part.get("content")
             if isinstance(t, str) and t.strip():
                 out.append(t.strip())
-    r = msg.get("reasoning")
-    if isinstance(r, str) and r.strip():
-        out.append(r.strip())
     return out
 
 
@@ -825,20 +1006,83 @@ def _openrouter_raw_response_text(data: dict) -> tuple[str, str]:
     return "\n".join(uniq), finish
 
 
-def _openrouter_extra_body() -> dict | None:
-    """Optional JSON merged into the chat completion body (OpenRouter extensions)."""
-    raw = os.getenv("OPENROUTER_EXTRA_BODY_JSON", "").strip()
+_openrouter_legacy_extra_body_warned = False
+
+
+def _openrouter_default_extra_body() -> dict | None:
+    """Base ``extra_body`` for every OpenRouter request (``OPENROUTER_DEFAULT_EXTRA_BODY_JSON``)."""
+    global _openrouter_legacy_extra_body_warned
+    raw = os.getenv("OPENROUTER_DEFAULT_EXTRA_BODY_JSON", "").strip()
+    if not raw:
+        legacy = os.getenv("OPENROUTER_EXTRA_BODY_JSON", "").strip()
+        if legacy:
+            if not _openrouter_legacy_extra_body_warned:
+                _openrouter_legacy_extra_body_warned = True
+                log_print(
+                    "  [openrouter] OPENROUTER_EXTRA_BODY_JSON is deprecated; "
+                    "use OPENROUTER_DEFAULT_EXTRA_BODY_JSON",
+                    flush=True,
+                )
+            raw = legacy
     if not raw:
         return None
     try:
         extra = json.loads(raw)
     except json.JSONDecodeError:
         log_print(
-            "  [openrouter] Invalid OPENROUTER_EXTRA_BODY_JSON, ignoring",
+            "  [openrouter] Invalid OPENROUTER_DEFAULT_EXTRA_BODY_JSON, ignoring",
             flush=True,
         )
         return None
     return extra if isinstance(extra, dict) else None
+
+
+def _openrouter_extra_body_by_model_map() -> dict[str, dict[str, Any]]:
+    """
+    Per-model ``extra_body`` fragments keyed by OpenRouter model id (case-insensitive).
+    From ``OPENROUTER_EXTRA_BODY_BY_MODEL_JSON``.
+    """
+    raw = os.getenv("OPENROUTER_EXTRA_BODY_BY_MODEL_JSON", "").strip()
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        log_print(
+            "  [openrouter] Invalid OPENROUTER_EXTRA_BODY_BY_MODEL_JSON, ignoring",
+            flush=True,
+        )
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for k, v in data.items():
+        if not isinstance(v, dict):
+            log_print(
+                f"  [openrouter] OPENROUTER_EXTRA_BODY_BY_MODEL_JSON: "
+                f"skip non-object value for {k!r}",
+                flush=True,
+            )
+            continue
+        out[str(k).strip().lower()] = v
+    return out
+
+
+def _openrouter_resolve_extra_body(model_id: str) -> dict | None:
+    """
+    Merge OpenRouter ``extra_body``: ``OPENROUTER_DEFAULT_EXTRA_BODY_JSON`` then
+    model-specific overrides from ``OPENROUTER_EXTRA_BODY_BY_MODEL_JSON`` (shallow merge;
+    per-model keys replace default keys entirely so ``reasoning`` is not partially mixed).
+    """
+    default = _openrouter_default_extra_body()
+    spec = _openrouter_extra_body_by_model_map().get((model_id or "").strip().lower())
+    if spec is None:
+        return default
+    if not default:
+        return dict(spec)
+    out: dict[str, Any] = dict(default)
+    out.update(spec)
+    return out
 
 
 def parse_llm_action(response_text: str, battle: Battle) -> str | None:
@@ -889,10 +1133,7 @@ _SUBMIT_ACTION_TOOL = {
             },
             "reasoning": {
                 "type": "string",
-                "description": (
-                    "1-3 sentences explaining the action in the same voice and "
-                    "personality as your system instructions (first person)."
-                ),
+                "description": _REASONING_JSON_VALUE_HELP,
             },
             "callout": {
                 "type": "string",
@@ -927,9 +1168,7 @@ _POKEDEX_TOOLS = [
     },
     {
         "name": "pokedex_lookup_pokemon",
-        "description": (
-            "Look up a Pokémon's base stats, typing, and abilities."
-        ),
+        "description": ("Look up a Pokémon's base stats, typing, and abilities."),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -1029,9 +1268,7 @@ async def reflection_json_completion(
     Used for post-match persona memory / learnings updates.
     """
     mt = (
-        int(max_tokens)
-        if max_tokens is not None
-        else _LLM_MEMORY_REFLECTION_MAX_TOKENS
+        int(max_tokens) if max_tokens is not None else _LLM_MEMORY_REFLECTION_MAX_TOKENS
     )
     if provider == "anthropic":
         client = _make_anthropic_client()
@@ -1060,7 +1297,11 @@ async def reflection_json_completion(
             client = _make_openrouter_client()
 
         def _req() -> str:
-            extra = _openrouter_extra_body() if provider == "openrouter" else None
+            extra = (
+                _openrouter_resolve_extra_body(model_id)
+                if provider == "openrouter"
+                else None
+            )
             kwargs: dict = dict(
                 model=model_id,
                 messages=[
@@ -1116,7 +1357,9 @@ class LLMPlayer(Player):
                 f"user={getattr(self, 'username', '?')!r}). Set model in the manager."
             )
         validate_provider_model(
-            provider, raw_mid, field_label=getattr(self, "username", "player"),
+            provider,
+            raw_mid,
+            field_label=getattr(self, "username", "player"),
         )
         self._model_id = raw_mid
         self._llm_client = self._create_llm_client()
@@ -1128,8 +1371,8 @@ class LLMPlayer(Player):
         self._opponent_name = (opponent_name or "").strip()
         # Showdown username; thoughts.json keys callouts by this, not persona abbreviation.
         self._opponent_account_name = (
-            (opponent_account_name or opponent_name or "").strip()
-        )
+            opponent_account_name or opponent_name or ""
+        ).strip()
         self._system_prompt = system_prompt or (
             "You are a competitive Pokémon battle AI. Analyze the battle state "
             "and choose the best action. You must respond with exactly one action "
@@ -1138,6 +1381,8 @@ class LLMPlayer(Player):
             "in 1-2 sentences."
         )
         self._turn_history: dict[str, list[dict]] = {}
+        # battle_tag -> (exclusive replay index, last |turn| N at that cursor)
+        self._failed_outcome_state: dict[str, tuple[int, int | None]] = {}
         self._battle_side = battle_side if battle_side in ("p1", "p2") else None
         self._current_gen: int = 8
 
@@ -1201,8 +1446,16 @@ class LLMPlayer(Player):
         gen = self._current_gen
 
         def _request() -> str:
-            tools = list(_POKEDEX_TOOLS) + [_SUBMIT_ACTION_TOOL] if use_pokedex else [_SUBMIT_ACTION_TOOL]
-            tool_choice = {"type": "auto"} if use_pokedex else {"type": "tool", "name": "submit_action"}
+            tools = (
+                list(_POKEDEX_TOOLS) + [_SUBMIT_ACTION_TOOL]
+                if use_pokedex
+                else [_SUBMIT_ACTION_TOOL]
+            )
+            tool_choice = (
+                {"type": "auto"}
+                if use_pokedex
+                else {"type": "tool", "name": "submit_action"}
+            )
             conv = list(messages)
             lookups_done = 0
 
@@ -1217,7 +1470,8 @@ class LLMPlayer(Player):
                 )
 
                 tool_use_blocks = [
-                    b for b in response.content
+                    b
+                    for b in response.content
                     if getattr(b, "type", None) == "tool_use"
                 ]
 
@@ -1249,14 +1503,18 @@ class LLMPlayer(Player):
                 )
 
                 conv.append({"role": "assistant", "content": response.content})
-                conv.append({
-                    "role": "user",
-                    "content": [{
-                        "type": "tool_result",
-                        "tool_use_id": pokedex_block.id,
-                        "content": result_text,
-                    }],
-                })
+                conv.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": pokedex_block.id,
+                                "content": result_text,
+                            }
+                        ],
+                    }
+                )
 
                 if lookups_done >= _POKEDEX_MAX_LOOKUPS:
                     tool_choice = {"type": "tool", "name": "submit_action"}
@@ -1277,8 +1535,12 @@ class LLMPlayer(Player):
             self._system_prompt
             + "\n\nRespond ONLY with strict JSON: "
             + '{"action_type":"move|switch","index":<1-based integer>,'
-            + '"reasoning":"1-3 sentences in your persona voice (first person)",'
-            + '"callout":"usually empty; short phrase only on standout moments"}'
+            + '"reasoning":"<brief in-character summary, see rules below>",'
+            + '"callout":"usually empty; short phrase only on standout moments"}\n\n'
+            "The reasoning string must stay short: about 60 words max, 3 sentences max — a quick "
+            "in-character summary only. Never dump calculations, type-chart essays, or full turn "
+            "projections into JSON; do that mentally, then compress. No leading labels (e.g. "
+            "do not start with Reasoning: or similar)."
         )
 
         def _request() -> str:
@@ -1304,16 +1566,21 @@ class LLMPlayer(Player):
             self._system_prompt
             + "\n\nRespond ONLY with strict JSON: "
             + '{"action_type":"move|switch","index":<1-based integer>,'
-            + '"reasoning":"1-3 sentences in your persona voice (first person)",'
-            + '"callout":"usually empty; short phrase only on standout moments"}'
+            + '"reasoning":"<brief in-character summary>",'
+            + '"callout":"usually empty; short phrase only on standout moments"}\n\n'
+            "Hard rules: Output only that JSON object (no text before { or after }). "
+            "Reasoning value: plain text, no markdown — at most ~60 words / 3 sentences; "
+            "no damage math or long simulations (summarize only). Direct prose only; "
+            "do not prefix with Reasoning: or any other label."
         )
 
         def _request() -> str:
-            extra = _openrouter_extra_body()
+            extra = _openrouter_resolve_extra_body(self._model_id)
             raw_api = getattr(client.chat.completions, "with_raw_response", None)
-
             for attempt in range(2):
-                use_schema = _openrouter_wants_json_schema(self._model_id) and attempt == 0
+                use_schema = (
+                    _openrouter_wants_json_schema(self._model_id) and attempt == 0
+                )
                 kwargs: dict = dict(
                     model=self._model_id,
                     messages=[
@@ -1336,6 +1603,24 @@ class LLMPlayer(Player):
                             parsed = raw.parse()
                             return (parsed.choices[0].message.content or "").strip()
                         text, finish = _openrouter_raw_response_text(data)
+                        if len(text) < 60:
+                            hint = (
+                                "tune OPENROUTER_DEFAULT_EXTRA_BODY_JSON or "
+                                "OPENROUTER_EXTRA_BODY_BY_MODEL_JSON (reasoning.max_tokens vs effort)"
+                            )
+                            log_print(
+                                f"  [openrouter] short merged reply (len={len(text)}, "
+                                f"finish_reason={finish!r}, model={data.get('model')!r}); "
+                                f"{hint}",
+                                flush=True,
+                            )
+                        if finish == "length":
+                            log_print(
+                                f"  [openrouter] finish_reason=length (truncated); "
+                                f"raise LLM_MAX_OUTPUT_TOKENS (max_tokens={_LLM_MAX_OUTPUT_TOKENS}) "
+                                f"if JSON is incomplete (len={len(text)})",
+                                flush=True,
+                            )
                         if not text.strip():
                             model = data.get("model", "")
                             choice0 = (data.get("choices") or [{}])[0]
@@ -1382,11 +1667,24 @@ class LLMPlayer(Player):
         raise ValueError(f"Unsupported provider: {self._provider}")
 
     async def choose_move(self, battle: Battle) -> str:
-        fmt = getattr(battle, "format", None) or getattr(battle, "battle_format", "") or ""
+        fmt = (
+            getattr(battle, "format", None)
+            or getattr(battle, "battle_format", "")
+            or ""
+        )
         if fmt:
             self._current_gen = gen_from_format(str(fmt))
 
+        tag = battle.battle_tag
+        prev_i, turn_ctx = self._failed_outcome_state.get(tag, (0, None))
+        failed_outcomes_block, new_i, turn_ctx = _consume_new_failed_outcomes(
+            battle, prev_i, turn_ctx
+        )
+        self._failed_outcome_state[tag] = (new_i, turn_ctx)
+
         state_text = format_battle_state(battle)
+        if failed_outcomes_block:
+            state_text = f"{failed_outcomes_block}\n\n{state_text}"
         callout_context = self._callout_context_text(battle)
         if callout_context:
             state_text = f"{state_text}\n\n{callout_context}"
@@ -1417,7 +1715,7 @@ class LLMPlayer(Player):
             action = None
             reasoning = ""
             callout = ""
-            payload = _parse_json_action_payload(reply)
+            payload, json_trailing = _parse_json_action_payload(reply)
             if isinstance(payload, dict):
                 action_type = _normalize_json_action_type(
                     payload.get("action_type") or payload.get("actionType")
@@ -1425,9 +1723,7 @@ class LLMPlayer(Player):
                 raw_idx = _coerce_action_index(payload.get("index"))
                 reasoning = str(payload.get("reasoning", "")).strip()
                 callout = str(payload.get("callout", "")).strip()
-                action = _action_string_from_json_fields(
-                    action_type, raw_idx, battle
-                )
+                action = _action_string_from_json_fields(action_type, raw_idx, battle)
 
             if not action:
                 reg = _regex_extract_action_fields(reply)
@@ -1442,6 +1738,8 @@ class LLMPlayer(Player):
 
             if action and not (reasoning or "").strip():
                 reasoning = _preamble_reasoning_from_reply(reply)
+            if action and not (reasoning or "").strip() and json_trailing:
+                reasoning = json_trailing
 
             if action:
                 rp = (reasoning or "").strip()
@@ -1495,3 +1793,4 @@ class LLMPlayer(Player):
 
     def _battle_finished_callback(self, battle: Battle) -> None:
         self._turn_history.pop(battle.battle_tag, None)
+        self._failed_outcome_state.pop(battle.battle_tag, None)

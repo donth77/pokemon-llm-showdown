@@ -1,10 +1,10 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Battle Replays</title>
-    <style>
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Battle Replays</title>
+        <style>
       body {
         font-family:
           system-ui,
@@ -49,39 +49,70 @@
       a:hover {
         text-decoration: underline;
       }
-    </style>
-  </head>
-  <body>
-    <h1>Battle Replays</h1>
-    <p>Newest first. Click to open replay HTML.</p>
-
-    {% if replay_files %} {% for name in replay_files %}
-    <div class="card">
-      <div class="name">{{ name }}</div>
-      <div style="display: flex; gap: 12px; align-items: center">
-        <a
-          href="/replays/files/{{ name }}"
-          target="_blank"
-          rel="noopener noreferrer"
-          >Replay</a
-        >
-        {% set stem = name.rsplit('.', 1)[0] %} {% if log_files and stem in
-        log_files %}
-        <a
-          href="/logs/files/{{ stem }}.json"
-          target="_blank"
-          rel="noopener noreferrer"
-          >Log</a
-        >
-        {% else %}
-        <span style="color: #6b7280; font-size: 12px">Log pending</span>
+      .replay-pagination {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin: 20px 0 16px;
+        font-size: 14px;
+        color: #9ca3af;
+      }
+      .replay-pagination .replay-pagination-actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .replay-pagination a.nav-pill {
+        display: inline-block;
+        padding: 6px 12px;
+        border-radius: 6px;
+        background: #374151;
+        color: #e5e7eb;
+        text-decoration: none;
+        font-size: 13px;
+      }
+      .replay-pagination a.nav-pill:hover {
+        background: #4b5563;
+        text-decoration: none;
+      }
+        </style>
+    </head>
+    <body>
+        <h1>Battle Replays</h1>
+        <p>Newest first. Click to open replay HTML.</p>
+        {% if replay_pagination %}
+            <nav class="replay-pagination" aria-label="Replay list pagination">
+                <span>Showing {{ replay_pagination.start }}–{{ replay_pagination.end }} of {{ replay_pagination.total }}</span>
+                <div class="replay-pagination-actions">
+                    {% if replay_pagination.prev_url %}<a class="nav-pill" href="{{ replay_pagination.prev_url }}">Previous</a>{% endif %}
+                    {% if replay_pagination.next_url %}<a class="nav-pill" href="{{ replay_pagination.next_url }}">Next</a>{% endif %}
+                </div>
+            </nav>
         {% endif %}
-      </div>
-    </div>
-    {% endfor %} {% else %}
-    <p>
-      No replay files yet. Start the agents and wait for a battle to finish.
-    </p>
-    {% endif %}
-  </body>
+        {% if replay_files %}
+            {% for name in replay_files %}
+                <div class="card">
+                    <div class="name">{{ name }}</div>
+                    <div style="display: flex; gap: 12px; align-items: center">
+                        <a href="/replays/files/{{ name }}"
+                           target="_blank"
+                           rel="noopener noreferrer">Replay</a>
+                        {% set stem = name.rsplit('.', 1)[0] %}
+                        {% if log_files and stem in
+                            log_files %}
+                            <a href="/logs/files/{{ stem }}.json"
+                               target="_blank"
+                               rel="noopener noreferrer">Log</a>
+                        {% else %}
+                            <span style="color: #6b7280; font-size: 12px">Log pending</span>
+                        {% endif %}
+                    </div>
+                </div>
+            {% endfor %}
+        {% else %}
+            <p>No replay files yet. Start the agents and wait for a battle to finish.</p>
+        {% endif %}
+    </body>
 </html>

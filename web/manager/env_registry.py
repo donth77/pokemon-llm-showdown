@@ -68,9 +68,25 @@ ENV_REGISTRY: tuple[EnvVarDef, ...] = (
         "agents",
     ),
     EnvVarDef(
+        "OPENROUTER_DEFAULT_EXTRA_BODY_JSON",
+        "LLM API keys",
+        "Base extra_body JSON for all OpenRouter chat requests. Deprecated alias: OPENROUTER_EXTRA_BODY_JSON.",
+        "",
+        "agents",
+    ),
+    EnvVarDef(
+        "OPENROUTER_EXTRA_BODY_BY_MODEL_JSON",
+        "LLM API keys",
+        "JSON map: OpenRouter model_id -> extra_body object, shallow-merged over default. "
+        'Example: {"google/gemini-2.5-flash-lite":{"reasoning":{"max_tokens":768}}}. '
+        "Keys are case-insensitive.",
+        "",
+        "agents",
+    ),
+    EnvVarDef(
         "OPENROUTER_EXTRA_BODY_JSON",
         "LLM API keys",
-        "Optional JSON merged into OpenRouter chat requests.",
+        "Deprecated. Use OPENROUTER_DEFAULT_EXTRA_BODY_JSON.",
         "",
         "agents",
     ),
@@ -119,8 +135,8 @@ ENV_REGISTRY: tuple[EnvVarDef, ...] = (
     EnvVarDef(
         "LLM_MAX_OUTPUT_TOKENS",
         "Battle & agents",
-        "Max completion tokens per LLM turn.",
-        "512",
+        "Max completion tokens per LLM turn (all providers; reasoning counts toward this on some models).",
+        "4096",
         "agents",
     ),
     EnvVarDef(
@@ -133,15 +149,15 @@ ENV_REGISTRY: tuple[EnvVarDef, ...] = (
     EnvVarDef(
         "POKEDEX_TOOL_ENABLED",
         "Pokédex",
-        "Enable Anthropic Pokédex tool calls (1/0).",
-        "0",
+        "Enable Anthropic Pokédex tool calls (true/false).",
+        "false",
         "agents",
     ),
     EnvVarDef(
         "POKEDEX_AUTO_ENRICH",
         "Pokédex",
-        "Inject Pokédex notes into context for all providers (1/0).",
-        "0",
+        "Inject Pokédex notes into context for all providers (true/false).",
+        "false",
         "agents",
     ),
     EnvVarDef(
@@ -154,8 +170,8 @@ ENV_REGISTRY: tuple[EnvVarDef, ...] = (
     EnvVarDef(
         "ENABLE_MEMORY",
         "Persona memory",
-        "Enable adaptive persona memory (memory.md + learnings.md under state volume) (1/0).",
-        "0",
+        "Enable adaptive persona memory (memory.md + learnings.md under state volume) (true/false).",
+        "false",
         "agents",
     ),
     EnvVarDef(
@@ -204,7 +220,7 @@ ENV_REGISTRY: tuple[EnvVarDef, ...] = (
     EnvVarDef(
         "TWITCH_CLIENT_ID",
         "Twitch",
-        "Twitch API application client ID (set title script / stream auto-title).",
+        "Twitch API application client ID (stream container Helix auto-title).",
         "",
         "stream",
         sensitive=True,
@@ -228,8 +244,8 @@ ENV_REGISTRY: tuple[EnvVarDef, ...] = (
     EnvVarDef(
         "TWITCH_AUTO_SET_TITLE",
         "Twitch",
-        "Whether stream container updates channel title on start (1/0).",
-        "1",
+        "Whether stream container updates channel title on start (true/false).",
+        "true",
         "stream",
     ),
     EnvVarDef(
@@ -270,8 +286,8 @@ ENV_REGISTRY: tuple[EnvVarDef, ...] = (
     EnvVarDef(
         "HIDE_BATTLE_UI",
         "Stream",
-        "Hide native Showdown battle chrome in embedded client (1/0).",
-        "1",
+        "Hide native Showdown battle chrome in embedded client (true/false).",
+        "true",
         "web, stream",
     ),
     EnvVarDef(
@@ -296,10 +312,27 @@ ENV_REGISTRY: tuple[EnvVarDef, ...] = (
         "web",
     ),
     EnvVarDef(
+        "BATTLE_IFRAME_OUTRO_SECONDS",
+        "Web",
+        "After a battle ends, keep the Showdown iframe on the room this many seconds before "
+        "resetting to the lobby (0 = immediate; helps win animations / log catch up).",
+        "5",
+        "web",
+    ),
+    EnvVarDef(
         "MATCH_INTRO_SECONDS",
         "Web",
         "Matchup intro duration on /broadcast when battle status is starting (seconds); 0 disables.",
         "5",
+        "web",
+    ),
+    EnvVarDef(
+        "BRACKET_INTERSTITIAL_SECONDS",
+        "Web",
+        "After the victory splash, show bracket/upcoming interstitial this many seconds "
+        "(0 = skip). Only when the current scoreboard has a tournament_context with tournament_id "
+        "and GET /api/manager/queue/upcoming returns at least one row; otherwise skipped.",
+        "0",
         "web",
     ),
     EnvVarDef(
@@ -389,8 +422,8 @@ ENV_REGISTRY: tuple[EnvVarDef, ...] = (
     EnvVarDef(
         "LOG_RAW_BATTLE",
         "Paths",
-        "Write raw JSON battle logs (1/0).",
-        "1",
+        "Write raw JSON battle logs (true/false).",
+        "true",
         "agents",
     ),
     EnvVarDef(

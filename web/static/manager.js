@@ -53,7 +53,8 @@ function initLocalTimeElements(root) {
     try {
       const raw = el.getAttribute("data-local-ts");
       const variant = el.dataset.localTsFormat;
-      const fmt = variant === "slash" ? formatLocalDateTimeSlash : formatLocalDateTime;
+      const fmt =
+        variant === "slash" ? formatLocalDateTimeSlash : formatLocalDateTime;
       el.textContent = fmt(raw);
     } catch (_) {
       /* keep server-rendered fallback inside the node */
@@ -74,8 +75,10 @@ function initSidebarCollapse() {
   if (!btn || btn.dataset.sidebarBound === "1") return;
   btn.dataset.sidebarBound = "1";
 
-  const titleExpanded = btn.getAttribute("data-title-expanded") || "Collapse sidebar";
-  const titleCollapsed = btn.getAttribute("data-title-collapsed") || "Expand sidebar";
+  const titleExpanded =
+    btn.getAttribute("data-title-expanded") || "Collapse sidebar";
+  const titleCollapsed =
+    btn.getAttribute("data-title-collapsed") || "Expand sidebar";
 
   function applyCollapsed(collapsed, persist) {
     const doc = document.documentElement;
@@ -112,7 +115,8 @@ function initSidebarCollapse() {
 
   btn.addEventListener("click", (e) => {
     e.preventDefault();
-    const isCollapsed = document.documentElement.classList.contains("sidebar-collapsed");
+    const isCollapsed =
+      document.documentElement.classList.contains("sidebar-collapsed");
     applyCollapsed(!isCollapsed, true);
   });
 }
@@ -126,5 +130,7 @@ function bootManagerShell() {
    Do not wait only for DOMContentLoaded — in some environments that event never fires,
    which would leave the sidebar without a click handler. */
 bootManagerShell();
-document.addEventListener("DOMContentLoaded", () => initLocalTimeElements(document));
+document.addEventListener("DOMContentLoaded", () =>
+  initLocalTimeElements(document),
+);
 window.addEventListener("load", () => initLocalTimeElements(document));

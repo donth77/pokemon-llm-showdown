@@ -11,7 +11,7 @@ Four Docker services on a shared bridge network (`battle-net`), plus repo-root *
 | Service | Dir | Port | Role |
 |---------|-----|------|------|
 | `showdown` | `showdown/` | 8000 | Local Pokémon Showdown battle server (Node 20, no auth) |
-| `web` | `web/` | 8080 | FastAPI: scoreboard + **`/scoreboard/stream`** (`scoreboard_stream.py`), manager UI + API + **`/api/manager/stream`** (`manager_stream.py`), broadcast, victory splash, thoughts (`GET /thoughts`, `/thoughts/ws`), replay index; optional **`WEB_DEBUG`** via `web_debug.py` |
+| `web` | `web/` | 8080 | FastAPI: scoreboard + **`/scoreboard/stream`** (`scoreboard_stream.py`), manager UI + API + **`/api/manager/stream`** (`manager_stream.py`), broadcast hub + unified splashes (`splash.html` at **`/victory`** / **`/splash`**; legacy **`/match_intro`**, **`/tournament_intro`**), thoughts (`GET /thoughts`, `/thoughts/ws`), replay index; optional **`WEB_DEBUG`** via `web_debug.py` |
 | `agents` | `agents/` | — | LLM battle agents (Python, poke-env); queue worker polls `/api/manager` for matches |
 | `stream` | `stream/` | 9222 | Xvfb + Chromium + FFmpeg → Twitch RTMP capture pipeline |
 
@@ -29,7 +29,7 @@ Four Docker services on a shared bridge network (`battle-net`), plus repo-root *
 ## Static files (`assets/` vs `web/static`)
 
 - **`assets/static/`** (repo root) — **Mountable content** in Compose (e.g. `./assets/static/trainers` → `/app/static/trainers` on **web** and Showdown’s `server/static/trainers`; `./assets/static/portraits` → `/app/static/portraits` on **web**). Trainer sprites; **persona portraits** (tall under `portraits/`, square under `portraits/square/` — PNG/GIF/WebP; recommended **512×640** and **512×512**); **both portraits are required** per persona (`personas_store.require_both_portraits` on manager create/save). Future optional `audio/` if you add a volume. Operators can swap files on disk without `docker compose build web`, or use **Manager → Personas** upload. **`PORTRAITS_DIR`** (default `/app/static/portraits`). See **`assets/README.md`**.
-- **`web/static/`** — **Application static bundle** copied into the **web** image (`Dockerfile` + `StaticFiles` at `/static/`). JS, CSS, vendor scripts, optional default UI sounds (e.g. `victory.html` → `/static/audio/…`). Same release lifecycle as Python/templates — not the home for large persona art.
+- **`web/static/`** — **Application static bundle** copied into the **web** image (`Dockerfile` + `StaticFiles` at `/static/`). JS, CSS, vendor scripts, optional default UI sounds (e.g. `splash.html` → `/static/audio/…`). Same release lifecycle as Python/templates — not the home for large persona art.
 
 ## Tech Stack
 
@@ -78,7 +78,7 @@ docker compose down
 cd web && pip install -r requirements-dev.txt && pytest manager/verify_brackets_test.py -v
 ```
 
-**Scripts:** See `scripts/` — `healthcheck`, `refresh_stream_browser`, `restart_stack`, `stack_down`, `stack_down_after_tournament`, `create_match`, `create_tournament`, `set_twitch_title`. The README has a summary table with descriptions and env vars.
+**Scripts:** See `scripts/` — `healthcheck`, `complete_queued_matches`, `restart_stack`, `stack_down`, `stack_down_after_tournament`, `create_match`, `create_tournament`. The README has a summary table with descriptions and env vars.
 
 ## Key Endpoints (web service, port 8080)
 
@@ -91,6 +91,7 @@ cd web && pip install -r requirements-dev.txt && pytest manager/verify_brackets_
 | `/manager/series/{sid}` | GET | Series + games |
 | `/manager/results`, `/manager/results/stats` | GET | Completed matches, aggregate stats |
 | `/manager/personas` | GET | Persona markdown + trainer / portrait uploads (disk: `assets/static/…`) |
+| `/manager/personas/{slug}/memory` | GET | Read-only view of adaptive **`memory.md`** / **`learnings.md`** on the state volume (`ENABLE_MEMORY` in agents) |
 | `/manager/config` | GET | Documented env vars (`env_registry.py`); values from mounted host `.env` + web process env |
 | `/manager/config/update` | POST | Form: update one registered key in host `.env` (`key`, `value`) |
 | `/api/manager/config` | GET | Providers, formats, personas for UI |
@@ -117,14 +118,14 @@ cd web && pip install -r requirements-dev.txt && pytest manager/verify_brackets_
 | `/scoreboard` | GET | Win/loss records, player info, recent matches (JSON) |
 | `/scoreboard/stream` | GET | **SSE** (`text/event-stream`): ordered `{ "seq", "payload" }` snapshots when scoreboard data changes; initial event on connect. **`/broadcast`** hub and standalone overlay/modals use **`EventSource`** with **`GET /scoreboard`** fallback if the stream stays closed. **Reverse proxies:** disable buffering for this route (e.g. nginx `proxy_buffering off`, `X-Accel-Buffering: no`). |
 | `/result` | POST | Legacy: append match to DB (optional; worker uses manager API) |
-| `/broadcast` | GET | Full broadcast scene: battle iframe + scoreboard `/overlay` route + thoughts. Parent subscribes to **`/scoreboard/stream`**, dedupes by **`seq`**, fans out to embedded **`/overlay`**, **`/match_intro`**, **`/victory`** (`?embed=broadcast`) via **`postMessage`** (optional **`seq`** on the bus); thoughts use the **`broadcast_scoreboard`** `CustomEvent`. Falls back to polling **`/scoreboard`** if SSE disconnects. Standalone overlay/intros/victory also use **`attachScoreboardStream`** (`web/static/scoreboard-stream-client.js`). |
+| `/broadcast` | GET | Full broadcast scene: battle iframe + scoreboard **`/overlay?embed=broadcast`** + **one** splashes iframe **`/victory?embed=broadcast`** (`splash.html` — tournament intro, matchup, victory, bracket/upcoming) + inline thoughts. Parent subscribes to **`/scoreboard/stream`**, dedupes by **`seq`**, **`postMessage`** `{ type: "scoreboard", payload, seq? }` to **`overlay-frame`** and **`broadcast-splashes-frame`**; thoughts use the **`broadcast_scoreboard`** `CustomEvent`. Falls back to polling **`/scoreboard`** if SSE disconnects. Standalone pages use **`attachScoreboardStream`** (`web/static/scoreboard-stream-client.js`). |
 | `/broadcast/battle_frame` | GET | Showdown iframe + battle sync + callouts (OBS layering) |
-| `/match_intro` | GET | Matchup intro card (`MATCH_INTRO_SECONDS`; iframe child of `/broadcast`) |
-| `/tournament_intro` | GET | Tournament opener before the first match only (`TOURNAMENT_INTRO_SECONDS` on agents; iframe child of `/broadcast`) |
+| `/match_intro` | GET | Backward-compatible alias: same **`splash.html`** as **`/victory`** (hub does not use a separate iframe). |
+| `/tournament_intro` | GET | Same as **`/match_intro`** — alias to unified splashes. |
 | `/broadcast/top_bar` | GET | Transparent title + format bar (OBS layering) |
 | `/thoughts_overlay` | GET | Transparent LLM thoughts panels (OBS layering) |
 | `/overlay` | GET | Transparent scoreboard page for compositing (URL path name; not the service name) |
-| `/victory` | GET | Animated post-match winner splash (`VICTORY_MODAL_SECONDS` vs `TOURNAMENT_VICTORY_MODAL_SECONDS` when the win clinches the tournament) |
+| `/victory`, `/splash` | GET | Unified broadcast splashes (`splash.html`: tournament intro, victory, bracket/upcoming, matchup; `VICTORY_MODAL_SECONDS` / `TOURNAMENT_VICTORY_MODAL_SECONDS` for winner timing) |
 | `/replays` | GET | Replay + log index page |
 | `/current_battle` | GET | Live battle metadata (JSON) |
 | `/thoughts` | GET | Current LLM reasoning per player (JSON) |
@@ -137,7 +138,7 @@ cd web && pip install -r requirements-dev.txt && pytest manager/verify_brackets_
 
 ## Code Conventions
 
-- **Python style:** Type hints throughout (`str | None`, dataclasses). No automated linter config committed, but `.ruff_cache/` is gitignored (ruff is used informally).
+- **Python style:** Type hints throughout (`str | None`, dataclasses). No `ruff.toml` in-repo, but `.ruff_cache/` is gitignored — format with `python3 -m ruff format agents web stream` and `python3 -m ruff check agents web stream` when touching Python.
 - **One folder per service:** Each has its own `Dockerfile` and `requirements.txt`. No monorepo package manager.
 - **Async I/O:** aiohttp for non-blocking HTTP in agents; FastAPI async routes + WebSocket fanout in web.
 - **SQLite (web):** In **`web/manager/db.py`**, use **`async with _db() as db:`** (the bound name `db` is the **connection**, despite the name). From other modules (`routes.py`, `tournament_logic.py`, …), **`from . import db`** then **`async with db._db() as conn:`**. `_db()` is an `@asynccontextmanager` around **`async with aiosqlite.connect(...)`** and sets WAL + `foreign_keys`. Do **not** `await aiosqlite.connect()` and then `async with` the same `Connection`: aiosqlite starts a worker thread on connect/`__aenter__`, and doing both triggers `RuntimeError: threads can only be started once`.
@@ -166,9 +167,9 @@ Logic lives in `web/manager/tournament_logic.py` (`generate_bracket`, `on_match_
 | --- | --- |
 | Round robin | All pairs get a series (`best_of` per tournament); completion when all series resolved or cancelled. |
 | Single elimination | Winners bracket only; completing the last winners series completes the tournament. |
-| Double elimination | Winners + losers + **grand finals**. Completed **winners** series: advance winner in WB; drop loser into LB (pairing rules for small brackets + fallbacks). **Winners finals:** WB champion → grand finals **player 1**; WB finals loser into last LB feeder; LB advances like a secondary bracket; last LB winner → grand finals **player 2**. **Grand finals** completion → tournament `completed`. `_queue_series_matches` skips if the series already has queued/running games. |
+| Double elimination | Winners + losers + **grand finals**. Completed **winners** series: advance winner in WB; drop loser into LB (pairing rules for small brackets + fallbacks). **Winners finals:** WB champion → grand finals **player 1**; WB finals loser into last LB feeder; LB advances like a secondary bracket; last LB winner → grand finals **player 2**. **Grand finals:** if player 1 wins the set, tournament `completed`. If player 2 wins, a **grand finals reset** series is queued (same entries; player 1 still WB rep); completing that set finishes the tournament. `_queue_series_matches` skips if the series already has queued/running games. |
 
-**Gaps / product notes:** No **bracket-reset** grand finals (second set if LB winner wins). WB→LB mapping for **very large** fields is heuristic; 4- and 8-player flows are the most intentional. Tournament UI: `tournament_detail.html` shows winners, losers, and grand finals for double elim.
+**Gaps / product notes:** WB→LB mapping for **very large** fields is heuristic; 4- and 8-player flows are the most intentional. Tournament UI: `tournament_detail.html` shows winners, losers, and grand finals for double elim.
 
 ## Tournament definitions (plaintext import) & presets
 
@@ -219,16 +220,16 @@ CRUD in the manager UI (`/manager/tournament-presets`) and the preset API above.
 All config is via environment variables. Copy `.env.example` to `.env` and edit. Key groups:
 
 - **API keys:** `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`
-- **OpenRouter tuning (agents):** `OPENROUTER_STRUCTURED_OUTPUTS`, `OPENROUTER_EXTRA_BODY_JSON` (forwarded in `docker-compose.yml`)
+- **OpenRouter tuning (agents):** `OPENROUTER_STRUCTURED_OUTPUTS`, `OPENROUTER_DEFAULT_EXTRA_BODY_JSON`, `OPENROUTER_EXTRA_BODY_BY_MODEL_JSON` (legacy `OPENROUTER_EXTRA_BODY_JSON`; forwarded in `docker-compose.yml`)
 - **Battle pacing:** `TURN_DELAY_SECONDS`, `DELAY_BETWEEN_MATCHES`, `QUEUE_POLL_INTERVAL`, `LLM_MAX_OUTPUT_TOKENS`, `LLM_TURN_TIMEOUT`
-- **Tournament intro + match-intro sync (agents):** `TOURNAMENT_INTRO_SECONDS`, `TOURNAMENT_INTRO_DELAY_SECONDS` (queue worker holds before the first match of a tournament when the intro duration is non-zero), `MATCH_INTRO_STARTING_HOLD_SECONDS` (brief `starting` state so `/broadcast` can show `/match_intro` before battle connects) — forwarded in `docker-compose.yml` for `agents`
+- **Tournament intro + match-intro sync (agents):** `TOURNAMENT_INTRO_SECONDS`, `TOURNAMENT_INTRO_DELAY_SECONDS` (queue worker holds before the first match of a tournament when the intro duration is non-zero), `MATCH_INTRO_STARTING_HOLD_SECONDS` (brief `starting` state so the hub’s **splashes** iframe can show the matchup intro before Showdown connects) — forwarded in `docker-compose.yml` for `agents`
 - **Persona memory (agents):** `ENABLE_MEMORY` (default off), `MEMORY_REFLECTION_INTERVAL`, `LEARNINGS_UPDATE_INTERVAL`, `MAX_MEMORY_ENTRIES`, `MAX_LEARNINGS_BULLETS`, `LLM_MEMORY_REFLECTION_MAX_TOKENS` — forwarded in `docker-compose.yml` for `agents`
 - **Pokédex:** `POKEDEX_TOOL_ENABLED` (Anthropic tool calling), `POKEDEX_AUTO_ENRICH` (context injection for all providers), `POKEDEX_MAX_LOOKUPS`
 - **Storage:** `REPLAY_DIR`, `LOG_DIR`, `LOG_RAW_BATTLE`, `STATE_DIR` (in-container paths)
 - **Stream:** `TWITCH_STREAM_KEY`, `STREAM_VIEW_URL`, `STREAM_AUDIO_SOURCE`
 - **Network:** `SHOWDOWN_HOST`, `SHOWDOWN_PORT`, `WEB_HOST`, `WEB_PORT` (deprecated aliases: `OVERLAY_HOST`, `OVERLAY_PORT` still read by agents/stream for migration)
 - **Twitch API (optional):** `TWITCH_CLIENT_ID`, `TWITCH_OAUTH_TOKEN`, `TWITCH_BROADCASTER_ID`, `TWITCH_AUTO_SET_TITLE`
-- **Broadcast / web UI timing:** `MATCH_INTRO_SECONDS`, `VICTORY_MODAL_SECONDS`, `TOURNAMENT_VICTORY_MODAL_SECONDS`, `VICTORY_SHOW_DELAY_SECONDS`, `BATTLE_IFRAME_OUTRO_SECONDS`, `HIDE_BATTLE_UI`, `STREAM_TITLE`, `SHOWDOWN_VIEW_BASE` — listed on the **`web`** service in `docker-compose.yml`; **`stream`** receives a smaller subset (e.g. `HIDE_BATTLE_UI`). Defaults apply if omitted from host `.env`.
+- **Broadcast / web UI timing:** `MATCH_INTRO_SECONDS`, `BRACKET_INTERSTITIAL_SECONDS`, `VICTORY_MODAL_SECONDS`, `TOURNAMENT_VICTORY_MODAL_SECONDS`, `VICTORY_SHOW_DELAY_SECONDS`, `BATTLE_IFRAME_OUTRO_SECONDS`, `HIDE_BATTLE_UI`, `STREAM_TITLE`, `SHOWDOWN_VIEW_BASE` — listed on the **`web`** service in `docker-compose.yml`; **`stream`** receives a smaller subset (e.g. `HIDE_BATTLE_UI`). Defaults apply if omitted from host `.env`.
 - **Web debug (web):** `WEB_DEBUG=true` — enables extra operational **INFO** logs (currently includes each scoreboard SSE publish: **`seq`**, subscriber queue count). Add more call sites via **`web_debug.web_debug_enabled()`** as needed. Listed on **`web`** in `docker-compose.yml`.
 - **Mount paths (web):** `TRAINERS_DIR`, `PORTRAITS_DIR` (defaults `/app/static/trainers`, `/app/static/portraits` under Compose)
 - **Manager Config page:** `MANAGER_HOST_ENV_FILE` (in-container path to mounted host `.env`; `docker-compose.yml` sets `/app/host.env`). Only keys listed in `web/manager/env_registry.py` are editable in `/manager/config`.

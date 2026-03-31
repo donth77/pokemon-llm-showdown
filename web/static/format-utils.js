@@ -43,6 +43,9 @@ function formatTournamentStageLabel(m) {
   if (bracket === "grand_finals") {
     return "Grand Finals";
   }
+  if (bracket === "grand_finals_reset") {
+    return "Grand Finals Reset";
+  }
   if (
     bracket === "winners" &&
     rn != null &&
@@ -63,7 +66,9 @@ function formatTournamentStageLabel(m) {
         return ttype === "double_elimination" ? "WB Semifinals" : "Semifinals";
       }
       if (r === mx - 2 && mx >= 4) {
-        return ttype === "double_elimination" ? "WB Quarterfinals" : "Quarterfinals";
+        return ttype === "double_elimination"
+          ? "WB Quarterfinals"
+          : "Quarterfinals";
       }
     }
   }
@@ -77,6 +82,9 @@ function formatTournamentStageLabel(m) {
 function victorySplashTitleLabel(m, isDraw) {
   if (isDraw) return "Match result";
   if (!m) return "Winner";
+  if (m.victory_de_pending_grand_finals_reset) {
+    return "Grand Finals R1 winner — bracket continues";
+  }
   if (m.victory_tournament_clinched) return "Tournament Winner";
   if (m.victory_series_clinched) {
     var tname = m.tournament_name;
@@ -169,9 +177,11 @@ function formatTournamentMatchContextLine(m, includeMatchPosition) {
  * @param {boolean} [includeMatchPosition] passed through to buildTournamentContextSegments
  */
 function formatHistoryTournamentContext(m, escFn, includeMatchPosition) {
-  var esc = escFn || function (x) {
-    return String(x);
-  };
+  var esc =
+    escFn ||
+    function (x) {
+      return String(x);
+    };
   var tname = m.tournament_name;
   if (tname == null || !String(tname).trim()) return "";
   var name = esc(String(tname).trim());
@@ -186,4 +196,31 @@ function displayTournamentBracketType(type) {
   if (s === "single_elimination") return "Single elimination";
   if (s === "double_elimination") return "Double elimination";
   return s || "—";
+}
+
+/**
+ * Map GET /scoreboard or SSE payload to the shape expected by broadcast battle UI
+ * and formatters (status, battle_tag, battle_format, sprites, flat tournament keys).
+ * @param {Record<string, unknown>|null|undefined} sb
+ * @returns {Record<string, unknown>|null}
+ */
+function scoreboardPayloadToBattleShape(sb) {
+  if (!sb || typeof sb !== "object") return null;
+  var tc = sb.tournament_context;
+  var base = {
+    status: sb.battle_status || "idle",
+    battle_tag: sb.battle_tag,
+    battle_format: sb.battle_format,
+    player1_sprite_url: sb.player1_sprite_url,
+    player2_sprite_url: sb.player2_sprite_url,
+    battle_iframe_outro_ms: sb.battle_iframe_outro_ms,
+  };
+  if (tc && typeof tc === "object") {
+    for (var k in tc) {
+      if (Object.prototype.hasOwnProperty.call(tc, k)) {
+        base[k] = tc[k];
+      }
+    }
+  }
+  return base;
 }

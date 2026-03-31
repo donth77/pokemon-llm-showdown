@@ -105,7 +105,9 @@ def _resolve_type(value: str) -> str | None:
 def _resolve_bracket(value: str) -> str | None:
     x = value.strip().lower()
     for canonical, aliases in _BRACKET_ALIASES.items():
-        if x == canonical or x.replace("_", " ") in {a.replace("_", " ") for a in aliases}:
+        if x == canonical or x.replace("_", " ") in {
+            a.replace("_", " ") for a in aliases
+        }:
             return canonical
         if x in aliases:
             return canonical
@@ -200,7 +202,10 @@ def parse_tournament_definition(
         err(0, "Type is required")
     t_type = _resolve_type(t_raw) if t_raw else None
     if t_raw and t_type is None:
-        err(0, f"Invalid Type {t_raw!r}; use round robin, single elimination, or double elimination")
+        err(
+            0,
+            f"Invalid Type {t_raw!r}; use round robin, single elimination, or double elimination",
+        )
 
     fmt = (headers.get("battle_format") or "").strip()
     if not fmt:
@@ -220,7 +225,10 @@ def parse_tournament_definition(
     if seb_raw:
         single_elim_bracket = _resolve_bracket(seb_raw)
         if single_elim_bracket is None:
-            err(0, f"Invalid Single Elim Bracket {seb_raw!r}; use compact or power_of_two")
+            err(
+                0,
+                f"Invalid Single Elim Bracket {seb_raw!r}; use compact or power_of_two",
+            )
     elif t_type in ("single_elimination", "double_elimination"):
         single_elim_bracket = "compact"
 
@@ -257,7 +265,10 @@ def parse_tournament_definition(
 
         prov_l = provider.lower().strip()
         if prov_l not in ("anthropic", "deepseek", "openrouter"):
-            err(line_no, f"Unknown provider {provider!r}; use anthropic, deepseek, or openrouter")
+            err(
+                line_no,
+                f"Unknown provider {provider!r}; use anthropic, deepseek, or openrouter",
+            )
             continue
 
         ps = persona_slug.strip()

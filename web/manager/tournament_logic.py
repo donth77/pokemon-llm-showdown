@@ -6,7 +6,9 @@ All functions operate through the db module — they read entries/series/matches
 and create new series or update statuses as results come in.
 
 Double elimination: winners feed winners + losers bracket; losers bracket feeds
-grand finals (slot 2) alongside the winners-bracket champion (slot 1). Power-of-two
+grand finals (slot 2) alongside the winners-bracket champion (slot 1). If the
+losers-bracket player wins that set, a grand finals reset series is queued so the
+winners-bracket player must lose twice. Power-of-two
 winners brackets align WB round W drop-ins with LB round W (and LB1→LB2 indexing);
 compact layouts keep a heuristic path for non-standard shapes.
 """
@@ -43,10 +45,10 @@ def _round_robin_champion_entry_id(series: list[dict]) -> int | None:
 def annotate_series_tournament_champion_winner_side(tournament: dict) -> None:
     """
     Set each series row's _champ_ws to 'p1' or 'p2' only when that side won the
-    tournament-deciding series (grand finals in double elim; winners final in
-    single elim; series won by the outright champion in round robin). Other
-    bracket wins get no _champ_ws so the UI can show a round win without
-    gold/trophy champion styling.
+    tournament-deciding series (grand finals reset, else first grand finals if
+    the winners-bracket player took it in one set; winners final in single elim;
+    series won by the outright champion in round robin). Other bracket wins get
+    no _champ_ws so the UI can show a round win without gold/trophy champion styling.
     """
     series = tournament.get("series") or []
     t_type = tournament.get("type") or ""
@@ -74,8 +76,22 @@ def annotate_series_tournament_champion_winner_side(tournament: dict) -> None:
             if rr_champ_eid is not None:
                 winner_eid = s.get("winner_entry_id")
                 champ = winner_eid is not None and int(winner_eid) == rr_champ_eid
-        elif t_type == "double_elimination" and s.get("bracket") == "grand_finals":
-            champ = True
+        elif t_type == "double_elimination":
+            br = s.get("bracket")
+            if br == "grand_finals_reset":
+                champ = True
+            elif br == "grand_finals":
+                # Player 1 is the winners-bracket finalist; only that side can end the
+                # tournament in one set. Losers-bracket (p2) winning triggers a reset, so
+                # never crown a tournament champion on this row (including before the
+                # reset series row exists).
+                p1_eid = s.get("player1_entry_id")
+                w_eid = s.get("winner_entry_id")
+                champ = (
+                    w_eid is not None
+                    and p1_eid is not None
+                    and int(w_eid) == int(p1_eid)
+                )
         elif t_type == "single_elimination":
             br = s.get("bracket")
             if br in (None, "winners"):
@@ -160,7 +176,8 @@ async def on_match_completed(match: dict) -> None:
     if p1w >= wins_needed or p2w >= wins_needed:
         decided_side = "p1" if p1w >= wins_needed else "p2"
         winner_entry = (
-            series["player1_entry_id"] if decided_side == "p1"
+            series["player1_entry_id"]
+            if decided_side == "p1"
             else series["player2_entry_id"]
         )
         await db.complete_series(series_id, decided_side, winner_entry)
@@ -177,6 +194,7 @@ async def on_match_completed(match: dict) -> None:
 # ---------------------------------------------------------------------------
 # Round-Robin
 # ---------------------------------------------------------------------------
+
 
 async def _generate_round_robin(tournament: dict) -> None:
     tid = tournament["id"]
@@ -205,6 +223,7 @@ async def _generate_round_robin(tournament: dict) -> None:
 # ---------------------------------------------------------------------------
 # Single Elimination
 # ---------------------------------------------------------------------------
+
 
 def _next_power_of_two(n: int) -> int:
     return 1 << (n - 1).bit_length()
@@ -280,7 +299,6 @@ async def _generate_single_elimination_power_of_two(tournament: dict) -> None:
     n = len(entries)
 
     bracket_size = _next_power_of_two(n)
-    num_byes = bracket_size - n
     total_rounds = int(math.log2(bracket_size))
 
     # Seed into bracket slots (standard 1v16, 8v9, etc. seeding)
@@ -339,7 +357,7 @@ async def _generate_single_elimination_power_of_two(tournament: dict) -> None:
 
     # Create placeholder series for later rounds
     for rnd in range(2, total_rounds + 1):
-        matches_in_round = bracket_size // (2 ** rnd)
+        matches_in_round = bracket_size // (2**rnd)
         for p in range(1, matches_in_round + 1):
             await db.create_series(
                 tournament_id=tid,
@@ -517,7 +535,9 @@ def _find_series(
     return None
 
 
-def _find_first_open_in_losers_round(tournament: dict, round_number: int) -> dict | None:
+def _find_first_open_in_losers_round(
+    tournament: dict, round_number: int
+) -> dict | None:
     """First pending/in_progress losers series in this round missing a player."""
     for s in tournament["series"]:
         if s.get("bracket") != "losers" or s.get("round_number") != round_number:
@@ -547,20 +567,31 @@ def _count_pending_lb_feeders(tournament: dict, series: dict) -> int:
     if rnd == 1:
         for wp in (2 * pos - 1, 2 * pos):
             feeders.append(
-                _find_series(tournament, bracket="winners", round_number=1, match_position=wp)
+                _find_series(
+                    tournament, bracket="winners", round_number=1, match_position=wp
+                )
             )
     elif rnd % 2 == 0:
         feeders.append(
-            _find_series(tournament, bracket="losers", round_number=rnd - 1, match_position=pos)
+            _find_series(
+                tournament, bracket="losers", round_number=rnd - 1, match_position=pos
+            )
         )
         wb_r = rnd // 2 + 1
         feeders.append(
-            _find_series(tournament, bracket="winners", round_number=wb_r, match_position=pos)
+            _find_series(
+                tournament, bracket="winners", round_number=wb_r, match_position=pos
+            )
         )
     else:
         for fp in (2 * pos - 1, 2 * pos):
             feeders.append(
-                _find_series(tournament, bracket="losers", round_number=rnd - 1, match_position=fp)
+                _find_series(
+                    tournament,
+                    bracket="losers",
+                    round_number=rnd - 1,
+                    match_position=fp,
+                )
             )
 
     return sum(
@@ -617,10 +648,50 @@ async def _resolve_de_byes(tournament_id: int) -> None:
             break
 
 
+async def _create_grand_finals_reset_series(
+    tournament_id: int, completed_grand_finals: dict
+) -> None:
+    """
+    Losers-bracket player won the first grand finals set; queue a bracket-reset
+    series with the same two entries (winners-bracket rep stays player 1).
+    """
+    t = await db.get_tournament(tournament_id)
+    if not t:
+        return
+    if any(s.get("bracket") == "grand_finals_reset" for s in (t.get("series") or [])):
+        return
+    p1_eid = completed_grand_finals.get("player1_entry_id")
+    p2_eid = completed_grand_finals.get("player2_entry_id")
+    e1 = _entry_for_id(t, p1_eid)
+    e2 = _entry_for_id(t, p2_eid)
+    if not e1 or not e2:
+        return
+    new_s = await db.create_series(
+        tournament_id=tournament_id,
+        best_of=t["best_of"],
+        battle_format=t["battle_format"],
+        round_number=1,
+        match_position=1,
+        bracket="grand_finals_reset",
+        player1_provider=e1["provider"],
+        player1_model=e1["model"],
+        player1_persona=e1["persona_slug"],
+        player1_entry_id=e1["id"],
+        player2_provider=e2["provider"],
+        player2_model=e2["model"],
+        player2_persona=e2["persona_slug"],
+        player2_entry_id=e2["id"],
+        auto_queue=False,
+    )
+    await _queue_series_matches(tournament_id, new_s["id"])
+
+
 async def _queue_series_matches(tournament_id: int, series_id: int) -> None:
     refreshed = await db.get_series(series_id)
-    if not refreshed or not refreshed.get("player1_provider") or not refreshed.get(
-        "player2_provider"
+    if (
+        not refreshed
+        or not refreshed.get("player1_provider")
+        or not refreshed.get("player2_provider")
     ):
         return
     if refreshed.get("status") in ("completed", "cancelled"):
@@ -837,7 +908,11 @@ def _de_wb_loser_lb_cell(
 
 
 async def _de_drop_wb_loser(
-    tournament_id: int, t: dict, completed_series: dict, bracket_size: int, wb_rounds: int
+    tournament_id: int,
+    t: dict,
+    completed_series: dict,
+    bracket_size: int,
+    wb_rounds: int,
 ) -> None:
     if completed_series.get("bracket") != "winners":
         return
@@ -860,7 +935,9 @@ async def _de_drop_wb_loser(
         # Stale tournament snapshot — re-read once.
         t2 = await db.get_tournament(tournament_id)
         if t2:
-            target = _find_series(t2, bracket="losers", round_number=lr, match_position=lp)
+            target = _find_series(
+                t2, bracket="losers", round_number=lr, match_position=lp
+            )
     if not target:
         print(f"[tournament] WARNING: LB series R{lr} pos {lp} not found for WB loser")
         return
@@ -869,7 +946,11 @@ async def _de_drop_wb_loser(
 
 
 async def _de_wb_finals_to_grand_finals(
-    tournament_id: int, t: dict, completed_series: dict, bracket_size: int, wb_rounds: int
+    tournament_id: int,
+    t: dict,
+    completed_series: dict,
+    bracket_size: int,
+    wb_rounds: int,
 ) -> None:
     """WB finals: winners-bracket champion to grand finals p1; loser toward last LB or GF (2p)."""
     winner_entry = _entry_for_id(t, completed_series.get("winner_entry_id"))
@@ -945,7 +1026,9 @@ async def _advance_de_winners(tournament_id: int, completed_series: dict) -> Non
         await _queue_series_matches(tournament_id, gf["id"])
 
 
-async def _advance_de_losers_bracket(tournament_id: int, completed_series: dict) -> None:
+async def _advance_de_losers_bracket(
+    tournament_id: int, completed_series: dict
+) -> None:
     rnd = completed_series["round_number"]
     pos = completed_series["match_position"]
     winner_entry_id = completed_series["winner_entry_id"]
@@ -989,6 +1072,7 @@ async def _advance_de_losers_bracket(tournament_id: int, completed_series: dict)
 # ---------------------------------------------------------------------------
 # Double Elimination
 # ---------------------------------------------------------------------------
+
 
 async def _add_double_elim_losers_and_grand_finals(
     tournament: dict, *, bracket_size: int, wb_rounds: int
@@ -1094,7 +1178,7 @@ async def _generate_double_elimination_power_of_two(tournament: dict) -> None:
             await db.complete_series(s["id"], side, present["id"])
 
     for rnd in range(2, wb_rounds + 1):
-        matches_in_round = bracket_size // (2 ** rnd)
+        matches_in_round = bracket_size // (2**rnd)
         for p in range(1, matches_in_round + 1):
             await db.create_series(
                 tournament_id=tid,
@@ -1172,6 +1256,19 @@ async def _advance_double_elim(tournament_id: int, completed_series: dict) -> No
     elif bracket == "losers":
         await _advance_de_losers_bracket(tournament_id, completed_series)
     elif bracket == "grand_finals":
+        # Player 1 is always the winners-bracket champion (see ``_de_wb_finals_to_grand_finals``).
+        winner_eid = completed_series.get("winner_entry_id")
+        p1_eid = completed_series.get("player1_entry_id")
+        if (
+            winner_eid is not None
+            and p1_eid is not None
+            and int(winner_eid) == int(p1_eid)
+        ):
+            await db.update_tournament_status(tournament_id, "completed")
+            return
+        await _create_grand_finals_reset_series(tournament_id, completed_series)
+        return
+    elif bracket == "grand_finals_reset":
         await db.update_tournament_status(tournament_id, "completed")
         return
 
@@ -1181,6 +1278,7 @@ async def _advance_double_elim(tournament_id: int, completed_series: dict) -> No
 # ---------------------------------------------------------------------------
 # Shared advancement dispatcher
 # ---------------------------------------------------------------------------
+
 
 async def _advance_bracket(tournament_id: int, completed_series: dict) -> None:
     t = await db.get_tournament(tournament_id)
@@ -1197,6 +1295,8 @@ async def _advance_bracket(tournament_id: int, completed_series: dict) -> None:
 
 
 async def _check_round_robin_complete(tournament: dict) -> None:
-    all_done = all(s["status"] in ("completed", "cancelled") for s in tournament["series"])
+    all_done = all(
+        s["status"] in ("completed", "cancelled") for s in tournament["series"]
+    )
     if all_done and tournament["series"]:
         await db.update_tournament_status(tournament["id"], "completed")

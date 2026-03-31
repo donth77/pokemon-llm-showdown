@@ -1,0 +1,5 @@
+/* Side colors: keep in sync with thoughts panels (.thoughts-title) and overlay (.player-name). */
+:root {
+  --broadcast-side-red: #ff6b6b;
+  --broadcast-side-blue: #74b9ff;
+}

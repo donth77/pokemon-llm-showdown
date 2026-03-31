@@ -40,8 +40,7 @@
         const iframe = document.getElementById(syncId);
         const src = (iframe && iframe.src) || "";
         const searchIndex = src.indexOf("?");
-        const searchPart =
-          searchIndex !== -1 ? src.slice(searchIndex + 1) : "";
+        const searchPart = searchIndex !== -1 ? src.slice(searchIndex + 1) : "";
         const sp = new URLSearchParams(searchPart);
         hideUi = sp.has("hide_battle_ui");
       } catch (_) {
@@ -61,7 +60,10 @@
 
   syncThoughtPanelHeights();
   if (cfg.syncHeightsIframeId) {
-    window.addEventListener("broadcast-battle-iframe-load", syncThoughtPanelHeights);
+    window.addEventListener(
+      "broadcast-battle-iframe-load",
+      syncThoughtPanelHeights,
+    );
   }
 
   let thoughtPlayer1 = "Player 1";
@@ -200,17 +202,23 @@
    */
   function flushScrollToBottom(scroller) {
     if (!scroller) return;
+    // #region agent log
+    var _fs = performance.now();
+    // #endregion
     for (let k = 0; k < 6; k++) {
       scroller.scrollTop = scroller.scrollHeight;
       pinPortraitToScroll(scroller);
     }
+    // #region agent log
+    var _fd = performance.now() - _fs;
+    if (_fd > 16 && window._dbg)
+      window._dbg("thoughts:flush", "slow", { ms: Math.round(_fd) }, "H2");
+    // #endregion
   }
 
   function scrollThoughtsToBottom(bodyEl) {
     const scroller =
-      bodyEl && bodyEl.closest
-        ? bodyEl.closest(".thoughts-scroll")
-        : null;
+      bodyEl && bodyEl.closest ? bodyEl.closest(".thoughts-scroll") : null;
     if (!scroller) return;
     flushScrollToBottom(scroller);
     requestAnimationFrame(function () {
@@ -229,15 +237,25 @@
     });
   }
 
+  /** Reasoning longer than this adds class thought-line--long (smaller type on that row only). */
+  const THOUGHT_LINE_LONG_CHARS = 300;
+
+  function thoughtHasDisplayReasoning(item) {
+    return String(item?.reasoning || "").trim().length > 0;
+  }
+
   function renderThoughtList(target, items) {
     if (!target) return;
-    if (!Array.isArray(items) || !items.length) {
+    const visible = Array.isArray(items)
+      ? items.filter((item) => thoughtHasDisplayReasoning(item))
+      : [];
+    if (!visible.length) {
       target.innerHTML =
         '<div class="thought-line"><span class="meta">--</span>Waiting for thoughts...</div>';
       scrollThoughtsToBottom(target);
       return;
     }
-    const lastItems = items.slice(-14);
+    const lastItems = visible.slice(-14);
     target.innerHTML = lastItems
       .map((item) => {
         const turn = Number.isFinite(item?.turn) ? `T${item.turn}` : "T?";
@@ -247,7 +265,11 @@
           .replaceAll("&", "&amp;")
           .replaceAll("<", "&lt;")
           .replaceAll(">", "&gt;");
-        return `<div class="thought-line"><span class="meta">${turn} ${action}</span>${safeReasoning}</div>`;
+        const longClass =
+          reasoning.length > THOUGHT_LINE_LONG_CHARS
+            ? " thought-line--long"
+            : "";
+        return `<div class="thought-line${longClass}"><span class="meta">${turn} ${action}</span>${safeReasoning}</div>`;
       })
       .join("");
     scrollThoughtsToBottom(target);
@@ -293,10 +315,7 @@
       // If scoreboard already fixed P2's name and the only thought is from P2,
       // do not assign `only` to panel 1 — that would make thoughtPlayer1 ===
       // thoughtPlayer2 and duplicate one stream in both bubbles.
-      if (
-        isPlaceholderThoughtName(thoughtPlayer2) ||
-        only !== thoughtPlayer2
-      ) {
+      if (isPlaceholderThoughtName(thoughtPlayer2) || only !== thoughtPlayer2) {
         setThoughtPlayerNames(only, thoughtPlayer2);
       }
     } else if (keys.length >= 2 && (!p1Has || !p2Has)) {
@@ -359,28 +378,46 @@
   }
 
   function handleThoughtsMessage(msg) {
+    // #region agent log
+    if (window._dbg) {
+      var _tc = 0;
+      for (var _k in thoughtItems)
+        if (thoughtItems[_k]) _tc += thoughtItems[_k].length;
+      window._dbg(
+        "thoughts:msg",
+        msg.type,
+        { items: _tc, players: Object.keys(thoughtItems).length },
+        "H2",
+      );
+    }
+    // #endregion
     if (msg.type === "history") {
       for (const k of Object.keys(thoughtItems)) delete thoughtItems[k];
       const players = msg.players || {};
       for (const [player, items] of Object.entries(players)) {
-        thoughtItems[player] = Array.isArray(items) ? items : [];
+        thoughtItems[player] = Array.isArray(items)
+          ? items.filter((item) => thoughtHasDisplayReasoning(item))
+          : [];
       }
       renderAllThoughtPanels();
     } else if (msg.type === "thought") {
       const player = msg.player || "";
       if (!player) return;
-      if (!thoughtItems[player]) thoughtItems[player] = [];
-      thoughtItems[player].push({
-        timestamp: msg.timestamp,
-        turn: msg.turn,
-        action: msg.action,
-        reasoning: msg.reasoning,
-        callout: msg.callout,
-      });
-      if (thoughtItems[player].length > 80) {
-        thoughtItems[player] = thoughtItems[player].slice(-80);
+      const reasoningTrim = String(msg.reasoning || "").trim();
+      if (reasoningTrim) {
+        if (!thoughtItems[player]) thoughtItems[player] = [];
+        thoughtItems[player].push({
+          timestamp: msg.timestamp,
+          turn: msg.turn,
+          action: msg.action,
+          reasoning: msg.reasoning,
+          callout: msg.callout,
+        });
+        if (thoughtItems[player].length > 80) {
+          thoughtItems[player] = thoughtItems[player].slice(-80);
+        }
+        renderAllThoughtPanels();
       }
-      renderAllThoughtPanels();
       const callout = (msg.callout || "").trim();
       if (callout && getCalloutTarget()) {
         const bs = String(msg.battle_side || "")
@@ -392,8 +429,7 @@
             : player === thoughtPlayer1
               ? "p1"
               : "p2";
-        const actionAge =
-          Date.now() - (unreleasedActionTsBySide[side] || 0);
+        const actionAge = Date.now() - (unreleasedActionTsBySide[side] || 0);
         if (actionAge < UNRELEASED_ACTION_MAX_AGE_MS) {
           unreleasedActionTsBySide[side] = 0;
           pendingCalloutsBySide[side] = [];
@@ -447,8 +483,7 @@
       if (!isBattleFrameMessage(event)) return;
 
       if (data.type === "battle_action") {
-        const side =
-          data.side === "p1" ? "p1" : data.side === "p2" ? "p2" : "";
+        const side = data.side === "p1" ? "p1" : data.side === "p2" ? "p2" : "";
         if (!side) return;
         const pending = pendingCalloutsBySide[side];
         if (pending && pending.length) {
@@ -467,6 +502,27 @@
     });
   }
 
+  /** Agents append ``/state/thoughts.json`` before POSTing ``/thought``; HTTP sync heals WS failures and restarts. */
+  let thoughtsHttpSig = "";
+
+  async function maybeRefreshThoughtsFromHttp() {
+    try {
+      const resp = await fetch("/thoughts", { cache: "no-store" });
+      const data = await resp.json();
+      if (!data || typeof data !== "object") return;
+      const players = data.players || {};
+      let n = 0;
+      for (const k of Object.keys(players)) {
+        const arr = players[k];
+        if (Array.isArray(arr)) n += arr.length;
+      }
+      const sig = `${Number(data.updated_at) || 0}:${n}`;
+      if (sig === thoughtsHttpSig) return;
+      thoughtsHttpSig = sig;
+      handleThoughtsMessage({ type: "history", players });
+    } catch (_) {}
+  }
+
   function connectThoughtsWS() {
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     const url = `${proto}//${location.host}/thoughts/ws`;
@@ -480,6 +536,12 @@
     ws.onerror = () => ws.close();
   }
 
+  /*
+   * Hub page (`/broadcast`): scoreboard names/portraits come only from the parent's
+   * `broadcast_scoreboard` CustomEvent (fired from the same SSE path as postMessage
+   * to iframes). No `/scoreboard` polling here — avoids duplicate HTTP while the
+   * stream is healthy.
+   */
   if (window.__BROADCAST_SCOREBOARD_HUB__) {
     window.addEventListener("broadcast_scoreboard", (ev) => {
       const d = ev && ev.detail;
@@ -490,4 +552,6 @@
     setInterval(refreshThoughtNamesFromScoreboard, 5000);
   }
   connectThoughtsWS();
+  maybeRefreshThoughtsFromHttp();
+  setInterval(maybeRefreshThoughtsFromHttp, 2500);
 })();

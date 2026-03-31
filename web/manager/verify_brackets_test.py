@@ -70,7 +70,9 @@ def _wb_pow2_series_per_round(bracket_size: int) -> list[int]:
     return [bracket_size // (2**r) for r in range(1, wb_rounds + 1)]
 
 
-def _simulate_wb_r1_pow2(n: int, bracket_size: int) -> tuple[list[tuple[int, int]], list[int]]:
+def _simulate_wb_r1_pow2(
+    n: int, bracket_size: int
+) -> tuple[list[tuple[int, int]], list[int]]:
     seed_order = _standard_seed_order(bracket_size)
     slots: list[int | None] = [None] * bracket_size
     for i, slot_idx in enumerate(seed_order):
@@ -191,6 +193,59 @@ def test_annotate_round_robin_in_progress_does_not_apply_champion_flag():
     }
     annotate_series_tournament_champion_winner_side(tournament)
     assert series[0].get("_champ_ws") is None
+
+
+def test_annotate_double_elim_grand_finals_wb_winner_is_tournament_champ():
+    s_gf: dict = {
+        "status": "completed",
+        "bracket": "grand_finals",
+        "winner_side": "p1",
+        "winner_entry_id": 1,
+        "player1_entry_id": 1,
+        "player2_entry_id": 2,
+    }
+    tournament = {
+        "type": "double_elimination",
+        "status": "completed",
+        "series": [s_gf],
+    }
+    annotate_series_tournament_champion_winner_side(tournament)
+    assert s_gf.get("_champ_ws") == "p1"
+
+
+def test_annotate_double_elim_grand_finals_lb_winner_not_tournament_champ_until_reset():
+    s_gf: dict = {
+        "status": "completed",
+        "bracket": "grand_finals",
+        "winner_side": "p2",
+        "winner_entry_id": 2,
+        "player1_entry_id": 1,
+        "player2_entry_id": 2,
+    }
+    s_rs: dict = {
+        "status": "completed",
+        "bracket": "grand_finals_reset",
+        "winner_side": "p2",
+        "winner_entry_id": 2,
+        "player1_entry_id": 1,
+        "player2_entry_id": 2,
+    }
+    tournament_done = {
+        "type": "double_elimination",
+        "status": "completed",
+        "series": [s_gf, s_rs],
+    }
+    annotate_series_tournament_champion_winner_side(tournament_done)
+    assert s_gf.get("_champ_ws") is None
+    assert s_rs.get("_champ_ws") == "p2"
+
+    tournament_mid = {
+        "type": "double_elimination",
+        "status": "in_progress",
+        "series": [dict(s_gf)],
+    }
+    annotate_series_tournament_champion_winner_side(tournament_mid)
+    assert tournament_mid["series"][0].get("_champ_ws") is None
 
 
 # ---------------------------------------------------------------------------

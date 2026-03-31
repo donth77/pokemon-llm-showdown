@@ -22,6 +22,7 @@ import json
 from poke_env.player import Player
 from poke_env.ps_client import AccountConfiguration, ServerConfiguration
 
+from env_bool import parse_env_bool
 from llm_player import LLMPlayer, reflection_json_completion
 from log_print import log_print
 
@@ -34,9 +35,10 @@ SHOWDOWN_HOST = os.getenv("SHOWDOWN_HOST", "showdown")
 SHOWDOWN_PORT = int(os.getenv("SHOWDOWN_PORT", "8000"))
 WEB_HOST = os.getenv("WEB_HOST") or os.getenv("OVERLAY_HOST", "web")
 WEB_PORT = int(os.getenv("WEB_PORT") or os.getenv("OVERLAY_PORT", "8080"))
+MANAGER_API = f"http://{WEB_HOST}:{WEB_PORT}/api/manager"
 REPLAY_DIR = Path(os.getenv("REPLAY_DIR", "/replays"))
 LOG_DIR = Path(os.getenv("LOG_DIR", "/logs"))
-LOG_RAW_BATTLE = (os.getenv("LOG_RAW_BATTLE") or "1").lower() not in ("0", "false", "no")
+LOG_RAW_BATTLE = parse_env_bool("LOG_RAW_BATTLE", default=True)
 STATE_DIR = Path(os.getenv("STATE_DIR", "/state"))
 CURRENT_BATTLE_FILE = STATE_DIR / "current_battle.json"
 THOUGHTS_FILE = STATE_DIR / "thoughts.json"
@@ -48,20 +50,9 @@ _MATCH_INTRO_STARTING_HOLD_SEC = float(
 )
 
 
-def _env_truthy(name: str, *, default: bool = False) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() not in ("0", "false", "no", "")
-
-
-ENABLE_MEMORY = _env_truthy("ENABLE_MEMORY", default=False)
-MEMORY_REFLECTION_INTERVAL = max(
-    0, int(os.getenv("MEMORY_REFLECTION_INTERVAL") or "1")
-)
-LEARNINGS_UPDATE_INTERVAL = max(
-    0, int(os.getenv("LEARNINGS_UPDATE_INTERVAL") or "3")
-)
+ENABLE_MEMORY = parse_env_bool("ENABLE_MEMORY", default=False)
+MEMORY_REFLECTION_INTERVAL = max(0, int(os.getenv("MEMORY_REFLECTION_INTERVAL") or "1"))
+LEARNINGS_UPDATE_INTERVAL = max(0, int(os.getenv("LEARNINGS_UPDATE_INTERVAL") or "3"))
 MAX_MEMORY_ENTRIES = max(1, int(os.getenv("MAX_MEMORY_ENTRIES") or "10"))
 MAX_LEARNINGS_BULLETS = max(1, int(os.getenv("MAX_LEARNINGS_BULLETS") or "30"))
 
@@ -72,6 +63,7 @@ _MAX_USERNAME_LEN = 18
 # ---------------------------------------------------------------------------
 # Persona handling
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class PersonaDefinition:
@@ -89,8 +81,10 @@ ACTION_FORMAT_INSTRUCTIONS = (
     "Respond with strict JSON containing:\n"
     '- "action_type": "move" or "switch"\n'
     '- "index": 1-based action index from the valid actions list\n'
-    '- "reasoning": 1-3 sentences in YOUR persona voice (first person, same tone and '
-    "vocabulary as your character above — not a dry analyst or generic bullet list)\n"
+    '- "reasoning": A short spectator blurb only (~60 words max, 3 sentences max) in YOUR '
+    "persona voice (first person). Not a damage calc, type-chart essay, or multi-turn writeup — "
+    "keep analysis in your head, then give a tight summary. Plain text only (no markdown); "
+    "direct prose, no leading labels.\n"
     '- "callout": optional; usually leave empty. Short in-character phrase only on standout turns.\n'
     "Callout guidance:\n"
     "- Default to no callout (empty string) on most turns — roughly half or more should have none.\n"
@@ -104,7 +98,9 @@ ACTION_FORMAT_INSTRUCTIONS = (
 )
 
 
-def _parse_persona_markdown(markdown_text: str, *, source_path: Path) -> tuple[dict[str, str], str]:
+def _parse_persona_markdown(
+    markdown_text: str, *, source_path: Path
+) -> tuple[dict[str, str], str]:
     text = markdown_text.strip()
     if not text:
         raise ValueError(f"Persona file is empty: {source_path}")
@@ -112,7 +108,9 @@ def _parse_persona_markdown(markdown_text: str, *, source_path: Path) -> tuple[d
         return {}, text
     closing_idx = text.find("\n---\n", 4)
     if closing_idx == -1:
-        raise ValueError(f"Persona front matter is missing closing '---' marker: {source_path}")
+        raise ValueError(
+            f"Persona front matter is missing closing '---' marker: {source_path}"
+        )
     front_matter_raw = text[4:closing_idx]
     body = text[closing_idx + len("\n---\n") :].strip()
     if not body:
@@ -164,8 +162,14 @@ def load_persona(persona_slug: str) -> PersonaDefinition:
         raise ValueError(f"Invalid persona slug '{persona_slug}'.")
     persona_path = PERSONAS_DIR / f"{slug}.md"
     if not persona_path.exists():
-        available = sorted(p.stem for p in PERSONAS_DIR.glob("*.md")) if PERSONAS_DIR.exists() else []
-        raise ValueError(f"Persona '{slug}' not found. Available: {', '.join(available) or '(none)'}")
+        available = (
+            sorted(p.stem for p in PERSONAS_DIR.glob("*.md"))
+            if PERSONAS_DIR.exists()
+            else []
+        )
+        raise ValueError(
+            f"Persona '{slug}' not found. Available: {', '.join(available) or '(none)'}"
+        )
     text = persona_path.read_text(encoding="utf-8")
     metadata, prompt_body = _parse_persona_markdown(text, source_path=persona_path)
     display_name = metadata.get("name", slug.capitalize())
@@ -173,8 +177,12 @@ def load_persona(persona_slug: str) -> PersonaDefinition:
     description = metadata.get("description", "")
     sprite_url = _resolve_persona_sprite_url(slug, metadata)
     return PersonaDefinition(
-        slug=slug, name=display_name, abbreviation=abbr,
-        description=description, prompt_body=prompt_body, sprite_url=sprite_url,
+        slug=slug,
+        name=display_name,
+        abbreviation=abbr,
+        description=description,
+        prompt_body=prompt_body,
+        sprite_url=sprite_url,
     )
 
 
@@ -187,7 +195,9 @@ def build_system_prompt(
     learnings_md: str = "",
 ) -> str:
     try:
-        persona_prompt = prompt_body.format(player_name=player_name, opponent_name=opponent_name)
+        persona_prompt = prompt_body.format(
+            player_name=player_name, opponent_name=opponent_name
+        )
     except KeyError as e:
         raise ValueError(f"Unknown template variable in persona prompt: {e}") from e
     blocks: list[str] = [persona_prompt.strip()]
@@ -210,8 +220,16 @@ def _load_persona_memory_texts(persona_slug: str) -> tuple[str, str]:
     base = STATE_DIR / "personas" / slug
     mem_p = base / "memory.md"
     learn_p = base / "learnings.md"
-    memory_md = mem_p.read_text(encoding="utf-8").strip() if mem_p.is_file() else ""
-    learnings_md = learn_p.read_text(encoding="utf-8").strip() if learn_p.is_file() else ""
+    mem_ok = mem_p.is_file()
+    learn_ok = learn_p.is_file()
+    memory_md = mem_p.read_text(encoding="utf-8").strip() if mem_ok else ""
+    learnings_md = learn_p.read_text(encoding="utf-8").strip() if learn_ok else ""
+    log_print(
+        f"[memory] load persona {slug}: memory.md "
+        f"{'ok' if mem_ok else 'missing'} ({len(memory_md)} chars), "
+        f"learnings.md {'ok' if learn_ok else 'missing'} ({len(learnings_md)} chars)",
+        flush=True,
+    )
     return memory_md, learnings_md
 
 
@@ -233,9 +251,7 @@ def _trim_learnings_bullets(md: str, max_bullets: int) -> str:
     if max_bullets <= 0:
         return ""
     lines = md.splitlines()
-    bullet_count = sum(
-        1 for ln in lines if re.match(r"\s*[-*]\s+\S", ln)
-    )
+    bullet_count = sum(1 for ln in lines if re.match(r"\s*[-*]\s+\S", ln))
     if bullet_count <= max_bullets:
         return "\n".join(lines).strip()
     skip = bullet_count - max_bullets
@@ -266,6 +282,11 @@ def _increment_persona_match_count(slug: str) -> int:
         json.dumps({"matches_completed": n}, indent=2),
         encoding="utf-8",
     )
+    log_print(
+        f"[memory] persona {slug}: wrote {meta.relative_to(STATE_DIR)} "
+        f"matches_completed={n}",
+        flush=True,
+    )
     return n
 
 
@@ -288,11 +309,7 @@ def _battle_log_text_for_reflection(
         if p.is_file():
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
-                lines = (
-                    data.get("raw_log_lines")
-                    or data.get("replay_log_lines")
-                    or []
-                )
+                lines = data.get("raw_log_lines") or data.get("replay_log_lines") or []
                 if not isinstance(lines, list):
                     lines = []
                 lines = [str(x) for x in lines]
@@ -336,7 +353,16 @@ async def _run_one_persona_reflection(
     mem_path = base / "memory.md"
     learn_path = base / "learnings.md"
     current_memory = mem_path.read_text(encoding="utf-8") if mem_path.is_file() else ""
-    current_learnings = learn_path.read_text(encoding="utf-8") if learn_path.is_file() else ""
+    current_learnings = (
+        learn_path.read_text(encoding="utf-8") if learn_path.is_file() else ""
+    )
+    log_print(
+        f"[memory] {persona_slug}: reflection reading "
+        f"{mem_path.relative_to(STATE_DIR)} ({len(current_memory)} chars), "
+        f"{learn_path.relative_to(STATE_DIR)} ({len(current_learnings)} chars); "
+        f"update_learnings={update_learnings}",
+        flush=True,
+    )
 
     learnings_instruction = (
         'Set "learnings_update" to the full updated learnings markdown document '
@@ -344,27 +370,29 @@ async def _run_one_persona_reflection(
         if update_learnings
         else 'Set "learnings_update" to null (do not revise learnings this match).'
     )
-    user_msg = "\n".join([
-        f"You are persona: {persona_display_name!r} (slug: {persona_slug}).",
-        f"Opponent persona: {opponent_persona_name!r}.",
-        f"Format: {battle_format}",
-        f"Result for you: {outcome}",
-        "",
-        learnings_instruction,
-        "",
-        "YOUR CURRENT BATTLE MEMORY FILE (may be empty):",
-        "---",
-        current_memory.strip() or "(empty)",
-        "---",
-        "",
-        "YOUR CURRENT TACTICAL LEARNINGS FILE (may be empty):",
-        "---",
-        current_learnings.strip() or "(empty)",
-        "---",
-        "",
-        "BATTLE LOG:",
-        battle_log_text,
-    ])
+    user_msg = "\n".join(
+        [
+            f"You are persona: {persona_display_name!r} (slug: {persona_slug}).",
+            f"Opponent persona: {opponent_persona_name!r}.",
+            f"Format: {battle_format}",
+            f"Result for you: {outcome}",
+            "",
+            learnings_instruction,
+            "",
+            "YOUR CURRENT BATTLE MEMORY FILE (may be empty):",
+            "---",
+            current_memory.strip() or "(empty)",
+            "---",
+            "",
+            "YOUR CURRENT TACTICAL LEARNINGS FILE (may be empty):",
+            "---",
+            current_learnings.strip() or "(empty)",
+            "---",
+            "",
+            "BATTLE LOG:",
+            battle_log_text,
+        ]
+    )
     reply = await reflection_json_completion(
         provider=provider,  # type: ignore[arg-type]
         model_id=model_id,
@@ -375,7 +403,9 @@ async def _run_one_persona_reflection(
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as e:
-        log_print(f"[memory] {persona_slug}: invalid JSON from reflection: {e}", flush=True)
+        log_print(
+            f"[memory] {persona_slug}: invalid JSON from reflection: {e}", flush=True
+        )
         return
     if not isinstance(payload, dict):
         return
@@ -389,14 +419,29 @@ async def _run_one_persona_reflection(
     block = f"{header}\n\n{entry.strip()}\n"
     prev = mem_path.read_text(encoding="utf-8") if mem_path.is_file() else ""
     combined = f"{prev.rstrip()}\n\n{block}\n".strip() + "\n"
-    mem_path.write_text(_trim_memory_entries(combined, MAX_MEMORY_ENTRIES), encoding="utf-8")
+    trimmed_mem = _trim_memory_entries(combined, MAX_MEMORY_ENTRIES)
+    mem_path.write_text(trimmed_mem, encoding="utf-8")
+    log_print(
+        f"[memory] {persona_slug}: wrote {mem_path.relative_to(STATE_DIR)} "
+        f"({len(trimmed_mem)} chars, max_entries={MAX_MEMORY_ENTRIES})",
+        flush=True,
+    )
 
     lu = payload.get("learnings_update")
     if update_learnings and isinstance(lu, str) and lu.strip():
         trimmed = _trim_learnings_bullets(lu.strip(), MAX_LEARNINGS_BULLETS)
         learn_path.write_text(trimmed + "\n", encoding="utf-8")
-
-    log_print(f"[memory] Updated memory for persona {persona_slug!r}", flush=True)
+        log_print(
+            f"[memory] {persona_slug}: wrote {learn_path.relative_to(STATE_DIR)} "
+            f"({len(trimmed)} chars, max_bullets={MAX_LEARNINGS_BULLETS})",
+            flush=True,
+        )
+    elif update_learnings:
+        log_print(
+            f"[memory] {persona_slug}: learnings_update null/empty; "
+            f"{learn_path.relative_to(STATE_DIR)} not modified",
+            flush=True,
+        )
 
 
 async def _post_match_persona_memory(
@@ -482,6 +527,7 @@ async def _post_match_persona_memory(
 # Showdown helpers
 # ---------------------------------------------------------------------------
 
+
 def make_server_config() -> ServerConfiguration:
     return ServerConfiguration(
         f"ws://{SHOWDOWN_HOST}:{SHOWDOWN_PORT}/showdown/websocket",
@@ -495,7 +541,9 @@ async def wait_for_showdown() -> None:
     async with aiohttp.ClientSession() as session:
         while True:
             try:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                async with session.get(
+                    url, timeout=aiohttp.ClientTimeout(total=5)
+                ) as resp:
                     if resp.status == 200:
                         log_print("Showdown is up!", flush=True)
                         return
@@ -519,6 +567,7 @@ async def _disconnect_players(*players: Player | None) -> None:
 # ---------------------------------------------------------------------------
 # Name building
 # ---------------------------------------------------------------------------
+
 
 def _make_player_name(_provider: str, _model_id: str, persona_name: str) -> str:
     """Showdown account username from persona display name (Showdown max 18)."""
@@ -581,6 +630,7 @@ def assign_distinct_showdown_pair(
 # State / thoughts helpers
 # ---------------------------------------------------------------------------
 
+
 def write_json_atomic(path: Path, data: dict) -> None:
     """Replace a JSON file atomically so concurrent readers never see partial bytes."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -588,6 +638,67 @@ def write_json_atomic(path: Path, data: dict) -> None:
     tmp = path.parent / f".{path.name}.{os.getpid()}.tmp"
     tmp.write_text(serialized, encoding="utf-8")
     os.replace(tmp, path)
+
+
+def _merge_series_snapshot_into_current_battle(snapshot: dict) -> None:
+    try:
+        if not CURRENT_BATTLE_FILE.is_file():
+            return
+        raw = CURRENT_BATTLE_FILE.read_text(encoding="utf-8")
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            return
+        data["series_id"] = snapshot["series_id"]
+        data["series_best_of"] = snapshot["best_of"]
+        data["series_player1_wins"] = snapshot["player1_wins"]
+        data["series_player2_wins"] = snapshot["player2_wins"]
+        write_json_atomic(CURRENT_BATTLE_FILE, data)
+    except Exception as e:
+        log_print(
+            f"[match] Could not merge series into current_battle: {e}", flush=True
+        )
+
+
+async def _post_manager_match_complete(
+    match_id: int,
+    *,
+    winner: str,
+    loser: str,
+    winner_side: str,
+    duration: float,
+    replay_file: str | None,
+    log_file: str | None,
+    battle_tag: str | None,
+) -> dict | None:
+    """Notify manager (scoreboard / tournaments). Safe to call twice with artifacts on 2nd."""
+    url = f"{MANAGER_API}/matches/{match_id}/complete"
+    payload = {
+        "winner": winner,
+        "loser": loser,
+        "winner_side": winner_side,
+        "duration": duration,
+        "replay_file": replay_file,
+        "log_file": log_file,
+        "battle_tag": battle_tag,
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=60),
+            ) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    log_print(
+                        f"[match] manager complete HTTP {resp.status}: {text[:500]}",
+                        flush=True,
+                    )
+                    return None
+                return await resp.json()
+    except Exception as e:
+        log_print(f"[match] manager complete request failed: {e}", flush=True)
+        return None
 
 
 def write_current_battle_state(
@@ -675,6 +786,7 @@ async def _post_thoughts_clear() -> None:
 # Replay / log saving
 # ---------------------------------------------------------------------------
 
+
 def save_local_replay(player: Player, battle_tag: str) -> Path:
     REPLAY_DIR.mkdir(parents=True, exist_ok=True)
     safe_tag = battle_tag.lstrip(">").replace("/", "_")
@@ -749,6 +861,7 @@ def save_raw_battle_log(
 # ---------------------------------------------------------------------------
 # Main match execution
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class MatchResult:
@@ -919,6 +1032,41 @@ async def run_single_match(
 
         match_duration = time.time() - match_start
         safe_tag = last_battle.battle_tag.lstrip(">").replace("/", "_")
+
+        # Idle + manager complete **before** replay/memory so the broadcast can show
+        # the victory splash within ~poll + network instead of after disk + reflection.
+        write_current_battle_state(
+            status="idle",
+            battle_format=battle_format,
+            player1_name=player1_name,
+            player2_name=player2_name,
+            player1_model_id=player1_model,
+            player2_model_id=player2_model,
+            player1_persona=p1_persona,
+            player2_persona=p2_persona,
+            series_snapshot=series_snapshot,
+            tourney_context=tourney_context,
+            manager_match_id=manager_match_id,
+        )
+        clear_thoughts_state()
+        await _post_thoughts_clear()
+
+        if manager_match_id is not None:
+            body = await _post_manager_match_complete(
+                int(manager_match_id),
+                winner=winner,
+                loser=loser,
+                winner_side=winner_side,
+                duration=round(match_duration, 1),
+                replay_file=None,
+                log_file=None,
+                battle_tag=safe_tag,
+            )
+            if isinstance(body, dict):
+                snap = body.get("series_snapshot")
+                if isinstance(snap, dict):
+                    _merge_series_snapshot_into_current_battle(snap)
+
         replay_path = save_local_replay(agent1, last_battle.battle_tag)
         log_path = save_raw_battle_log(
             last_battle,
@@ -952,22 +1100,6 @@ async def run_single_match(
             log_print(f"[memory] post-match memory cycle failed: {e}", flush=True)
             traceback.print_exc()
 
-        write_current_battle_state(
-            status="idle",
-            battle_format=battle_format,
-            player1_name=player1_name,
-            player2_name=player2_name,
-            player1_model_id=player1_model,
-            player2_model_id=player2_model,
-            player1_persona=p1_persona,
-            player2_persona=p2_persona,
-            series_snapshot=series_snapshot,
-            tourney_context=tourney_context,
-            manager_match_id=manager_match_id,
-        )
-        clear_thoughts_state()
-        await _post_thoughts_clear()
-
         return MatchResult(
             winner=winner,
             loser=loser,
@@ -997,9 +1129,14 @@ async def run_single_match(
         log_print(f"Error in match: {e}", flush=True)
         traceback.print_exc()
         return MatchResult(
-            winner="", loser="", winner_side="",
-            duration=0, replay_file=None, log_file=None,
-            battle_tag=None, error=str(e),
+            winner="",
+            loser="",
+            winner_side="",
+            duration=0,
+            replay_file=None,
+            log_file=None,
+            battle_tag=None,
+            error=str(e),
         )
 
     finally:

@@ -20,9 +20,11 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from log_print import log_print
+from log_print import log_print  # noqa: E402 — sys.path bootstrap above
 
-GITHUB_RAW = "https://raw.githubusercontent.com/smogon/pokemon-showdown/master/data/text"
+GITHUB_RAW = (
+    "https://raw.githubusercontent.com/smogon/pokemon-showdown/master/data/text"
+)
 FILES = {
     "items": f"{GITHUB_RAW}/items.ts",
     "abilities": f"{GITHUB_RAW}/abilities.ts",
@@ -50,7 +52,9 @@ _FIELD_RE = re.compile(
 
 
 def _download(url: str) -> str:
-    req = urllib.request.Request(url, headers={"User-Agent": "pokemon-llm-showdown/1.0"})
+    req = urllib.request.Request(
+        url, headers={"User-Agent": "pokemon-llm-showdown/1.0"}
+    )
     with urllib.request.urlopen(req, timeout=30) as resp:
         return resp.read().decode("utf-8")
 
@@ -112,7 +116,9 @@ def main() -> None:
         try:
             source = _download(url)
         except Exception as e:
-            log_print(f"  WARN: failed to download {name}: {e}", file=sys.stderr, flush=True)
+            log_print(
+                f"  WARN: failed to download {name}: {e}", file=sys.stderr, flush=True
+            )
             continue
 
         data = _parse_ts_text(source)

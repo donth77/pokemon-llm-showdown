@@ -24,10 +24,20 @@ check() {
     fi
 }
 
+check_sse_scoreboard() {
+    local url="http://${WEB_HOST}:${WEB_PORT}/scoreboard/stream"
+    if curl -sS -N --max-time 3 "$url" 2>/dev/null | head -n 30 | grep -q '^data:'; then
+        echo -e "${GREEN}[OK]${NC}   Scoreboard SSE ($url)"
+    else
+        echo -e "${RED}[FAIL]${NC} Scoreboard SSE ($url)"
+    fi
+}
+
 echo "=== Service Health Check ==="
 echo ""
 check "Showdown"  "http://${SHOWDOWN_HOST}:${SHOWDOWN_PORT}/"
 check "Web"   "http://${WEB_HOST}:${WEB_PORT}/health"
 check "Scoreboard" "http://${WEB_HOST}:${WEB_PORT}/scoreboard"
+check_sse_scoreboard
 echo ""
 echo "Done."

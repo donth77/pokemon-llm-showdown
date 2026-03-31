@@ -15,11 +15,12 @@ import time
 
 import requests
 
+from env_bool import parse_env_bool
 from log_print import log_print
 
 SHOWDOWN_HOST = os.getenv("SHOWDOWN_HOST", "showdown")
 SHOWDOWN_PORT = int(os.getenv("SHOWDOWN_PORT", "8000"))
-HIDE_BATTLE_UI = os.getenv("HIDE_BATTLE_UI", "1").strip() in ("1", "true", "yes")
+HIDE_BATTLE_UI = parse_env_bool("HIDE_BATTLE_UI", default=True)
 _SHOWDOWN_BASE = f"http://{SHOWDOWN_HOST}:{SHOWDOWN_PORT}/"
 SHOWDOWN_URL = (
     f"{_SHOWDOWN_BASE}?hide_battle_ui=1" if HIDE_BATTLE_UI else _SHOWDOWN_BASE

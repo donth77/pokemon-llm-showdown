@@ -1,0 +1,394 @@
+/* /overlay scoreboard panel (iframe or standalone). Team colors: broadcast-tokens.css */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: transparent;
+  font-family:
+    "Segoe UI",
+    system-ui,
+    -apple-system,
+    sans-serif;
+  width: 1280px;
+  height: 720px;
+  overflow: hidden;
+  color: #fff;
+}
+
+.sidebar {
+  position: absolute;
+  top: 16px;
+  right: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 310px;
+  max-width: 310px;
+  max-height: 688px;
+  min-height: 0;
+  align-items: stretch;
+}
+
+.scoreboard {
+  background: rgba(0, 0, 0, 0.75);
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  border-radius: 12px;
+  padding: 16px 20px;
+  width: 310px;
+  max-width: 310px;
+  backdrop-filter: blur(8px);
+  flex-shrink: 0;
+}
+
+.scoreboard h2 {
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-bottom: 12px;
+  text-align: center;
+}
+
+.player-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.player-row:last-child {
+  border-bottom: none;
+}
+
+.player-name {
+  font-size: 18px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.player-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.player-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.overlay-player-portrait {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  object-fit: cover;
+  object-position: center top;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  flex-shrink: 0;
+  display: none;
+  pointer-events: none;
+}
+
+.overlay-player-portrait.is-visible {
+  display: block;
+}
+
+.player-heading-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.player-model {
+  display: block;
+  width: 100%;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.player-name.red {
+  color: var(--broadcast-side-red);
+}
+.player-name.blue {
+  color: var(--broadcast-side-blue);
+}
+
+.player-wins {
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+
+.match-count {
+  text-align: center;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+  margin-top: 10px;
+}
+
+.match-history {
+  background: rgba(0, 0, 0, 0.75);
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  border-radius: 12px;
+  padding: 12px 16px;
+  min-width: 0;
+  /* Same floor as original layout; scrolling is handled inside .history-scroll (min-height: 0). */
+  min-height: 385px;
+  backdrop-filter: blur(8px);
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  overflow: hidden;
+}
+
+.match-history h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-bottom: 8px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.history-scroll {
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.history-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.history-entry {
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.history-entry:last-child {
+  border-bottom: none;
+}
+
+.history-matchup {
+  color: rgba(255, 255, 255, 0.85);
+  font-weight: 600;
+}
+
+.history-format {
+  color: rgba(255, 255, 255, 0.4);
+  font-weight: 400;
+}
+
+.history-mark-l {
+  color: var(--broadcast-side-red);
+  font-weight: 600;
+}
+
+.history-mark-w {
+  color: #51cf66;
+  font-weight: 600;
+}
+
+.history-meta {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 12px;
+  margin-top: 1px;
+}
+
+.history-context {
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 12px;
+  margin-top: 3px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  max-width: 100%;
+}
+
+.history-empty {
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 12px;
+  text-align: center;
+  padding: 24px 8px;
+  line-height: 1.5;
+}
+
+.ticker-bar {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  background: rgba(0, 0, 0, 0.75);
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  border-radius: 12px;
+  padding: 10px 12px 12px;
+  backdrop-filter: blur(8px);
+}
+
+/* `hidden` must win over `display: flex` above (author CSS beats UA [hidden]). */
+.ticker-bar[hidden] {
+  display: none !important;
+}
+
+.ticker-label {
+  flex: 0 0 auto;
+  display: block;
+  text-align: center;
+  padding: 0 0 8px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.6);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  white-space: nowrap;
+}
+
+.ticker-viewport {
+  flex: 0 0 auto;
+  width: 100%;
+  min-width: 0;
+  margin-top: 10px;
+  min-height: 2.5em;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  /* Soft edges on both sides so the marquee loop seam is less noticeable */
+  mask-image: linear-gradient(
+    90deg,
+    transparent 0,
+    #000 10px,
+    #000 calc(100% - 16px),
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    transparent 0,
+    #000 10px,
+    #000 calc(100% - 16px),
+    transparent 100%
+  );
+}
+
+.ticker-viewport.is-static {
+  mask-image: none;
+  -webkit-mask-image: none;
+  justify-content: center;
+}
+
+.ticker-viewport.is-static .ticker-track {
+  animation: none !important;
+  transform: none !important;
+}
+
+.ticker-track {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  width: max-content;
+  flex-shrink: 0;
+  will-change: transform;
+  transform: translateX(0);
+  /* --ticker-shift: first .ticker-group width (px), set in JS for a seamless duplicate loop */
+  animation: ticker-marquee linear infinite;
+  animation-delay: 2s;
+  animation-fill-mode: backwards;
+}
+
+.ticker-group {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 0 20px;
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: rgba(255, 255, 255, 0.88);
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+}
+
+.ticker-group .ticker-match {
+  flex-shrink: 0;
+}
+
+.ticker-group .ticker-sep {
+  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.35);
+  margin: 0 28px;
+}
+
+.ticker-loop-spacer {
+  display: none;
+  flex-shrink: 0;
+  align-items: center;
+  padding: 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.42em;
+  white-space: nowrap;
+  color: rgba(255, 255, 255, 0.2);
+  user-select: none;
+  pointer-events: none;
+}
+
+.ticker-track.ticker-track--single-match .ticker-loop-spacer {
+  display: flex;
+}
+
+.ticker-viewport.is-static .ticker-loop-spacer {
+  display: none !important;
+}
+
+@keyframes ticker-marquee {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(calc(-1 * var(--ticker-shift, 50%)));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ticker-track {
+    animation: none !important;
+    transform: none !important;
+  }
+
+  .ticker-viewport {
+    mask-image: none;
+    -webkit-mask-image: none;
+    justify-content: center;
+  }
+}

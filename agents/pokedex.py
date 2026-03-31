@@ -60,6 +60,7 @@ def gen_from_format(battle_format: str) -> int:
 # Public lookup functions
 # ---------------------------------------------------------------------------
 
+
 def lookup_move(move_id: str, gen: int = 8) -> str:
     """Full details for a move: type, power, accuracy, PP, priority, effects, description."""
     mid = to_id_str(move_id)
@@ -202,7 +203,9 @@ def lookup_pokemon(species: str, gen: int = 8) -> str:
     return "\n".join(lines)
 
 
-def lookup_type_matchup(attacking_type: str, defending_types: list[str], gen: int = 8) -> str:
+def lookup_type_matchup(
+    attacking_type: str, defending_types: list[str], gen: int = 8
+) -> str:
     """Type effectiveness multiplier for an attacking type vs one or two defending types."""
     gd = _gen_data(gen)
     chart = gd.type_chart
@@ -258,6 +261,7 @@ def lookup_item(item_id: str) -> str:
 # ---------------------------------------------------------------------------
 # Auto-enrich: inject Pokédex notes into battle state text
 # ---------------------------------------------------------------------------
+
 
 def auto_enrich_battle_context(battle: Any, gen: int = 8) -> str:
     """

@@ -12,3 +12,4 @@ docs/broadcast-view.md
 .cursor/
 .ruff_cache/
 .pytest_cache/
+*.code-workspace

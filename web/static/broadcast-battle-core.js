@@ -1,9 +1,8 @@
 /**
- * Battle iframe: Showdown URL, /current_battle polling, trainer sprites, memory flush.
- * On /broadcast, the scoreboard hub (250ms) also drives updates via
- * window.__refreshBattleFromHubScoreboard__ so we are not stuck on a dead #battle-
- * room for up to 3s after agents disconnect (common after a game ends, including 2-0
- * series clinches).
+ * Battle iframe: Showdown URL, scoreboard SSE (or hub postMessage), trainer sprites.
+ * Standalone battle frame uses attachScoreboardStream + GET /scoreboard fallback.
+ * On /broadcast, the hub drives updates via __refreshBattleFromHubScoreboard__ only
+ * (no second EventSource here).
  *
  * Expects window.__BATTLE_CORE__ set before load (see broadcast templates).
  */
@@ -35,7 +34,7 @@
 
   const stableBase = showdownBaseUrl();
   let currentBattleTag = null;
-  /** Last ``status`` applied from scoreboard or /current_battle (for live → idle transitions). */
+  /** Last ``status`` applied from scoreboard-shaped payloads (for live → idle transitions). */
   let lastPayloadStatus = "";
   battleFrame.src = stableBase;
 
@@ -78,27 +77,33 @@
     return normalized;
   }
 
-  function scoreboardPayloadToBattleShape(sb) {
-    if (!sb || typeof sb !== "object") return null;
-    const tc = sb.tournament_context;
-    const base = {
-      status: sb.battle_status || "idle",
-      battle_tag: sb.battle_tag,
-      battle_format: sb.battle_format,
-      player1_sprite_url: sb.player1_sprite_url,
-      player2_sprite_url: sb.player2_sprite_url,
-    };
-    if (tc && typeof tc === "object") {
-      for (const k of Object.keys(tc)) {
-        base[k] = tc[k];
-      }
+  function shapeFromScoreboard(sb) {
+    if (typeof scoreboardPayloadToBattleShape === "function") {
+      return scoreboardPayloadToBattleShape(sb);
     }
-    return base;
+    return null;
   }
 
   const PAGE_LOAD_TIME = Date.now();
   const RELOAD_AFTER_MS = 30 * 60 * 1000;
   let lastSeenStatus = "";
+  let battleOutroTimer = null;
+  let pendingPageReload = false;
+
+  function clearBattleOutroTimer() {
+    if (battleOutroTimer) {
+      clearTimeout(battleOutroTimer);
+      battleOutroTimer = null;
+    }
+  }
+
+  function resetBattleFrameToLobby() {
+    currentBattleTag = null;
+    const u = new URL(stableBase);
+    u.searchParams.set("_", String(Date.now()));
+    battleFrame.src = u.toString();
+    if (pendingPageReload) location.reload();
+  }
 
   function maybeReloadBetweenMatches(status) {
     lastSeenStatus = status || "";
@@ -106,7 +111,15 @@
       lastSeenStatus === "idle" &&
       Date.now() - PAGE_LOAD_TIME > RELOAD_AFTER_MS
     ) {
-      location.reload();
+      if (battleOutroTimer != null) {
+        pendingPageReload = true;
+        return;
+      }
+      if (currentBattleTag === null) {
+        location.reload();
+      } else {
+        pendingPageReload = true;
+      }
     }
   }
 
@@ -116,12 +129,8 @@
     const wasLive = lastPayloadStatus === "live";
 
     try {
-      lastTrainerSpriteUrls.p1 = String(
-        data.player1_sprite_url || "",
-      ).trim();
-      lastTrainerSpriteUrls.p2 = String(
-        data.player2_sprite_url || "",
-      ).trim();
+      lastTrainerSpriteUrls.p1 = String(data.player1_sprite_url || "").trim();
+      lastTrainerSpriteUrls.p2 = String(data.player2_sprite_url || "").trim();
       postTrainerSpritesToBattleFrame();
     } catch (_) {}
 
@@ -156,41 +165,117 @@
       status === "error";
 
     if (betweenBattles && (currentBattleTag !== null || wasLive)) {
-      currentBattleTag = null;
-      const u = new URL(stableBase);
-      u.searchParams.set("_", String(Date.now()));
-      battleFrame.src = u.toString();
+      const duplicateIdleWhileOutro =
+        battleOutroTimer != null && status === "idle" && !wasLive;
+      if (duplicateIdleWhileOutro) {
+        lastPayloadStatus = status;
+        return;
+      }
+      /* Next match phases often arrive before BATTLE_IFRAME_OUTRO_SECONDS elapses
+       * (DELAY_BETWEEN_MATCHES, tournament intro). lastPayloadStatus is then "idle",
+       * so wasLive is false — without this guard we clear the outro timer and reload
+       * the iframe immediately, skipping Showdown's win animation and cluttering the
+       * victory splash timing. */
+      if (
+        battleOutroTimer != null &&
+        (status === "starting" ||
+          status === "tournament_intro" ||
+          status === "intro_gap")
+      ) {
+        lastPayloadStatus = status;
+        return;
+      }
+      clearBattleOutroTimer();
+      const dwellRaw = Number(data.battle_iframe_outro_ms);
+      const dwellMs =
+        Number.isFinite(dwellRaw) && dwellRaw > 0 ? Math.floor(dwellRaw) : 0;
+      /* Rely on the iframe battle tag, not only wasLive — missed "live" frames
+       * (SSE debounce/reconnect) would otherwise reset to lobby with no outro. */
+      const leavingLiveBattle = currentBattleTag !== null;
+      if (leavingLiveBattle && dwellMs > 0) {
+        battleOutroTimer = setTimeout(function () {
+          battleOutroTimer = null;
+          resetBattleFrameToLobby();
+        }, dwellMs);
+      } else {
+        resetBattleFrameToLobby();
+      }
       lastPayloadStatus = status;
       return;
     }
 
-    if (status === "live" && data.battle_tag) {
+    /* Load the spectator room as soon as we have a tag (``starting`` / ``intro_gap``),
+     * not only on ``live`` — otherwise the iframe stays on the lobby through intros
+     * and Showdown connect latency reads as a long blank battle. */
+    const canShowBattleRoom =
+      (status === "live" || status === "starting" || status === "intro_gap") &&
+      data.battle_tag;
+    if (canShowBattleRoom) {
+      clearBattleOutroTimer();
       const tag = normalizeBattleTag(data.battle_tag);
       if (tag && tag !== currentBattleTag) {
         currentBattleTag = tag;
         const u = new URL(stableBase);
         u.searchParams.set("_", String(Date.now()));
         battleFrame.src = `${u.toString()}#${tag}`;
+        // #region agent log
+        if (window._dbg)
+          window._dbg("battle:src", "battle", { tag: tag }, "H4");
+        // #endregion
       }
     }
     lastPayloadStatus = status;
   }
 
-  async function refreshBattleTarget() {
-    let data;
-    try {
-      const resp = await fetch("/current_battle", { cache: "no-store" });
-      data = await resp.json();
-    } catch (_) {
-      return;
-    }
-    applyBattleUiFromPayload(data);
+  function applyFromScoreboardPayload(sb) {
+    const shaped = shapeFromScoreboard(sb);
+    if (shaped) applyBattleUiFromPayload(shaped);
   }
 
-  window.__refreshBattleFromHubScoreboard__ = function (sb) {
-    applyBattleUiFromPayload(scoreboardPayloadToBattleShape(sb));
-  };
+  if (window.__BROADCAST_SCOREBOARD_HUB__) {
+    window.__refreshBattleFromHubScoreboard__ = function (sb) {
+      applyFromScoreboardPayload(sb);
+    };
+  } else if (typeof window.attachScoreboardStream === "function") {
+    let lastSeq = 0;
+    window.attachScoreboardStream({
+      getSeq: function () {
+        return lastSeq;
+      },
+      setSeq: function (n) {
+        lastSeq = n;
+      },
+      applyOrdered: applyFromScoreboardPayload,
+      applyFallback: applyFromScoreboardPayload,
+      fallbackIntervalMs: 2000,
+    });
+  } else {
+    async function refreshBattleTarget() {
+      let data;
+      try {
+        const resp = await fetch("/current_battle", { cache: "no-store" });
+        data = await resp.json();
+      } catch (_) {
+        return;
+      }
+      applyBattleUiFromPayload(data);
+    }
+    refreshBattleTarget();
+    setInterval(refreshBattleTarget, 2000);
+  }
 
-  refreshBattleTarget();
-  setInterval(refreshBattleTarget, 2000);
+  /**
+   * Hard-reload the Showdown iframe only (parent /broadcast stays loaded).
+   * Keeps the current battle room hash when live; otherwise loads lobby base.
+   * Callable from DevTools or automation: __reloadShowdownBattleFrame__()
+   */
+  window.__reloadShowdownBattleFrame__ = function () {
+    const u = new URL(stableBase);
+    u.searchParams.set("_", String(Date.now()));
+    if (currentBattleTag) {
+      battleFrame.src = `${u.toString()}#${currentBattleTag}`;
+    } else {
+      battleFrame.src = u.toString();
+    }
+  };
 })();

@@ -172,7 +172,9 @@ def write_persona(slug: str, meta: dict[str, str], body: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def create_persona(slug: str, meta: dict[str, str] | None = None, body: str | None = None) -> None:
+def create_persona(
+    slug: str, meta: dict[str, str] | None = None, body: str | None = None
+) -> None:
     slug = validate_slug(slug)
     path = PERSONAS_DIR / f"{slug}.md"
     if path.exists():
@@ -183,9 +185,9 @@ def create_persona(slug: str, meta: dict[str, str] | None = None, body: str | No
         "description": "",
     }
     default_body = (
-        f"You are a Pokémon battle AI named {{player_name}}.\n"
-        f"Your opponent is {{opponent_name}}.\n\n"
-        f"(Edit this prompt body — use only {{player_name}} and {{opponent_name}}.)\n"
+        "You are a Pokémon battle AI named {player_name}.\n"
+        "Your opponent is {opponent_name}.\n\n"
+        "(Edit this prompt body — use only {player_name} and {opponent_name}.)\n"
     )
     write_persona(slug, meta, body if body is not None else default_body)
 
@@ -251,7 +253,12 @@ def _strip_other_portrait_exts(dest_dir: Path, slug: str, keep_ext: str) -> None
 
 
 def save_portrait_upload(
-    slug: str, filename: str, data: bytes, *, square: bool, max_bytes: int = PORTRAIT_MAX_BYTES
+    slug: str,
+    filename: str,
+    data: bytes,
+    *,
+    square: bool,
+    max_bytes: int = PORTRAIT_MAX_BYTES,
 ) -> None:
     """Write portrait to ``{slug}.{ext}`` under tall or ``square/``; replaces other ext for same slug."""
     slug = validate_slug(slug)

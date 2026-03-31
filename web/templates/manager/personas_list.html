@@ -1,42 +1,51 @@
 {% extends "manager/_base.html" %}
 {% set active_page = "personas" %}
 {% block title %}Personas{% endblock %}
-
 {% block content %}
-<div class="page-header">
-  <h1>Personas</h1>
-  <div class="header-actions">
-    <a href="/manager/personas/new" class="btn btn-primary">New persona</a>
-  </div>
-</div>
-
-<p class="text-muted mb-1">
-  Markdown in <code>{{ personas_dir }}</code> · Trainer images in <code>{{ trainers_dir }}</code>
-  (shared with the Showdown client).
-</p>
-
-{% if personas %}
-<div class="persona-grid">
-  {% for x in personas %}
-  <div class="persona-card">
-    <div class="persona-card-head">
-      <img class="persona-card-sprite" src="{{ x.sprite_url }}" alt="" width="64" height="64" loading="lazy" />
-      <div>
-        <strong>{{ x.name }}</strong>
-        <div class="text-muted persona-slug"><code>{{ x.slug }}</code></div>
-      </div>
+    <div class="page-header">
+        <h1>Personas</h1>
+        <div class="header-actions">
+            <a href="/manager/personas/new" class="btn btn-primary">New persona</a>
+        </div>
     </div>
-    {% if x.description %}
-    <p class="persona-desc text-muted">{{ x.description }}</p>
+    <p class="text-muted mb-1">
+        Markdown in <code>{{ personas_dir }}</code> · Trainer images in <code>{{ trainers_dir }}</code>
+        (shared with the Showdown client).
+    </p>
+    {% if personas %}
+        <div class="persona-grid">
+            {% for x in personas %}
+                <div class="persona-card">
+                    <div class="persona-card-head">
+                        <img class="persona-card-sprite"
+                             src="{{ x.sprite_url }}"
+                             alt=""
+                             width="64"
+                             height="64"
+                             loading="lazy" />
+                        <div>
+                            <strong>{{ x.name }}</strong>
+                            <div class="text-muted persona-slug">
+                                <code>{{ x.slug }}</code>
+                            </div>
+                        </div>
+                    </div>
+                    {% if x.description %}<p class="persona-desc text-muted">{{ x.description }}</p>{% endif %}
+                    <div class="persona-card-actions">
+                        <a href="/manager/personas/{{ x.slug }}/edit"
+                           class="btn btn-sm btn-secondary">Edit</a>
+                        <a href="/manager/personas/{{ x.slug }}/memory"
+                           class="btn btn-sm btn-secondary">Memory</a>
+                    </div>
+                </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <div class="empty-state">
+            <p>
+                No persona markdown files found. Add <code>.md</code> files under <code>agents/personas</code> or create one here.
+            </p>
+            <a href="/manager/personas/new" class="btn btn-primary">New persona</a>
+        </div>
     {% endif %}
-    <a href="/manager/personas/{{ x.slug }}/edit" class="btn btn-sm btn-secondary">Edit</a>
-  </div>
-  {% endfor %}
-</div>
-{% else %}
-<div class="empty-state">
-  <p>No persona markdown files found. Add <code>.md</code> files under <code>agents/personas</code> or create one here.</p>
-  <a href="/manager/personas/new" class="btn btn-primary">New persona</a>
-</div>
-{% endif %}
 {% endblock %}

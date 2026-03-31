@@ -1,7 +1,7 @@
-'use strict';
+"use strict";
 
 exports.port = 8000;
-exports.bindaddress = '0.0.0.0';
+exports.bindaddress = "0.0.0.0";
 
 exports.reportjoins = false;
 exports.reportbattles = false;
@@ -10,11 +10,11 @@ exports.reportchallenges = false;
 exports.rated = false;
 exports.allowrequestingties = false;
 
-exports.loginserver = '';
-exports.loginserverhost = '';
+exports.loginserver = "";
+exports.loginserverhost = "";
 exports.loginserverport = 443;
 
-exports.crashguardemail = '';
+exports.crashguardemail = "";
 
 exports.watchconfig = false;
 

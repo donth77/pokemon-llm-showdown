@@ -8,7 +8,9 @@ function validateProviderModel(provider, model, fieldLabel) {
     return { ok: false, message: label + "Model is required" };
   }
   var low = mRaw.toLowerCase();
-  var p = String(provider || "").trim().toLowerCase();
+  var p = String(provider || "")
+    .trim()
+    .toLowerCase();
   if (p === "anthropic") {
     if (low.indexOf("claude") !== 0) {
       return {
