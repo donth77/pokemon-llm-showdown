@@ -15,7 +15,7 @@ docker-compose.yml
 ├── agents/      — Queue worker + poke-env LLM players (`queue_worker.py`, `match_runner.py`)
 │   └── personas/  — Markdown persona definitions (`*.md`); optional runtime memory under `STATE_DIR/personas/{slug}/` when `ENABLE_MEMORY=true`
 ├── web/         — FastAPI: scoreboard, `/manager`, `/api/manager`, broadcast, unified splashes (`/victory` / `/splash`), thoughts (`GET /thoughts` + `/thoughts/ws`); SSE in `scoreboard_stream.py` (`/scoreboard/stream`) and `manager_stream.py` (`/api/manager/stream`)
-│   ├── manager/   — `db.py` (aiosqlite + migrations), `tournament_logic.py` (brackets), `tournament_definition.py` (plaintext definitions), `routes.py` (API + HTML)
+│   ├── manager/   — `db.py` (aiosqlite + migrations), `tournament_logic.py` (brackets), `tournament_definition.py` (plaintext definitions), `routes.py` (API + HTML), `battle_format_rules.py` (random vs BYO formats), `team_showdown_validate.py` (Showdown `validate-team` for imports)
 │   ├── templates/ — Jinja2 (`broadcast.html`, `splash.html`, `overlay.html`, partials, manager dashboards, replays)
 │   └── static/    — App JS/CSS/vendor (image-baked; not for mountable art — see `assets/`)
 ├── stream/      — Xvfb + Chromium + FFmpeg → Twitch RTMP
@@ -47,6 +47,8 @@ Use **`assets/`** for operator- or artist-owned media shared across services; us
 
 Pending work and history both live in the SQLite database on the `manager-data` volume. The `matches` table uses statuses such as `queued`, `running`, `completed`, `error`, and `cancelled`. The worker polls `GET /api/manager/queue/next`, which atomically promotes the oldest queued match to `running`, then later updates that same row with final results.
 
+**Team presets:** A **`teams`** table stores operator-defined squads for **bring-your-own-team** formats (anything whose Showdown id does **not** end with **`randombattle`** — see `battle_format_rules.py`). Columns: **`name`** (unique case-insensitively), **`battle_format`** (Showdown format id, required on create via the manager form), **`showdown_text`** (full paste from Teambuilder export), **`notes`**, timestamps. **`tournament_entries`** may reference **`team_id`**. When a match is queued, **`player1_team_showdown`** and **`player2_team_showdown`** on the **`matches`** row hold **snapshots** of that text (from explicit match **`player*_team_id`** and/or the entries’ **`team_id`**) so later edits to the library row do not change already-queued games. **`GET /api/manager/queue/next`** includes those snapshot fields for the agents service.
+
 ## Tournament Manager
 
 The Manager UI is the primary way to queue work for the agents. The dashboard, tournament detail, and series detail pages subscribe to `GET /api/manager/stream` via SSE and refresh queue depth, running match, and bracket sections when the backend signals changes.
@@ -60,7 +62,9 @@ The Manager UI is the primary way to queue work for the agents. The dashboard, t
 | `/manager/tournaments/new` | Create tournament, including plaintext import and presets |
 | `/manager/tournament-presets` | List, create, and edit saved plaintext tournament definitions |
 | `/manager/tournaments/{id}` | Tournament detail and bracket progress |
-| `/manager/matches/new` | Queue a one-off match or short series |
+| `/manager/matches/new` | Queue a one-off match or short series (optional team presets per side for non-`randombattle` formats) |
+| `/manager/teams` | Team preset library (paste Showdown export) |
+| `/manager/teams/new`, `/manager/teams/{id}/edit` | Create or edit a preset |
 | `/manager/series/{id}` | Series detail |
 | `/manager/results` | Completed matches and series |
 | `/manager/results/stats` | Aggregate stats |
@@ -72,27 +76,65 @@ The Manager UI is the primary way to queue work for the agents. The dashboard, t
 
 | Endpoint | Method | Purpose |
 | --- | --- | --- |
-| `/api/manager/config` | GET | Allowed providers, battle formats, persona list |
+| `/api/manager/config` | GET | Allowed providers, battle formats, persona list; `random_team_battle_format_suffix` (`randombattle`) for UI gating |
 | `/api/manager/tournaments` | GET, POST | List / create tournament |
 | `/api/manager/tournaments/parse-definition` | POST | Parse plaintext tournament definition |
 | `/api/manager/tournaments/{tid}` | GET | Tournament + entries + series |
 | `/api/manager/tournaments/{tid}/cancel` | POST | Cancel tournament and pending work |
 | `/api/manager/tournament-presets` | GET, POST | List presets / create |
 | `/api/manager/tournament-presets/{id}` | GET, PATCH, DELETE | Get, update, delete preset |
-| `/api/manager/series` | POST | Create a series |
+| `/api/manager/series` | POST | Create a series (optional `player1_team_id` / `player2_team_id` when not using `*randombattle`) |
 | `/api/manager/series/{sid}` | GET | Series + matches |
-| `/api/manager/matches` | GET, POST | List / create standalone match |
+| `/api/manager/matches` | GET, POST | List / create standalone match or series (optional `player1_team_id` / `player2_team_id`) |
+| `/api/manager/teams/validate-showdown` | POST | Body: `battle_format`, `showdown_text`. Runs Showdown’s **`validate-team`** in the **web** container (bundled checkout under **`SHOWDOWN_HOME`**, default `/opt/pokemon-showdown`). Response: `{ "ok", "errors": string[], "skipped"? }`. If **`TEAM_VALIDATION_DISABLED=true`**, returns **`ok: true`** with **`skipped: true`** without invoking Node. Random formats (`*randombattle`) return success without validating. |
+| `/api/manager/teams` | GET, POST | List / create team preset (`name`, `battle_format`, `showdown_text`, optional `notes`). Create responses redact full text to a short preview on the wire. |
+| `/api/manager/teams/{id}` | GET, PATCH, DELETE | Full row on GET. Patch/delete preset (**delete** blocked if a **queued** or **running** match references the team via **`player*_team_id`**) |
+| `/api/manager/tournament-entries/{id}` | PATCH | Set `team_id` on a roster entry (`{"team_id": N}` or `null`) |
 | `/api/manager/matches/{mid}` | GET | One match row |
 | `/api/manager/matches/{mid}/start` | POST | Mark running |
 | `/api/manager/matches/{mid}/complete` | POST | Record completion |
 | `/api/manager/matches/{mid}/error` | POST | Record failure |
-| `/api/manager/queue/next` | GET | Worker dequeue endpoint |
+| `/api/manager/queue/next` | GET | Worker dequeue endpoint (match JSON may include `player1_team_showdown` / `player2_team_showdown`) |
 | `/api/manager/queue/depth` | GET | Count of queued matches |
 | `/api/manager/queue/upcoming` | GET | Next queued matches for UI |
 | `/api/manager/queue/running` | GET | Current running match |
 | `/api/manager/stream` | GET | Manager SSE refresh hints |
 | `/api/manager/results` | GET | Completed matches |
 | `/api/manager/stats` | GET | Aggregate analytics |
+
+### Team presets (teambuilder workflow)
+
+**Operator flow**
+
+1. Open the **Showdown client** (local stack: `SHOWDOWN_VIEW_BASE`, default `http://localhost:8000`; used for “open teambuilder” links in the manager).
+2. Build in **Teambuilder** and **Import/Export → Export** the team text.
+3. In **`/manager/teams/new`** (or edit), choose **Battle format** from the same allowlist as matches/tournaments, paste the export, submit. The form calls **`POST /api/manager/teams/validate-showdown`** first; only if **`ok`** does it **POST** or **PATCH** `/api/manager/teams`.
+
+**API note:** **`POST`/`PATCH` `/api/manager/teams`** persist the body **without** re-running Showdown validation. Scripts and integrations should call **`validate-showdown`** first if they need the same legality guarantees as the browser form.
+
+Presets live in **SQLite** on **`manager-data`**, not in the browser’s Showdown `localStorage`.
+
+**Random vs BYO**
+
+- Formats whose id **ends with** **`randombattle`** use **server-assigned** teams. **`team_id`** / **`player*_team_id`** must **not** be sent; tournament plaintext import ignores extra team columns.
+- All other listed formats are **custom-team**: both players need a preset (**`player1_team_id`** and **`player2_team_id`** on matches/series, or **`team_id`** on each tournament entry / plaintext line).
+
+Shared rules live in **`web/manager/battle_format_rules.py`**. The manager UI loads **`web/static/battle-format-team-presets.js`**, which uses the same suffix as the server; **`GET /api/manager/config`** exposes **`random_team_battle_format_suffix`** for injection.
+
+**Validation and image layout**
+
+- The **`web`** Docker image **clones and builds** a copy of [pokemon-showdown](https://github.com/smogon/pokemon-showdown) and sets **`ENV SHOWDOWN_HOME=/opt/pokemon-showdown`** so **`team_showdown_validate.py`** can run  
+  `node "${SHOWDOWN_HOME}/pokemon-showdown" validate-team <format>` with the paste on stdin (120s timeout).
+- **`TEAM_VALIDATION_DISABLED=true`** (web service env) short-circuits validation: the validate endpoint returns success with **`skipped: true`**; use only when the bundled CLI path is broken or you intentionally skip legality checks.
+- Misconfigured installs raise **503** (missing CLI / Node) or **504** (timeout).
+
+**Matching presets to a matchup**
+
+When a **`team_id`** is used, the row must exist (**404** otherwise). If the preset row’s **`battle_format`** is **non-empty**, it must equal the match or tournament **`battle_format`** (normalized case-insensitively). A **blank** stored format skips that check (legacy or advanced reuse); the create form always sets a format from the dropdown.
+
+**Delete rule**
+
+**`DELETE /api/manager/teams/{id}`** fails if any **queued** or **running** match still references that team via **`player1_team_id`** / **`player2_team_id`**.
 
 ## Tournaments
 
@@ -139,14 +181,24 @@ A tournament definition is a single plain-text file or paste buffer that mirrors
 
 ### Participant lines
 
-Each participant line is either comma-separated or pipe-separated:
+Each participant line is comma-separated or pipe-separated (use `|` if the model id contains commas).
+
+**`*randombattle` formats** (header `Battle Format` ends with `randombattle`):
 
 - 3 fields: `provider`, `model`, `persona_slug`
-- 4 fields: the same plus integer `seed`
+- 4 fields: the same plus integer `seed` (then **every** line must include a seed)
+- 5 fields: `provider`, `model`, `persona_slug`, `seed`, and an extra integer (e.g. copied from a BYO template) — the **fifth value is ignored**; team presets are not used for random battles.
 
-Providers are `anthropic`, `deepseek`, or `openrouter`. Persona values must match a file in `agents/personas/`. If any row includes a seed, all rows must include one.
+`POST /api/manager/tournaments` also **ignores** `team_id` on each entry when the tournament `battle_format` is random.
 
-### Example
+**Custom-team formats** (anything that is **not** `*randombattle`): each line must end with a **team preset id** — the numeric `id` from the manager team library (`/manager/teams`, same as `GET /api/manager/teams`):
+
+- 4 fields: `provider`, `model`, `persona_slug`, `team_id`
+- 5 fields: `provider`, `model`, `persona_slug`, `seed`, `team_id` (seeds still follow the “all rows or none” rule)
+
+Providers are `anthropic`, `deepseek`, or `openrouter`. Persona values must match a file in `agents/personas/`.
+
+### Example (random teams)
 
 ```text
 # Weekend mix - double elim, Gen 9
@@ -162,6 +214,19 @@ deepseek, deepseek-chat, stall
 openrouter, google/gemini-2.5-flash-lite, neutral
 ```
 
+### Example (BYO teams — `team_id` from team presets)
+
+```text
+Name: OU round robin
+Type: Round Robin
+Battle Format: gen9ou
+Best Of: Bo1
+
+Participants:
+anthropic, claude-sonnet-4-20250514, aggro, 1
+deepseek, deepseek-chat, stall, 2
+```
+
 ## Scripts
 
 All scripts live in `scripts/` and are run from the repo root. The `web` service must be up for manager CLI scripts.
@@ -173,8 +238,8 @@ All scripts live in `scripts/` and are run from the repo root. The `web` service
 | `restart_stack.sh` | Restart core services; `--stream` includes Twitch capture |
 | `stack_down.sh` | Stop the stack; optional volume removal |
 | `stack_down_after_tournament.sh` | Wait for tournament completion, then stop the stack |
-| `create_match.sh` | Create a match or best-of series through the manager API |
-| `create_tournament.sh` | Create a tournament through the manager API |
+| `create_match.sh` | Create a match or best-of series through the manager API (`--p1-team-id` / `--p2-team-id` **required** when `--format` is not `*randombattle`; **disallowed** for `*randombattle`) |
+| `create_tournament.sh` | Create a tournament through the manager API (`--team-id` per `--player`, same order, when format is not `*randombattle`) |
 
 ## Personas
 
@@ -220,8 +285,8 @@ Two optional modes are available:
 
 ## How a Battle Works
 
-1. `agents/queue_worker.py` pulls the next match from the manager API.
-2. `match_runner.py` creates two `LLMPlayer` instances.
+1. `agents/queue_worker.py` pulls the next match from the manager API (including optional `player1_team_showdown` / `player2_team_showdown` on the match row).
+2. `match_runner.py` creates two `LLMPlayer` instances, passing poke-env’s **`team=`** when that text is present so BYO formats use the snapshotted Showdown export.
 3. Each player connects to the local Showdown server over WebSocket.
 4. Each turn, the provider receives battle state and returns a structured JSON action.
 5. Reasoning and callouts are posted to `/thought`.
@@ -309,6 +374,7 @@ See `.env.example` for the full set of variables. The most important groups are:
 - Battle pacing and queue: `QUEUE_POLL_INTERVAL`, `TURN_DELAY_SECONDS`, `DELAY_BETWEEN_MATCHES`, `LLM_TURN_TIMEOUT`
 - Broadcast timing: `MATCH_INTRO_SECONDS`, `VICTORY_MODAL_SECONDS`, `TOURNAMENT_VICTORY_MODAL_SECONDS`, `BRACKET_INTERSTITIAL_SECONDS`
 - Optional features: `POKEDEX_TOOL_ENABLED`, `POKEDEX_AUTO_ENRICH`, `ENABLE_MEMORY`
+- Team import (web): `TEAM_VALIDATION_DISABLED`, `SHOWDOWN_HOME` (see `.env.example`)
 - Stream settings: `TWITCH_STREAM_KEY`, `STREAM_VIEW_URL`, `STREAM_AUDIO_SOURCE`
 - Storage paths: `REPLAY_DIR`, `LOG_DIR`, `STATE_DIR`
 

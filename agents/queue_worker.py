@@ -347,6 +347,13 @@ async def main() -> None:
                         )
                         await asyncio.sleep(TOURNAMENT_INTRO_DELAY_SECONDS)
 
+            def _team_showdown_field(side: str) -> str | None:
+                raw = match.get(f"{side}_team_showdown")
+                if raw is None:
+                    return None
+                s = str(raw).strip()
+                return s or None
+
             result = await run_single_match(
                 battle_format=match["battle_format"],
                 player1_provider=match["player1_provider"],
@@ -361,6 +368,8 @@ async def main() -> None:
                 player2_account_name=_optional_showdown_account(
                     match, "player2_showdown_account"
                 ),
+                player1_team_showdown=_team_showdown_field("player1"),
+                player2_team_showdown=_team_showdown_field("player2"),
                 series_snapshot=series_snapshot,
                 tourney_context=tourney_ctx,
                 manager_match_id=int(match_id),

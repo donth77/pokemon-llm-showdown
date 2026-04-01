@@ -1,9 +1,29 @@
+FROM node:20-slim AS showdown-build
+
+WORKDIR /opt/pokemon-showdown
+
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git \
+    && rm -rf /var/lib/apt/lists/* \
+    && git clone --depth 1 https://github.com/smogon/pokemon-showdown.git . \
+    && npm install --production \
+    && npm run build
+
 FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+COPY --from=showdown-build /opt/pokemon-showdown /opt/pokemon-showdown
+
+ENV SHOWDOWN_HOME=/opt/pokemon-showdown
 
 COPY . .
 

@@ -86,21 +86,123 @@
                 </div>
             </div>
         </div>
+        <div id="match-team-presets-block" class="match-team-presets-block" style="display:none">
+            <p class="text-muted text-small mt-1 mb-2">
+                <strong>Team presets</strong> — required for this format; each preset’s
+                <strong>battle format</strong> must match the match format above. Import teams in the
+                <a href="/manager/teams">team library</a>.
+            </p>
+            <div class="versus-config">
+                <div class="player-config">
+                    <div class="form-group">
+                        <label for="p1_team_id">Player 1 team</label>
+                        <select id="p1_team_id">
+                            <option value="">— Choose team —</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="versus-divider" style="padding-top:36px">VS</div>
+                <div class="player-config">
+                    <div class="form-group">
+                        <label for="p2_team_id">Player 2 team</label>
+                        <select id="p2_team_id">
+                            <option value="">— Choose team —</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
         <div class="form-actions">
-            <button type="submit" class="btn btn-primary">Create</button>
+            <button type="submit" id="match-submit-btn" class="btn btn-primary">Create</button>
         </div>
         <div id="form-error" class="form-error" style="display:none"></div>
         <div id="form-success" class="form-success" style="display:none"></div>
     </form>
 {% endblock %}
 {% block scripts %}
+    <script>window.MANAGER_RANDOM_TEAM_BATTLE_FORMAT_SUFFIX = {{ random_team_battle_format_suffix | tojson }};</script>
+    <script src="/static/battle-format-team-presets.js"></script>
     <script src="/static/provider-model-validate.js"></script>
     <script>
+function effectiveBattleFormat() {
+  const customFmt = document.getElementById('battle_format_custom').value.trim();
+  return customFmt || document.getElementById('battle_format').value;
+}
+
+function updateMatchSubmitEnabled() {
+  const btn = document.getElementById('match-submit-btn');
+  if (!btn) return;
+  const m1 = document.getElementById('p1_model')?.value.trim() || '';
+  const m2 = document.getElementById('p2_model')?.value.trim() || '';
+  if (!m1 || !m2) {
+    btn.disabled = true;
+    return;
+  }
+  const bf = effectiveBattleFormat();
+  if (!window.managerTeamPresetPickersEnabled(bf)) {
+    btn.disabled = false;
+    return;
+  }
+  const t1 = document.getElementById('p1_team_id')?.value.trim() || '';
+  const t2 = document.getElementById('p2_team_id')?.value.trim() || '';
+  btn.disabled = !t1 || !t2;
+}
+
+function syncTeamPresetPickers() {
+  const en = window.managerTeamPresetPickersEnabled(effectiveBattleFormat());
+  const block = document.getElementById('match-team-presets-block');
+  if (block) block.style.display = en ? '' : 'none';
+  if (!en) {
+    for (const id of ['p1_team_id', 'p2_team_id']) {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    }
+  }
+  updateMatchSubmitEnabled();
+}
+
+async function loadTeamPresetOptions() {
+  let rows = [];
+  try {
+    const res = await fetch('/api/manager/teams');
+    if (res.ok) rows = await res.json();
+  } catch (_) {}
+  const bf = effectiveBattleFormat();
+  for (const sid of ['p1_team_id', 'p2_team_id']) {
+    const sel = document.getElementById(sid);
+    if (!sel) continue;
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">— Choose team —</option>';
+    for (const r of rows) {
+      if (!window.managerTeamRowMatchesBattleFormat(r, bf)) continue;
+      const o = document.createElement('option');
+      o.value = String(r.id);
+      o.textContent = r.name + (r.battle_format ? ` (${r.battle_format})` : '');
+      sel.appendChild(o);
+    }
+    if (cur && [...sel.options].some(o => o.value === cur)) sel.value = cur;
+  }
+  syncTeamPresetPickers();
+}
+
 function toggleMatchType() {
   const type = document.getElementById('match_type').value;
   document.getElementById('count-group').style.display = type === 'multi' ? '' : 'none';
   document.getElementById('bestof-group').style.display = type === 'series' ? '' : 'none';
 }
+
+document.getElementById('battle_format').addEventListener('change', function () {
+  loadTeamPresetOptions();
+});
+document.getElementById('battle_format_custom').addEventListener('input', function () {
+  loadTeamPresetOptions();
+});
+document.getElementById('p1_model').addEventListener('input', updateMatchSubmitEnabled);
+document.getElementById('p2_model').addEventListener('input', updateMatchSubmitEnabled);
+document.getElementById('p1_team_id').addEventListener('change', updateMatchSubmitEnabled);
+document.getElementById('p2_team_id').addEventListener('change', updateMatchSubmitEnabled);
+loadTeamPresetOptions();
+updateMatchSubmitEnabled();
 
 document.getElementById('match-form').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -109,8 +211,7 @@ document.getElementById('match-form').addEventListener('submit', async (e) => {
   errEl.style.display = 'none';
   successEl.style.display = 'none';
 
-  const customFmt = document.getElementById('battle_format_custom').value.trim();
-  const battle_format = customFmt || document.getElementById('battle_format').value;
+  const battle_format = effectiveBattleFormat();
   const matchType = document.getElementById('match_type').value;
 
   const body = {
@@ -122,6 +223,20 @@ document.getElementById('match-form').addEventListener('submit', async (e) => {
     player2_model: document.getElementById('p2_model').value.trim(),
     player2_persona: document.getElementById('p2_persona').value,
   };
+  if (window.managerTeamPresetPickersEnabled(battle_format)) {
+    const t1 = document.getElementById('p1_team_id').value.trim();
+    const t2 = document.getElementById('p2_team_id').value.trim();
+    if (!t1 || !t2) {
+      errEl.textContent =
+        'Choose a team preset for both players for this battle format, or use a *' +
+        (window.MANAGER_RANDOM_TEAM_BATTLE_FORMAT_SUFFIX || 'randombattle') +
+        ' format.';
+      errEl.style.display = 'block';
+      return;
+    }
+    body.player1_team_id = parseInt(t1, 10);
+    body.player2_team_id = parseInt(t2, 10);
+  }
 
   if (matchType === 'series') {
     body.best_of = parseInt(document.getElementById('best_of').value);

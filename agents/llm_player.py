@@ -37,6 +37,7 @@ from pokedex import (
 from provider_model_validate import validate_provider_model
 from log_print import log_print
 from env_bool import parse_env_bool
+from agent_observability import append_agent_event
 
 
 def _patch_poke_env_pseudo_move_entries() -> None:
@@ -95,7 +96,7 @@ def _make_openrouter_client() -> OpenAI:
         base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
         timeout=_LLM_REQUEST_TIMEOUT,
         default_headers={
-            "HTTP-Referer": "https://github.com/pokemon-llm-showdown",
+            "HTTP-Referer": "https://github.com/donth77/pokemon-llm-showdown",
             "X-Title": "Pokemon LLM Showdown",
         },
     )
@@ -267,6 +268,15 @@ def _normalize_battle_tag(tag: str | None) -> str:
     return str(tag).lstrip(">").strip()
 
 
+def _clip_obs_text(text: str | None, max_len: int) -> str:
+    if not text:
+        return ""
+    t = str(text).strip()
+    if len(t) <= max_len:
+        return t
+    return t[: max_len - 1] + "…"
+
+
 def _read_thoughts_payload() -> dict:
     try:
         with open(THOUGHTS_FILE, "r", encoding="utf-8") as f:
@@ -286,15 +296,21 @@ def _append_thought(
     reasoning: str,
     callout: str,
     turn: int | None,
+    event_kind: str | None = None,
+    detail: dict[str, Any] | None = None,
 ) -> None:
     clean_tag = _normalize_battle_tag(battle_tag)
-    thought = {
+    thought: dict[str, Any] = {
         "timestamp": time.time(),
         "turn": turn,
         "action": action,
         "reasoning": (reasoning or "").strip(),
         "callout": (callout or "").strip(),
     }
+    if event_kind:
+        thought["event_kind"] = event_kind
+    if detail:
+        thought["detail"] = detail
 
     with _thoughts_lock:
         payload = _read_thoughts_payload()
@@ -346,6 +362,8 @@ async def _post_thought_to_overlay(
     callout: str,
     turn: int | None,
     battle_side: str | None = None,
+    event_kind: str | None = None,
+    detail: dict[str, Any] | None = None,
 ) -> None:
     url = f"http://{WEB_HOST}:{WEB_PORT}/thought"
     payload: dict[str, object] = {
@@ -358,6 +376,10 @@ async def _post_thought_to_overlay(
     }
     if battle_side in ("p1", "p2"):
         payload["battle_side"] = battle_side
+    if event_kind:
+        payload["event_kind"] = event_kind
+    if detail:
+        payload["detail"] = detail
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
@@ -1666,6 +1688,68 @@ class LLMPlayer(Player):
             return await self._openrouter_completion(messages)
         raise ValueError(f"Unsupported provider: {self._provider}")
 
+    async def _emit_choose_move_issue(
+        self,
+        *,
+        battle: Battle,
+        kind: Literal["parse_failure", "llm_error"],
+        reply: str | None,
+        exc: BaseException | None = None,
+    ) -> None:
+        """Record parse/API failures in thoughts.json, agent_events JSONL, and the web overlay."""
+        turn = getattr(battle, "turn", None)
+        bt_norm = _normalize_battle_tag(battle.battle_tag)
+        preview = _clip_obs_text(reply, 500)
+        detail: dict[str, Any] = {
+            "battle_tag": bt_norm,
+            "turn": turn,
+            "provider": self._provider,
+            "player": self.username,
+        }
+        if reply is not None:
+            detail["reply_len"] = len(reply)
+            if preview:
+                detail["reply_preview"] = preview
+        if exc is not None:
+            detail["error_class"] = type(exc).__name__
+            detail["error_message"] = _clip_obs_text(str(exc), 800)
+
+        if kind == "parse_failure":
+            action_label = "[parse_failure]"
+            reasoning = (
+                f"Parse failure — could not map model output to a legal move/switch "
+                f"(reply_len={len(reply) if reply is not None else 0}). "
+                f"Snippet: {_clip_obs_text(preview, 220)}"
+            )
+        else:
+            action_label = "[llm_error]"
+            em = detail.get("error_message", "unknown error")
+            ec = detail.get("error_class", "Error")
+            reasoning = f"LLM request failed ({ec}): {_clip_obs_text(str(em), 400)}"
+
+        append_agent_event({"scope": "choose_move", "event": kind, **detail})
+
+        _append_thought(
+            battle_tag=battle.battle_tag,
+            player=self.username,
+            action=action_label,
+            reasoning=reasoning,
+            callout="",
+            turn=turn,
+            event_kind=kind,
+            detail=detail,
+        )
+        await _post_thought_to_overlay(
+            player=self.username,
+            action=action_label,
+            reasoning=reasoning,
+            callout="",
+            turn=turn,
+            battle_side=self._battle_side,
+            event_kind=kind,
+            detail=detail,
+        )
+
     async def choose_move(self, battle: Battle) -> str:
         fmt = (
             getattr(battle, "format", None)
@@ -1709,9 +1793,22 @@ class LLMPlayer(Player):
 
         try:
             reply = await self._completion(trimmed)
+        except Exception as e:
+            log_print(
+                f"  [{self.username}] {self._provider} API error: {e}, falling back to random",
+                flush=True,
+            )
+            await self._emit_choose_move_issue(
+                battle=battle,
+                kind="llm_error",
+                reply=None,
+                exc=e,
+            )
+            return self.choose_random_move(battle)
 
-            history.append({"role": "assistant", "content": reply})
+        history.append({"role": "assistant", "content": reply})
 
+        try:
             action = None
             reasoning = ""
             callout = ""
@@ -1782,11 +1879,23 @@ class LLMPlayer(Player):
                 f"preview={preview!r}, falling back to random",
                 flush=True,
             )
-
+            await self._emit_choose_move_issue(
+                battle=battle,
+                kind="parse_failure",
+                reply=reply,
+                exc=None,
+            )
         except Exception as e:
             log_print(
-                f"  [{self.username}] {self._provider} API error: {e}, falling back to random",
+                f"  [{self.username}] {self._provider} error while applying action: {e}, "
+                f"falling back to random",
                 flush=True,
+            )
+            await self._emit_choose_move_issue(
+                battle=battle,
+                kind="parse_failure",
+                reply=reply,
+                exc=e,
             )
 
         return self.choose_random_move(battle)

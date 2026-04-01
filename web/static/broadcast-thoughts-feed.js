@@ -269,7 +269,12 @@
           reasoning.length > THOUGHT_LINE_LONG_CHARS
             ? " thought-line--long"
             : "";
-        return `<div class="thought-line${longClass}"><span class="meta">${turn} ${action}</span>${safeReasoning}</div>`;
+        const ek = item?.event_kind ? String(item.event_kind) : "";
+        const evClass =
+          ek === "parse_failure" || ek === "llm_error"
+            ? " thought-line--agent-event"
+            : "";
+        return `<div class="thought-line${longClass}${evClass}"><span class="meta">${turn} ${action}</span>${safeReasoning}</div>`;
       })
       .join("");
     scrollThoughtsToBottom(target);
@@ -396,7 +401,17 @@
       const players = msg.players || {};
       for (const [player, items] of Object.entries(players)) {
         thoughtItems[player] = Array.isArray(items)
-          ? items.filter((item) => thoughtHasDisplayReasoning(item))
+          ? items
+              .filter((item) => thoughtHasDisplayReasoning(item))
+              .map((item) => ({
+                timestamp: item.timestamp,
+                turn: item.turn,
+                action: item.action,
+                reasoning: item.reasoning,
+                callout: item.callout,
+                event_kind: item.event_kind || "",
+                detail: item.detail,
+              }))
           : [];
       }
       renderAllThoughtPanels();
@@ -412,6 +427,8 @@
           action: msg.action,
           reasoning: msg.reasoning,
           callout: msg.callout,
+          event_kind: msg.event_kind || "",
+          detail: msg.detail,
         });
         if (thoughtItems[player].length > 80) {
           thoughtItems[player] = thoughtItems[player].slice(-80);

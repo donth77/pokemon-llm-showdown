@@ -16,7 +16,12 @@ Format (single tournament per file) —
     provider, model_id, persona_slug
     provider | model_id | persona_slug | seed
 
-  Each participant line is comma- OR pipe-separated. Optional 4th field is seed (integer).
+  Each participant line is comma- OR pipe-separated.
+  *randombattle formats: 3 fields, or 4 with optional seed (integer), or 5 with
+  seed plus an extra integer column that is ignored (for shared templates with BYO).
+  Custom-team formats: 4 fields (provider, model, persona, team_id), or 5 with seed
+  before team_id. Team ids are manager team preset integers.
+
   Model ids must not contain the delimiter you use (prefer | if the id has commas).
 
 Validation reuses provider_model_validate; persona slugs are checked when
@@ -28,6 +33,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from . import battle_format_rules
 from .provider_model_validate import validate_provider_model
 
 _TYPE_ALIASES: dict[str, frozenset[str]] = {
@@ -244,25 +250,11 @@ def parse_tournament_definition(
             err(
                 line_no,
                 "Each participant needs provider, model, and persona "
-                "(comma- or | -separated); optional 4th field is seed.",
+                "(comma- or | -separated).",
             )
-            continue
-        if len(parts) > 4:
-            err(line_no, "Too many fields (expected 3 or 4)")
             continue
 
         provider, model, persona_slug = parts[0], parts[1], parts[2]
-        seed: int | None = None
-        if len(parts) == 4:
-            try:
-                seed = int(parts[3])
-            except ValueError:
-                err(line_no, f"Seed must be an integer, got {parts[3]!r}")
-                continue
-            if seed < 1:
-                err(line_no, "Seed must be >= 1")
-                continue
-
         prov_l = provider.lower().strip()
         if prov_l not in ("anthropic", "deepseek", "openrouter"):
             err(
@@ -286,10 +278,104 @@ def parse_tournament_definition(
             err(line_no, str(exc))
             continue
 
-        row: dict[str, Any] = {
+        seed: int | None = None
+        team_id: int | None = None
+
+        if battle_format_rules.uses_server_assigned_teams(fmt):
+            if len(parts) > 5:
+                err(
+                    line_no,
+                    "Too many fields for *randombattle formats "
+                    "(3 columns, 4 with seed, or 5 with seed + ignored column).",
+                )
+                continue
+            if len(parts) == 5:
+                try:
+                    seed = int(parts[3])
+                except ValueError:
+                    err(line_no, f"Seed must be an integer, got {parts[3]!r}")
+                    continue
+                if seed < 1:
+                    err(line_no, "Seed must be >= 1")
+                    continue
+                try:
+                    int(parts[4])
+                except ValueError:
+                    err(
+                        line_no,
+                        f"*randombattle: optional 5th field must be an integer "
+                        f"(ignored, not stored), got {parts[4]!r}",
+                    )
+                    continue
+                warnings.append(
+                    f"Line {line_no}: fifth column ignored "
+                    f"(*randombattle uses server-assigned teams)."
+                )
+            elif len(parts) == 4:
+                try:
+                    seed = int(parts[3])
+                except ValueError:
+                    err(line_no, f"Seed must be an integer, got {parts[3]!r}")
+                    continue
+                if seed < 1:
+                    err(line_no, "Seed must be >= 1")
+                    continue
+            row = {
+                "provider": prov_l,
+                "model": model.strip(),
+                "persona_slug": ps,
+            }
+            if seed is not None:
+                row["seed"] = seed
+            entries.append(row)
+            continue
+
+        if len(parts) == 3:
+            err(
+                line_no,
+                "Custom-team formats require a team preset id as the last field: "
+                "4 columns (provider, model, persona, team_id), "
+                "or 5 with seed before team_id.",
+            )
+            continue
+        if len(parts) == 4:
+            try:
+                team_id = int(parts[3])
+            except ValueError:
+                err(line_no, f"team_id must be an integer, got {parts[3]!r}")
+                continue
+            if team_id < 1:
+                err(line_no, "team_id must be >= 1")
+                continue
+        elif len(parts) == 5:
+            try:
+                seed = int(parts[3])
+            except ValueError:
+                err(line_no, f"Seed must be an integer, got {parts[3]!r}")
+                continue
+            if seed < 1:
+                err(line_no, "Seed must be >= 1")
+                continue
+            try:
+                team_id = int(parts[4])
+            except ValueError:
+                err(line_no, f"team_id must be an integer, got {parts[4]!r}")
+                continue
+            if team_id < 1:
+                err(line_no, "team_id must be >= 1")
+                continue
+        else:
+            err(
+                line_no,
+                "Too many fields (custom formats use 4 or 5 columns).",
+            )
+            continue
+
+        row = {
             "provider": prov_l,
             "model": model.strip(),
             "persona_slug": ps,
+            "team_id": team_id,
         }
         if seed is not None:
             row["seed"] = seed

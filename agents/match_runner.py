@@ -886,6 +886,8 @@ async def run_single_match(
     player2_persona_slug: str,
     player1_account_name: str | None = None,
     player2_account_name: str | None = None,
+    player1_team_showdown: str | None = None,
+    player2_team_showdown: str | None = None,
     series_snapshot: dict | None = None,
     tourney_context: dict | None = None,
     manager_match_id: int | None = None,
@@ -930,7 +932,9 @@ async def run_single_match(
     try:
         p1_mem, p1_learn = _load_persona_memory_texts(p1_persona.slug)
         p2_mem, p2_learn = _load_persona_memory_texts(p2_persona.slug)
-        agent1 = LLMPlayer(
+        p1_team = (player1_team_showdown or "").strip() or None
+        p2_team = (player2_team_showdown or "").strip() or None
+        agent1_kw: dict = dict(
             account_configuration=AccountConfiguration(player1_name, None),
             server_configuration=server_config,
             battle_format=battle_format,
@@ -950,8 +954,11 @@ async def run_single_match(
                 learnings_md=p1_learn,
             ),
         )
+        if p1_team:
+            agent1_kw["team"] = p1_team
+        agent1 = LLMPlayer(**agent1_kw)
 
-        agent2 = LLMPlayer(
+        agent2_kw: dict = dict(
             account_configuration=AccountConfiguration(player2_name, None),
             server_configuration=server_config,
             battle_format=battle_format,
@@ -971,6 +978,9 @@ async def run_single_match(
                 learnings_md=p2_learn,
             ),
         )
+        if p2_team:
+            agent2_kw["team"] = p2_team
+        agent2 = LLMPlayer(**agent2_kw)
 
         write_current_battle_state(
             status="starting",

@@ -4,6 +4,12 @@
 {% block content %}
     <div class="page-header">
         <h1>Analytics</h1>
+        <div class="header-actions">
+            <a href="/api/manager/stats?download=json{% if stats_export_query %}&amp;{{ stats_export_query }}{% endif %}"
+               class="btn btn-secondary btn-sm">Download JSON</a>
+            <a href="/api/manager/stats?download=csv{% if stats_export_query %}&amp;{{ stats_export_query }}{% endif %}"
+               class="btn btn-secondary btn-sm">Download CSV</a>
+        </div>
     </div>
     {% if all_battle_formats %}
         <section class="card stats-filter-card">

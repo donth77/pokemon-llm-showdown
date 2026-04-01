@@ -33,6 +33,8 @@ services:
       - WEB_DEBUG=${WEB_DEBUG:-false}
       - PERSONAS_DIR=/personas
       - SHOWDOWN_VIEW_BASE=${SHOWDOWN_VIEW_BASE:-http://localhost:8000}
+      - SHOWDOWN_HOME=${SHOWDOWN_HOME:-/opt/pokemon-showdown}
+      - TEAM_VALIDATION_DISABLED=${TEAM_VALIDATION_DISABLED:-false}
       - MANAGER_HOST_ENV_FILE=/app/host.env
     ports:
       - "8080:8080"
@@ -78,6 +80,8 @@ services:
       - LOG_DIR=/logs
       - LOG_RAW_BATTLE=${LOG_RAW_BATTLE:-true}
       - STATE_DIR=/state
+      - AGENT_EVENTS_FILE=${AGENT_EVENTS_FILE:-/state/agent_events.jsonl}
+      - AGENT_EVENTS_MAX_LINES=${AGENT_EVENTS_MAX_LINES:-2000}
       - TURN_DELAY_SECONDS=${TURN_DELAY_SECONDS:-0}
       - DELAY_BETWEEN_MATCHES=${DELAY_BETWEEN_MATCHES:-15}
       - QUEUE_POLL_INTERVAL=${QUEUE_POLL_INTERVAL:-5}

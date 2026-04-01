@@ -357,6 +357,21 @@ ENV_REGISTRY: tuple[EnvVarDef, ...] = (
         "web",
     ),
     EnvVarDef(
+        "SHOWDOWN_HOME",
+        "Web",
+        "Path to a built smogon/pokemon-showdown tree inside the web container (validate-team CLI). "
+        "Default image bundles this under /opt/pokemon-showdown.",
+        "/opt/pokemon-showdown",
+        "web",
+    ),
+    EnvVarDef(
+        "TEAM_VALIDATION_DISABLED",
+        "Web",
+        "If true, skip Showdown CLI validation on manager team create/save (form still submits).",
+        "false",
+        "web",
+    ),
+    EnvVarDef(
         "WEB_HOST",
         "Network",
         "Web service hostname (internal).",
@@ -429,8 +444,22 @@ ENV_REGISTRY: tuple[EnvVarDef, ...] = (
     EnvVarDef(
         "STATE_DIR",
         "Paths",
-        "Live state (current_battle.json, thoughts.json).",
+        "Live state (current_battle.json, thoughts.json, agent_events.jsonl).",
         "/state",
+        "agents",
+    ),
+    EnvVarDef(
+        "AGENT_EVENTS_FILE",
+        "Agents",
+        "JSONL path for structured choose-move events (parse_failure, llm_error). Default: ``$STATE_DIR/agent_events.jsonl``.",
+        "",
+        "agents",
+    ),
+    EnvVarDef(
+        "AGENT_EVENTS_MAX_LINES",
+        "Agents",
+        "Trim agent_events JSONL to half this count when line count exceeds the cap (default 2000).",
+        "2000",
         "agents",
     ),
     EnvVarDef(

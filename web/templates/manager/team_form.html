@@ -1,0 +1,144 @@
+{% extends "manager/_base.html" %}
+{% set active_page = "teams" %}
+{% block title %}{% if team %}Edit team{% else %}Import team{% endif %}{% endblock %}
+{% block content %}
+    <div class="page-header">
+        <h1>{% if team %}Edit team{% else %}Import team{% endif %}</h1>
+        <a href="/manager/teams" class="btn btn-secondary">Back to list</a>
+    </div>
+    <div class="card form-card">
+        <div class="callout callout-info mb-2">
+            <strong>Teambuilder lives in Showdown.</strong>
+            Open <a href="{{ showdown_view_base }}/teambuilder" target="_blank" rel="noopener">/teambuilder</a>,
+            use <strong>Teambuilder → Import/Export</strong>, then paste exported text below.
+            Presets are stored in the manager DB, not Showdown localStorage.
+        </div>
+        {% if team_format_needs_repick %}
+            <div class="callout callout-warning mb-2">
+                This preset’s stored format
+                <code>{{ team.battle_format or '—' }}</code>
+                is not on the manager’s list. Choose a listed battle format below (required).
+            </div>
+        {% endif %}
+        <form id="team-form">
+            <div class="form-group">
+                <label for="name">Name</label>
+                <input type="text"
+                       id="name"
+                       required
+                       value="{{ team.name if team else '' }}"
+                       placeholder="e.g. Gen9 OU offensive">
+            </div>
+            <div class="form-group">
+                <label for="battle_format">Battle format</label>
+                <p class="text-small text-muted mb-1" style="margin-top:0">
+                    Must match a format from the manager list (same id you select when queueing a match).
+                </p>
+                <select id="battle_format" name="battle_format" required>
+                    <option value="">— Choose from list —</option>
+                    {% for fmt in team_format_hints %}<option value="{{ fmt }}" {% if team and (team.battle_format or '')|lower == fmt|lower %}selected{% endif %}>{{ fmt }}</option>{% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="notes">Notes</label>
+                <input type="text"
+                       id="notes"
+                       value="{{ team.notes if team else '' }}"
+                       placeholder="Optional">
+            </div>
+            <div class="form-group">
+                <label for="showdown_text">Showdown team export</label>
+                <textarea id="showdown_text"
+                          class="code-editor"
+                          rows="18"
+                          spellcheck="false">{{ team.showdown_text if team else '' }}</textarea>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">{% if team %}Save{% else %}Create{% endif %}</button>
+            </div>
+            <div id="form-error" class="form-error" style="display:none"></div>
+        </form>
+    </div>
+{% endblock %}
+{% block scripts %}
+    <script>
+const teamId = {{ team.id if team else 'null' }};
+document.getElementById('team-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const err = document.getElementById('form-error');
+  err.replaceChildren();
+  err.style.display = 'none';
+  const battle_format = document.getElementById('battle_format').value.trim();
+  if (!battle_format) {
+    err.textContent = 'Choose a battle format from the list.';
+    err.style.display = 'block';
+    err.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    return;
+  }
+  const body = {
+    name: document.getElementById('name').value.trim(),
+    battle_format,
+    notes: document.getElementById('notes').value.trim(),
+    showdown_text: document.getElementById('showdown_text').value,
+  };
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  const showFormError = (heading, detailText) => {
+    const h = document.createElement('strong');
+    h.textContent = heading;
+    err.appendChild(h);
+    if (detailText) {
+      const pre = document.createElement('pre');
+      pre.className = 'form-error-detail';
+      pre.textContent = detailText;
+      err.appendChild(pre);
+    }
+    err.style.display = 'block';
+    err.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  };
+  submitBtn.disabled = true;
+  try {
+    const vres = await fetch('/api/manager/teams/validate-showdown', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        battle_format: body.battle_format,
+        showdown_text: body.showdown_text,
+      }),
+    });
+    if (!vres.ok) {
+      const j = await vres.json().catch(() => ({}));
+      const detail = j.detail;
+      const msg = typeof detail === 'string' ? detail : 'Could not validate team';
+      throw new Error(msg);
+    }
+    const vr = await vres.json();
+    if (!vr.ok) {
+      const lines = Array.isArray(vr.errors) ? vr.errors.filter(Boolean) : [];
+      showFormError(
+        'Showdown rejected this team:',
+        lines.length ? lines.join('\n') : 'Unknown validation error.',
+      );
+      return;
+    }
+    const url = teamId ? '/api/manager/teams/' + teamId : '/api/manager/teams';
+    const method = teamId ? 'PATCH' : 'POST';
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      const d = j.detail;
+      const msg = typeof d === 'string' ? d : 'Save failed';
+      throw new Error(msg);
+    }
+    window.location.href = '/manager/teams';
+  } catch (x) {
+    showFormError(x.message || String(x), '');
+  } finally {
+    submitBtn.disabled = false;
+  }
+});
+    </script>
+{% endblock %}

@@ -1,0 +1,47 @@
+{% extends "manager/_base.html" %}
+{% set active_page = "teams" %}
+{% block title %}Team presets{% endblock %}
+{% block content %}
+    <div class="page-header">
+        <h1>Team presets</h1>
+        <a href="/manager/teams/new" class="btn btn-primary">Import team</a>
+    </div>
+    <p class="text-muted text-small mb-2">
+        Build and legal-check teams in <a href="{{ showdown_view_base }}" target="_blank" rel="noopener">local Showdown</a>
+        (Teambuilder → Export), then paste the export here. These presets are for
+        <strong>custom-team</strong> formats (not <code>*randombattle</code>).
+    </p>
+    {% if teams %}
+        <div class="card">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Battle format</th>
+                        <th>Updated</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for t in teams %}
+                        <tr>
+                            <td>
+                                <strong>{{ t.name }}</strong>
+                                {% if t.notes %}<span class="text-muted text-small"> — {{ (t.notes or '')[:80] }}{% if (t.notes or '')|length > 80 %}…{% endif %}</span>{% endif %}
+                            </td>
+                            <td>
+                                <code>{{ t.battle_format or '—' }}</code>
+                            </td>
+                            <td>
+                                <span data-local-ts="{{ t.updated_at }}">{{ t.updated_at | timestamp_fmt }}</span>
+                            </td>
+                            <td><a href="/manager/teams/{{ t.id }}/edit" class="btn btn-sm btn-secondary">Edit</a></td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <p class="text-muted">No team presets yet. <a href="/manager/teams/new">Import one</a>.</p>
+    {% endif %}
+{% endblock %}

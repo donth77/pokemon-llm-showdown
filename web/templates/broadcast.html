@@ -20,7 +20,7 @@
             {% include "partials/broadcast_top_bar_strip.html" %}
             <iframe class="battle-frame"
                     id="battle-frame"
-                    src="{{ showdown_internal_url }}"
+                    src="{{ showdown_local_url }}"
                     title="Pokémon Showdown"
                     allow="autoplay; fullscreen"
                     allowfullscreen>
@@ -64,7 +64,6 @@
         battleFrameId: "battle-frame",
         formatLabelId: "battle-format-label",
         tournamentLabelId: "broadcast-tournament-label",
-        internalUrl: "{{ showdown_internal_url }}",
         localUrl: "{{ showdown_local_url }}",
       };
       window.__THOUGHTS_FEED__ = {

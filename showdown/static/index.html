@@ -427,15 +427,25 @@
     <script src="https://play.pokemonshowdown.com/config/config.js"></script>
     <script>
       Config.testclient = false;
-      Config.server = {
-        id: "localhost",
-        host: location.hostname,
-        port: parseInt(location.port) || 8000,
-        httpport: parseInt(location.port) || 8000,
-        altport: 80,
-        https: false,
-        registered: false,
-      };
+      (function () {
+        var isHttps = location.protocol === "https:";
+        var portParsed = parseInt(location.port, 10);
+        var port =
+          Number.isFinite(portParsed) && portParsed > 0
+            ? portParsed
+            : isHttps
+              ? 443
+              : 8000;
+        Config.server = {
+          id: "localhost",
+          host: location.hostname,
+          port: port,
+          httpport: port,
+          altport: 80,
+          https: isHttps,
+          registered: false,
+        };
+      })();
       Config.defaultserver = Config.server;
       Config.loginserver = "";
       Config.routes = {
@@ -694,8 +704,8 @@
     </script>
     <script>
       (function () {
-        var P1_SPRITE = "/trainers/aggro.png";
-        var P2_SPRITE = "/trainers/stall.png";
+        var broadcastP1 = "";
+        var broadcastP2 = "";
 
         function normalizeTrainerSpriteUrl(url) {
           var u = String(url || "").trim();
@@ -720,44 +730,64 @@
           );
         }
 
-        function applyCustomTrainerSprites() {
-          var near = findNearTrainersprite();
-          var far = findFarTrainersprite();
-          if (near) {
-            near.style.backgroundImage = 'url("' + P1_SPRITE + '")';
-            near.style.backgroundRepeat = "no-repeat";
-            near.style.backgroundPosition = "bottom center";
-            near.style.backgroundSize = "contain";
-            near.style.transform = "scaleX(-1)";
-            near.style.transformOrigin = "center bottom";
+        function clearTrainerSpriteStyles(el) {
+          if (!el) return;
+          if (el.dataset.llmCustomSprite !== "1") return;
+          el.style.backgroundImage = "";
+          el.style.backgroundRepeat = "";
+          el.style.backgroundPosition = "";
+          el.style.backgroundSize = "";
+          el.style.transform = "";
+          el.style.transformOrigin = "";
+          delete el.dataset.llmCustomSprite;
+        }
+
+        function applyTrainerSide(el, url, flipX) {
+          if (!el) return;
+          if (!url) {
+            clearTrainerSpriteStyles(el);
+            return;
           }
-          if (far) {
-            far.style.backgroundImage = 'url("' + P2_SPRITE + '")';
-            far.style.backgroundRepeat = "no-repeat";
-            far.style.backgroundPosition = "bottom center";
-            far.style.backgroundSize = "contain";
-            far.style.transform = "";
-            far.style.transformOrigin = "";
+          el.dataset.llmCustomSprite = "1";
+          el.style.backgroundImage = 'url("' + url + '")';
+          el.style.backgroundRepeat = "no-repeat";
+          el.style.backgroundPosition = "bottom center";
+          el.style.backgroundSize = "contain";
+          if (flipX) {
+            el.style.transform = "scaleX(-1)";
+            el.style.transformOrigin = "center bottom";
+          } else {
+            el.style.transform = "";
+            el.style.transformOrigin = "";
           }
         }
 
+        function applyCustomTrainerSprites() {
+          applyTrainerSide(findNearTrainersprite(), broadcastP1, true);
+          applyTrainerSide(findFarTrainersprite(), broadcastP2, false);
+        }
+
+        function onTrainerSpriteMessage(data) {
+          var n1 = normalizeTrainerSpriteUrl(data.player1_sprite_url);
+          var n2 = normalizeTrainerSpriteUrl(data.player2_sprite_url);
+          broadcastP1 = n1;
+          broadcastP2 = n2;
+          applyCustomTrainerSprites();
+        }
+
         applyCustomTrainerSprites();
+
         if (document.body) {
           var mo = new MutationObserver(function () {
             applyCustomTrainerSprites();
           });
           mo.observe(document.body, { childList: true, subtree: true });
         }
-        setInterval(applyCustomTrainerSprites, 600);
 
         window.addEventListener("message", function (event) {
           var data = event && event.data;
           if (!data || data.type !== "llm_trainer_sprites") return;
-          var n1 = normalizeTrainerSpriteUrl(data.player1_sprite_url);
-          var n2 = normalizeTrainerSpriteUrl(data.player2_sprite_url);
-          if (n1) P1_SPRITE = n1;
-          if (n2) P2_SPRITE = n2;
-          applyCustomTrainerSprites();
+          onTrainerSpriteMessage(data);
         });
       })();
     </script>

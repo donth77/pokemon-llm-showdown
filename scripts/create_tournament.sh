@@ -26,6 +26,7 @@ FORMAT="gen9randombattle"
 BEST_OF=3
 SINGLE_ELIM_BRACKET=""
 PLAYERS=()
+TEAM_IDS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -36,6 +37,7 @@ Create a tournament via POST /api/manager/tournaments.
 Required: --name, at least two --player entries
 Optional: --type round_robin|single_elimination|double_elimination, --format, --best-of, --url
          --single-elim-bracket compact|power_of_two (single/double elim winners bracket; default compact)
+         One --team-id per --player (same order) when battle format is not *randombattle
 
 Each --player: provider/model/persona (for openrouter models with slashes, see script header).
 
@@ -48,6 +50,7 @@ EOF
     --format)   FORMAT="$2"; shift 2 ;;
     --best-of)  BEST_OF="$2"; shift 2 ;;
     --player)   PLAYERS+=("$2"); shift 2 ;;
+    --team-id)  TEAM_IDS+=("$2"); shift 2 ;;
     --single-elim-bracket) SINGLE_ELIM_BRACKET="$2"; shift 2 ;;
     --url)      WEB_URL="$2"; shift 2 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
@@ -64,9 +67,24 @@ if [[ ${#PLAYERS[@]} -lt 2 ]]; then
   exit 1
 fi
 
+fmt_lc=$(printf '%s' "$FORMAT" | tr '[:upper:]' '[:lower:]')
+needs_teams=1
+[[ "$fmt_lc" == *randombattle ]] && needs_teams=0
+
+if [[ "$needs_teams" -eq 1 ]]; then
+  if [[ ${#TEAM_IDS[@]} -ne ${#PLAYERS[@]} ]]; then
+    echo "Error: custom-team formats require one --team-id per --player (same order)." >&2
+    exit 1
+  fi
+elif [[ ${#TEAM_IDS[@]} -gt 0 ]]; then
+  echo "Error: --team-id is only for custom-team formats (not *randombattle)." >&2
+  exit 1
+fi
+
 # Build entries JSON array
 ENTRIES="["
 SEED=1
+idx=0
 for p in "${PLAYERS[@]}"; do
   # Split: first segment = provider, last segment = persona, middle = model
   PROVIDER="${p%%/*}"
@@ -77,16 +95,22 @@ for p in "${PLAYERS[@]}"; do
   if [[ "$SEED" -gt 1 ]]; then
     ENTRIES+=","
   fi
+  team_json=""
+  if [[ "$needs_teams" -eq 1 ]]; then
+    team_json=",
+    \"team_id\": ${TEAM_IDS[$idx]}"
+  fi
   ENTRIES+=$(cat <<EOF
   {
     "provider": "$PROVIDER",
     "model": "$MODEL",
     "persona_slug": "$PERSONA",
-    "seed": $SEED
+    "seed": $SEED$team_json
   }
 EOF
 )
   SEED=$((SEED + 1))
+  idx=$((idx + 1))
 done
 ENTRIES+="]"
 

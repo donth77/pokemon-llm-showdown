@@ -270,6 +270,7 @@ async def init_db() -> None:
     await _migrate_series_bracket_grand_finals_reset()
     await _migrate_tournament_columns()
     await _ensure_tournament_presets_table()
+    await _migrate_teams_library()
 
 
 async def _ensure_tournament_presets_table() -> None:
@@ -290,6 +291,52 @@ async def _ensure_tournament_presets_table() -> None:
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_tpresets_name ON tournament_presets(name)"
         )
+        await db.commit()
+
+
+async def _migrate_teams_library() -> None:
+    """teams table, entry team_id, match team FK + snapshot columns."""
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS teams (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                battle_format TEXT NOT NULL DEFAULT '',
+                showdown_text TEXT NOT NULL,
+                notes TEXT NOT NULL DEFAULT '',
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            )
+            """
+        )
+        await db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_name_nocase ON teams(name COLLATE NOCASE)"
+        )
+        cur = await db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='tournament_entries'"
+        )
+        if await cur.fetchone():
+            cur = await db.execute("PRAGMA table_info(tournament_entries)")
+            te_cols = {r[1] for r in await cur.fetchall()}
+            if "team_id" not in te_cols:
+                await db.execute(
+                    "ALTER TABLE tournament_entries ADD COLUMN team_id INTEGER"
+                )
+        cur = await db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='matches'"
+        )
+        if await cur.fetchone():
+            cur = await db.execute("PRAGMA table_info(matches)")
+            m_cols = {r[1] for r in await cur.fetchall()}
+            for col, decl in (
+                ("player1_team_id", "INTEGER"),
+                ("player2_team_id", "INTEGER"),
+                ("player1_team_showdown", "TEXT"),
+                ("player2_team_showdown", "TEXT"),
+            ):
+                if col not in m_cols:
+                    await db.execute(f"ALTER TABLE matches ADD COLUMN {col} {decl}")
         await db.commit()
 
 
@@ -477,10 +524,19 @@ async def create_tournament(
         )
         tid = cur.lastrowid
         for i, e in enumerate(entries):
+            raw_tid = e.get("team_id")
+            entry_team_id: int | None
+            if raw_tid is None or raw_tid == "":
+                entry_team_id = None
+            else:
+                try:
+                    entry_team_id = int(raw_tid)
+                except (TypeError, ValueError):
+                    entry_team_id = None
             await db.execute(
                 """INSERT INTO tournament_entries
-                   (tournament_id, provider, model, persona_slug, seed, display_name)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                   (tournament_id, provider, model, persona_slug, seed, display_name, team_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (
                     tid,
                     e["provider"],
@@ -488,6 +544,7 @@ async def create_tournament(
                     e["persona_slug"],
                     e.get("seed", i + 1),
                     e.get("display_name", ""),
+                    entry_team_id,
                 ),
             )
         await db.commit()
@@ -790,6 +847,36 @@ async def cancel_tournament(tournament_id: int) -> None:
 # ---------------------------------------------------------------------------
 
 
+async def _team_snapshot_from_id(
+    db: aiosqlite.Connection, team_id: int | None
+) -> tuple[int | None, str | None]:
+    if team_id is None:
+        return None, None
+    cur = await db.execute(
+        "SELECT id, showdown_text FROM teams WHERE id = ?", (int(team_id),)
+    )
+    row = await cur.fetchone()
+    if not row:
+        return None, None
+    return int(row["id"]), str(row["showdown_text"])
+
+
+async def _team_snapshot_for_series_side(
+    db: aiosqlite.Connection,
+    entry_id: int | None,
+    explicit_team_id: int | None,
+) -> tuple[int | None, str | None]:
+    tid: int | None = explicit_team_id
+    if entry_id is not None:
+        cur = await db.execute(
+            "SELECT team_id FROM tournament_entries WHERE id = ?", (int(entry_id),)
+        )
+        row = await cur.fetchone()
+        if row and row["team_id"] is not None:
+            tid = int(row["team_id"])
+    return await _team_snapshot_from_id(db, tid)
+
+
 async def create_series(
     *,
     tournament_id: int | None = None,
@@ -806,6 +893,8 @@ async def create_series(
     player2_model: str | None = None,
     player2_persona: str | None = None,
     player2_entry_id: int | None = None,
+    player1_team_id: int | None = None,
+    player2_team_id: int | None = None,
     auto_queue: bool = True,
 ) -> dict:
     """Create a series and optionally queue its matches."""
@@ -841,14 +930,22 @@ async def create_series(
         sid = cur.lastrowid
 
         if auto_queue and all([player1_provider, player2_provider]):
+            p1_tid, p1_txt = await _team_snapshot_for_series_side(
+                db, player1_entry_id, player1_team_id
+            )
+            p2_tid, p2_txt = await _team_snapshot_for_series_side(
+                db, player2_entry_id, player2_team_id
+            )
             for g in range(1, best_of + 1):
                 await db.execute(
                     """INSERT INTO matches
                        (series_id, tournament_id, game_number, status, battle_format,
                         player1_provider, player1_model, player1_persona,
                         player2_provider, player2_model, player2_persona,
+                        player1_team_id, player2_team_id,
+                        player1_team_showdown, player2_team_showdown,
                         queued_at)
-                       VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         sid,
                         tournament_id,
@@ -860,6 +957,10 @@ async def create_series(
                         player2_provider,
                         player2_model,
                         player2_persona,
+                        p1_tid,
+                        p2_tid,
+                        p1_txt,
+                        p2_txt,
                         now,
                     ),
                 )
@@ -972,16 +1073,22 @@ async def create_match(
     player2_provider: str,
     player2_model: str,
     player2_persona: str,
+    player1_team_id: int | None = None,
+    player2_team_id: int | None = None,
 ) -> dict:
     now = _now()
     async with _db() as db:
+        p1_tid, p1_txt = await _team_snapshot_from_id(db, player1_team_id)
+        p2_tid, p2_txt = await _team_snapshot_from_id(db, player2_team_id)
         cur = await db.execute(
             """INSERT INTO matches
                (series_id, tournament_id, game_number, status, battle_format,
                 player1_provider, player1_model, player1_persona,
                 player2_provider, player2_model, player2_persona,
+                player1_team_id, player2_team_id,
+                player1_team_showdown, player2_team_showdown,
                 queued_at)
-               VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 series_id,
                 tournament_id,
@@ -993,12 +1100,143 @@ async def create_match(
                 player2_provider,
                 player2_model,
                 player2_persona,
+                p1_tid,
+                p2_tid,
+                p1_txt,
+                p2_txt,
                 now,
             ),
         )
         mid = cur.lastrowid
         await db.commit()
     return await get_match(mid)  # type: ignore[return-value]
+
+
+# ---------------------------------------------------------------------------
+# Team presets (Showdown paste text)
+# ---------------------------------------------------------------------------
+
+
+async def list_teams() -> list[dict]:
+    async with _db() as db:
+        cur = await db.execute(
+            """SELECT id, name, battle_format, notes, created_at, updated_at
+               FROM teams ORDER BY name COLLATE NOCASE"""
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_team(team_id: int) -> dict | None:
+    async with _db() as db:
+        cur = await db.execute("SELECT * FROM teams WHERE id = ?", (team_id,))
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def create_team(
+    *,
+    name: str,
+    battle_format: str,
+    showdown_text: str,
+    notes: str = "",
+) -> dict:
+    now = _now()
+    nm = name.strip()
+    bf = (battle_format or "").strip()
+    txt = showdown_text or ""
+    nt = notes or ""
+    async with _db() as db:
+        try:
+            cur = await db.execute(
+                """INSERT INTO teams (name, battle_format, showdown_text, notes, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (nm, bf, txt, nt, now, now),
+            )
+            tid = cur.lastrowid
+        except sqlite3.IntegrityError as exc:
+            if "UNIQUE" in str(exc).upper():
+                raise ValueError("duplicate_team_name") from exc
+            raise
+        await db.commit()
+    out = await get_team(int(tid))
+    assert out is not None
+    return out
+
+
+async def update_team(
+    team_id: int,
+    *,
+    name: str | None = None,
+    battle_format: str | None = None,
+    showdown_text: str | None = None,
+    notes: str | None = None,
+) -> dict | None:
+    cur_team = await get_team(team_id)
+    if not cur_team:
+        return None
+    now = _now()
+    nm = cur_team["name"] if name is None else name.strip()
+    bf = (
+        cur_team["battle_format"]
+        if battle_format is None
+        else (battle_format or "").strip()
+    )
+    txt = cur_team["showdown_text"] if showdown_text is None else (showdown_text or "")
+    nt = cur_team["notes"] if notes is None else (notes or "")
+    async with _db() as db:
+        try:
+            await db.execute(
+                """UPDATE teams SET name = ?, battle_format = ?, showdown_text = ?, notes = ?, updated_at = ?
+                   WHERE id = ?""",
+                (nm, bf, txt, nt, now, team_id),
+            )
+        except sqlite3.IntegrityError as exc:
+            if "UNIQUE" in str(exc).upper():
+                raise ValueError("duplicate_team_name") from exc
+            raise
+        await db.commit()
+    return await get_team(team_id)
+
+
+async def count_queued_running_matches_referencing_team(team_id: int) -> int:
+    async with _db() as db:
+        cur = await db.execute(
+            """SELECT COUNT(*) FROM matches
+               WHERE status IN ('queued', 'running')
+               AND (player1_team_id = ? OR player2_team_id = ?)""",
+            (team_id, team_id),
+        )
+        row = await cur.fetchone()
+        return int(row[0]) if row else 0
+
+
+async def delete_team(team_id: int) -> bool:
+    n = await count_queued_running_matches_referencing_team(team_id)
+    if n > 0:
+        raise ValueError("team_in_active_matches")
+    async with _db() as db:
+        cur = await db.execute("DELETE FROM teams WHERE id = ?", (team_id,))
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def get_tournament_entry(entry_id: int) -> dict | None:
+    async with _db() as db:
+        cur = await db.execute(
+            "SELECT * FROM tournament_entries WHERE id = ?", (int(entry_id),)
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def update_tournament_entry_team(entry_id: int, team_id: int | None) -> bool:
+    async with _db() as db:
+        cur = await db.execute(
+            "UPDATE tournament_entries SET team_id = ? WHERE id = ?",
+            (team_id, entry_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
 
 
 async def get_match(match_id: int) -> dict | None:

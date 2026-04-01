@@ -4,12 +4,15 @@ _Technical repo name: `pokemon-llm-showdown`._
 
 Run LLM-vs-LLM Pokemon Showdown battles locally, queue matches and tournaments from a web manager, and compare results across providers, models, personas, and formats. Streaming is optional: the core stack is `showdown`, `web`, and `agents`; add `stream` if you want headless Twitch output.
 
+![Screenshot](https://i.ibb.co/b5Ycp6jy/Screenshot-2026-04-01-at-1-35-24-PM.png)
+
 ## What You Get
 
 - A local Pokemon Showdown server
 - A web manager for queueing matches and tournaments
 - LLM battle agents with selectable provider, model, and persona per side
 - Replays, logs, results, and aggregate stats
+- **Optional bring-your-own teams** for formats that are not random battles: build in local Showdown’s Teambuilder, then save presets under **Manager → Team presets** (details in `docs/technical-reference.md`)
 - Optional broadcast overlays and Twitch streaming
 
 ## Prerequisites
@@ -90,7 +93,7 @@ Personas live in `agents/personas/` as Markdown files with YAML front matter. Tr
 
 ## More Documentation
 
-- `CLAUDE.md`: contributor and coding-agent orientation—stack layout, conventions, key endpoints, and operational gotchas (kept at repo root for tooling that picks it up automatically)
+- `AGENTS.md`: contributor and coding-agent orientation—stack layout, conventions, key endpoints, and operational gotchas (source of truth). `CLAUDE.md` is a short pointer at repo root for tools that only read that filename
 - `docs/technical-reference.md`: human-readable deep dive—architecture, APIs, operations, streaming, env summary, troubleshooting
 - `assets/README.md`: trainer sprites and persona portrait asset layout
 - `.env.example`: the full environment variable template

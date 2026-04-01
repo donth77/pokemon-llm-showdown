@@ -21,10 +21,8 @@
     ? document.getElementById(cfg.tournamentLabelId)
     : null;
 
-  const isLocal =
-    window.location.hostname === "localhost" ||
-    window.location.hostname === "127.0.0.1";
-  const showdownBaseRaw = isLocal ? cfg.localUrl : cfg.internalUrl;
+  /** Browser-reachable Showdown origin from ``SHOWDOWN_VIEW_BASE`` (never Docker-only hostnames). */
+  const showdownBaseRaw = cfg.localUrl;
 
   function showdownBaseUrl() {
     const u = new URL(showdownBaseRaw);

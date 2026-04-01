@@ -429,6 +429,43 @@ h2.results-section-title {
 }
 .form-row { display: flex; gap: 16px; flex-wrap: wrap; }
 .form-row .form-group { flex: 1; min-width: 180px; }
+.team-preset-group--locked select {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.callout {
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+.callout-info {
+  background: rgba(99, 102, 241, 0.08);
+  border-color: rgba(99, 102, 241, 0.35);
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.data-table th,
+.data-table td {
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+.data-table th {
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+}
+.mb-2 { margin-bottom: 12px; }
+.mt-1 { margin-top: 6px; }
+.mt-2 { margin-top: 12px; }
 input[type="text"], input[type="number"], select {
   width: 100%;
   padding: 8px 12px;
@@ -441,6 +478,7 @@ input[type="text"], input[type="number"], select {
 input:focus, select:focus { outline: none; border-color: var(--primary); }
 .form-actions { display: flex; gap: 12px; margin-top: 24px; }
 .form-error { margin-top: 16px; padding: 12px; background: rgba(239,68,68,0.1); border: 1px solid var(--danger); border-radius: 6px; color: var(--danger); }
+.form-error pre.form-error-detail { margin: 8px 0 0; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; line-height: 1.4; color: inherit; }
 .form-success { margin-top: 16px; padding: 12px; background: rgba(34,197,94,0.1); border: 1px solid var(--success); border-radius: 6px; color: var(--success); }
 
 .import-def-block {
@@ -507,19 +545,62 @@ input:focus, select:focus { outline: none; border-color: var(--primary); }
 }
 .import-def-feedback.import-def-warn { color: var(--text); background: rgba(234,179,8,0.12); border: 1px solid #ca8a04; }
 
-/* Entry rows (tournament participant) */
+/* Entry rows (tournament participant): one horizontal row of fields; team preset on its own row */
 .entry-row {
   display: flex;
-  gap: 8px;
-  align-items: center;
+  flex-direction: column;
+  gap: 10px;
   margin-bottom: 8px;
   padding: 8px 12px;
   background: var(--bg-input);
   border-radius: 6px;
 }
-.entry-row select, .entry-row input { min-width: 0; }
-.entry-num { font-weight: 700; color: var(--text-muted); min-width: 28px; }
+.entry-row-fields {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+}
+.entry-row-fields select,
+.entry-row-fields input { min-width: 0; }
+.entry-num { font-weight: 700; color: var(--text-muted); min-width: 28px; flex-shrink: 0; }
 .entry-provider { width: 130px; flex-shrink: 0; }
+.entry-model {
+  flex: 1;
+  min-width: 0;
+}
+.entry-persona {
+  flex: 0 1 auto;
+  width: 11rem;
+  max-width: min(40vw, 18rem);
+  flex-shrink: 1;
+}
+.entry-seed {
+  width: 60px;
+  flex-shrink: 0;
+}
+.entry-remove { flex-shrink: 0; }
+.entry-team-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.entry-team-label { margin: 0; font-weight: 500; }
+.entry-team {
+  width: 100%;
+  max-width: 32rem;
+}
+
+/* Match form: team presets section (custom formats only) */
+.match-team-presets-block .versus-config { margin-bottom: 0; }
+.match-team-presets-block .player-config { padding: 16px; }
+#match-submit-btn:disabled,
+#tournament-submit-btn:disabled { cursor: not-allowed; opacity: 0.65; }
 
 /* Versus layout */
 .versus-config { display: flex; gap: 24px; align-items: flex-start; margin-bottom: 16px; }

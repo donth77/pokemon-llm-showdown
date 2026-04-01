@@ -35,7 +35,7 @@
     <body>
         <iframe class="battle-frame"
                 id="battle-frame"
-                src="{{ showdown_internal_url }}"
+                src="{{ showdown_local_url }}"
                 title="Pokémon Showdown"
                 allow="autoplay; fullscreen"
                 allowfullscreen></iframe>
@@ -43,7 +43,6 @@
       window.__BATTLE_CORE__ = {
         battleFrameId: "battle-frame",
         formatLabelId: null,
-        internalUrl: "{{ showdown_internal_url }}",
         localUrl: "{{ showdown_local_url }}",
       };
       window.__THOUGHTS_FEED__ = {

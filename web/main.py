@@ -48,8 +48,23 @@ def _clamp_replay_offset(offset: int, limit: int, total: int) -> int:
 
 STATE_FILE = Path("/state/current_battle.json")
 THOUGHTS_FILE = Path("/state/thoughts.json")
+AGENT_EVENTS_FILE = Path("/state/agent_events.jsonl")
 STREAM_TITLE = os.getenv("STREAM_TITLE", "Pokémon Showdown battles with LLMs")
 HIDE_BATTLE_UI = parse_env_bool("HIDE_BATTLE_UI", default=True)
+
+
+def _showdown_browser_client_url(*, hide_battle_ui: bool) -> str:
+    """
+    Showdown client URL for iframes and postMessage targets in the *browser*.
+    Never use the Docker-only hostname ``showdown`` here — it does not resolve on the host.
+    """
+    raw = os.getenv("SHOWDOWN_VIEW_BASE", "http://localhost:8000").strip()
+    if not raw:
+        raw = "http://localhost:8000"
+    base = raw.rstrip("/")
+    if hide_battle_ui:
+        return f"{base}/?hide_battle_ui=1"
+    return f"{base}/"
 
 
 @asynccontextmanager
@@ -531,18 +546,13 @@ async def get_replays(
 
 @app.get("/broadcast", response_class=HTMLResponse)
 async def get_broadcast(request: Request):
-    showdown_base = "http://showdown:8000/"
-    showdown_local = "http://localhost:8000/"
-    if HIDE_BATTLE_UI:
-        showdown_base += "?hide_battle_ui=1"
-        showdown_local += "?hide_battle_ui=1"
+    showdown_browser = _showdown_browser_client_url(hide_battle_ui=HIDE_BATTLE_UI)
     return templates.TemplateResponse(
         request=request,
         name="broadcast.html",
         context={
             "request": request,
-            "showdown_internal_url": showdown_base,
-            "showdown_local_url": showdown_local,
+            "showdown_local_url": showdown_browser,
             "stream_title": STREAM_TITLE,
             "hide_battle_ui": HIDE_BATTLE_UI,
         },
@@ -579,18 +589,13 @@ async def get_broadcast_top_bar(request: Request):
 @app.get("/broadcast/battle_frame", response_class=HTMLResponse)
 async def get_broadcast_battle_frame(request: Request):
     """Showdown iframe + battle sync + in-frame callouts only (no scoreboard/thoughts UI)."""
-    showdown_base = "http://showdown:8000/"
-    showdown_local = "http://localhost:8000/"
-    if HIDE_BATTLE_UI:
-        showdown_base += "?hide_battle_ui=1"
-        showdown_local += "?hide_battle_ui=1"
+    showdown_browser = _showdown_browser_client_url(hide_battle_ui=HIDE_BATTLE_UI)
     return templates.TemplateResponse(
         request=request,
         name="broadcast_battle_frame.html",
         context={
             "request": request,
-            "showdown_internal_url": showdown_base,
-            "showdown_local_url": showdown_local,
+            "showdown_local_url": showdown_browser,
         },
     )
 
@@ -621,6 +626,32 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/agent-events", response_class=JSONResponse)
+async def get_agent_events(
+    limit: int = Query(
+        100, ge=1, le=500, description="Last N events from the JSONL tail"
+    ),
+):
+    """Recent structured agent events (parse failures, LLM errors) from the shared state volume."""
+    if not AGENT_EVENTS_FILE.is_file():
+        return {"events": [], "path": str(AGENT_EVENTS_FILE)}
+    try:
+        raw = AGENT_EVENTS_FILE.read_text(encoding="utf-8")
+    except OSError:
+        return {"events": [], "path": str(AGENT_EVENTS_FILE)}
+    lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+    tail = lines[-limit:]
+    events: list[dict] = []
+    for ln in tail:
+        try:
+            obj = json.loads(ln)
+            if isinstance(obj, dict):
+                events.append(obj)
+        except json.JSONDecodeError:
+            continue
+    return {"events": events, "path": str(AGENT_EVENTS_FILE)}
+
+
 @app.get("/thoughts", response_class=JSONResponse)
 async def get_thoughts():
     if not THOUGHTS_FILE.exists():
@@ -644,6 +675,10 @@ async def post_thought(request: Request):
     player = str(body.get("player", "")).strip()
     bs = str(body.get("battle_side", "")).strip().lower()
     battle_side = bs if bs in ("p1", "p2") else ""
+    ek_raw = body.get("event_kind")
+    event_kind = str(ek_raw).strip() if ek_raw is not None else ""
+    detail_raw = body.get("detail")
+    detail = detail_raw if isinstance(detail_raw, dict) else None
     thought = {
         "timestamp": body.get("timestamp", time.time()),
         "turn": body.get("turn"),
@@ -652,6 +687,10 @@ async def post_thought(request: Request):
         "callout": str(body.get("callout", "")),
         "battle_side": battle_side,
     }
+    if event_kind:
+        thought["event_kind"] = event_kind
+    if detail is not None:
+        thought["detail"] = detail
     if player:
         items = _thought_store.setdefault(player, [])
         items.append(thought)

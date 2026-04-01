@@ -160,3 +160,7 @@
   font-size: 0.786em;
   font-weight: 600;
 }
+
+.thought-line--agent-event .meta {
+  color: #f0ad4e;
+}

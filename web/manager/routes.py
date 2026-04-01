@@ -6,25 +6,31 @@ Mounted on the main FastAPI app as an APIRouter.
 
 from __future__ import annotations
 
+import csv
 import json
 import logging
 import os
 import re
+from datetime import datetime, timezone
+from io import StringIO
 from pathlib import Path
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
+from env_bool import parse_env_bool
 from manager_stream import manager_sse, notify_manager_events
 from scoreboard_stream import request_scoreboard_publish
 
 from . import (
+    battle_format_rules,
     db,
     env_host_file as envfile,
     personas_store as pstore,
     showdown_accounts,
+    team_showdown_validate,
     tournament_definition,
     tournament_logic,
 )
@@ -110,6 +116,101 @@ async def _analytics_format_filter(
     return sel, known
 
 
+def _stats_export_timestamp_stem() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _stats_to_csv(stats: dict, battle_formats: list[str] | None) -> str:
+    out = StringIO()
+    w = csv.writer(out)
+    w.writerow(["# pokemon-llm-showdown analytics export"])
+    w.writerow(["battle_formats_filter", json.dumps(battle_formats)])
+    w.writerow([])
+
+    w.writerow(["## model_stats"])
+    w.writerow(["model", "wins", "losses", "total", "win_rate_pct"])
+    for model, s in stats.get("model_stats", {}).items():
+        w.writerow(
+            [
+                model,
+                s.get("wins", 0),
+                s.get("losses", 0),
+                s.get("total", 0),
+                s.get("win_rate", 0),
+            ]
+        )
+
+    w.writerow([])
+    w.writerow(["## persona_stats"])
+    w.writerow(["persona", "wins", "losses", "total", "win_rate_pct"])
+    for persona, s in stats.get("persona_stats", {}).items():
+        w.writerow(
+            [
+                persona or "",
+                s.get("wins", 0),
+                s.get("losses", 0),
+                s.get("total", 0),
+                s.get("win_rate", 0),
+            ]
+        )
+
+    w.writerow([])
+    w.writerow(["## head_to_head_models"])
+    w.writerow(["model_p1", "model_p2", "p1_wins", "p2_wins", "total"])
+    for h in stats.get("head_to_head", []):
+        w.writerow(
+            [
+                h.get("model1", ""),
+                h.get("model2", ""),
+                h.get("model1_wins", 0),
+                h.get("model2_wins", 0),
+                h.get("total", 0),
+            ]
+        )
+
+    w.writerow([])
+    w.writerow(["## head_to_head_personas"])
+    w.writerow(["persona_p1", "persona_p2", "p1_wins", "p2_wins", "total"])
+    for h in stats.get("head_to_head_personas", []):
+        w.writerow(
+            [
+                h.get("persona1") or "",
+                h.get("persona2") or "",
+                h.get("persona1_wins", 0),
+                h.get("persona2_wins", 0),
+                h.get("total", 0),
+            ]
+        )
+
+    w.writerow([])
+    w.writerow(["## head_to_head_model_persona"])
+    w.writerow(
+        [
+            "model_p1",
+            "persona_p1",
+            "model_p2",
+            "persona_p2",
+            "p1_wins",
+            "p2_wins",
+            "total",
+        ]
+    )
+    for h in stats.get("head_to_head_model_persona", []):
+        w.writerow(
+            [
+                h.get("model1", ""),
+                h.get("persona1") or "",
+                h.get("model2", ""),
+                h.get("persona2") or "",
+                h.get("model1_wins", 0),
+                h.get("model2_wins", 0),
+                h.get("total", 0),
+            ]
+        )
+
+    return out.getvalue()
+
+
 def _timestamp_fmt(epoch: float | int | None) -> str:
     """Jinja2 filter: epoch seconds → same style as overlay (UTC, en-GB-like + ' UTC')."""
     import datetime
@@ -182,7 +283,11 @@ def _require_provider_model_pair(label: str, provider: str, model: str) -> None:
         raise HTTPException(400, str(exc)) from None
 
 
+# Dropdown + tournament plaintext import allowlist. Random = server-built teams;
+# others are custom-team singles (use paste / future team presets). Older gens:
+# only OU here; UU/RU/1v1 for gen8–1 can be typed in the custom format field.
 BATTLE_FORMATS = [
+    # --- Random (server teams) ---
     "gen9randombattle",
     "gen8randombattle",
     "gen7randombattle",
@@ -192,7 +297,36 @@ BATTLE_FORMATS = [
     "gen3randombattle",
     "gen2randombattle",
     "gen1randombattle",
+    # --- Built teams: Gen 9 singles ---
+    "gen9ou",
+    "gen9uu",
+    "gen9ru",
+    "gen91v1",
+    # --- Built teams: OU by generation (gen8 → gen1) ---
+    "gen8ou",
+    "gen7ou",
+    "gen6ou",
+    "gen5ou",
+    "gen4ou",
+    "gen3ou",
+    "gen2ou",
+    "gen1ou",
 ]
+
+# Team preset "format hint" dropdown: BYO formats only (no server-assigned teams).
+BATTLE_FORMATS_TEAM_PRESET_HINTS = [
+    f for f in BATTLE_FORMATS if not battle_format_rules.uses_server_assigned_teams(f)
+]
+
+
+def _team_battle_format_in_preset_hints(battle_format: str) -> bool:
+    b = battle_format_rules.normalize_battle_format_id(battle_format)
+    if not b:
+        return False
+    for h in BATTLE_FORMATS_TEAM_PRESET_HINTS:
+        if battle_format_rules.normalize_battle_format_id(h) == b:
+            return True
+    return False
 
 
 def _require_valid_tournament_definition_text(text: str) -> None:
@@ -563,7 +697,225 @@ async def api_config():
         "providers": ALLOWED_PROVIDERS,
         "battle_formats": BATTLE_FORMATS,
         "personas": _scan_personas(),
+        "random_team_battle_format_suffix": battle_format_rules.SHOWDOWN_SERVER_ASSIGNED_TEAM_SUFFIX,
     }
+
+
+def _optional_team_id(raw: object) -> int | None:
+    if raw is None or raw == "":
+        return None
+    try:
+        return int(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+async def _require_team_preset_matches_battle_format(
+    label: str,
+    battle_format: str,
+    team_id: int | None,
+) -> None:
+    """When team_id is set, require row to exist; if it has a format hint, it must match."""
+    if team_id is None:
+        return
+    row = await db.get_team(team_id)
+    if not row:
+        raise HTTPException(404, f"Team {team_id} not found")
+    tag = battle_format_rules.normalize_battle_format_id(
+        str(row.get("battle_format") or "")
+    )
+    want = battle_format_rules.normalize_battle_format_id(battle_format)
+    if not tag:
+        return
+    if tag != want:
+        raise HTTPException(
+            400,
+            f"{label}: team preset {team_id} ({row['name']!r}) is tagged for "
+            f"{row['battle_format']!r}, not {battle_format!r}.",
+        )
+
+
+def _require_player_teams_for_custom_battle_format(
+    fmt: str,
+    p1t: int | None,
+    p2t: int | None,
+) -> None:
+    """BYO formats need both snapshot teams; random* formats ignore presets."""
+    if battle_format_rules.uses_server_assigned_teams(fmt):
+        return
+    if p1t is None or p2t is None:
+        raise HTTPException(
+            400,
+            "player1_team_id and player2_team_id are required for custom-team battle formats "
+            f"(not *{battle_format_rules.SHOWDOWN_SERVER_ASSIGNED_TEAM_SUFFIX}).",
+        )
+
+
+# --- Team presets ---
+
+
+@router.get("/api/manager/teams", response_class=JSONResponse)
+async def api_list_teams():
+    return await db.list_teams()
+
+
+@router.post("/api/manager/teams/validate-showdown", response_class=JSONResponse)
+async def api_validate_team_showdown(request: Request):
+    if parse_env_bool("TEAM_VALIDATION_DISABLED", default=False):
+        return {"ok": True, "skipped": True, "errors": []}
+    body = await request.json()
+    battle_format = str(body.get("battle_format", "")).strip()
+    showdown_text = body.get("showdown_text")
+    if showdown_text is not None and not isinstance(showdown_text, str):
+        raise HTTPException(400, "showdown_text must be a string")
+    text = showdown_text if isinstance(showdown_text, str) else ""
+    try:
+        errors = await team_showdown_validate.validate_team_showdown(
+            battle_format, text
+        )
+    except team_showdown_validate.TeamValidationConfigError as exc:
+        raise HTTPException(503, str(exc)) from None
+    except TimeoutError as exc:
+        raise HTTPException(504, str(exc)) from None
+    return {"ok": len(errors) == 0, "skipped": False, "errors": errors}
+
+
+@router.post("/api/manager/teams", response_class=JSONResponse)
+async def api_create_team(request: Request):
+    body = await request.json()
+    name = str(body.get("name", "")).strip()
+    if not name:
+        raise HTTPException(400, "name is required")
+    battle_format = str(body.get("battle_format", "")).strip()
+    if not battle_format:
+        raise HTTPException(400, "battle_format is required")
+    notes = str(body.get("notes", "") or "")
+    showdown_text = (body.get("showdown_text") or "").strip()
+    if not showdown_text:
+        raise HTTPException(400, "showdown_text is required")
+    try:
+        row = await db.create_team(
+            name=name,
+            battle_format=battle_format,
+            showdown_text=showdown_text,
+            notes=notes,
+        )
+    except ValueError as exc:
+        if exc.args and exc.args[0] == "duplicate_team_name":
+            raise HTTPException(409, "A team with this name already exists") from None
+        raise
+    await notify_manager_events()
+    # Redact full text in API response for list hygiene; include id + metadata
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "battle_format": row["battle_format"],
+        "notes": row["notes"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "showdown_text_preview": (showdown_text[:200] + "…")
+        if len(showdown_text) > 200
+        else showdown_text,
+    }
+
+
+@router.get("/api/manager/teams/{tid}", response_class=JSONResponse)
+async def api_get_team(tid: int):
+    row = await db.get_team(tid)
+    if not row:
+        raise HTTPException(404, "Team not found")
+    return dict(row)
+
+
+@router.patch("/api/manager/teams/{tid}", response_class=JSONResponse)
+async def api_patch_team(tid: int, request: Request):
+    body = await request.json()
+    name = body.get("name") if "name" in body else None
+    battle_format = body.get("battle_format") if "battle_format" in body else None
+    notes = body.get("notes") if "notes" in body else None
+    showdown_text = body.get("showdown_text") if "showdown_text" in body else None
+    if name is not None and not str(name).strip():
+        raise HTTPException(400, "name cannot be empty")
+    cur_team = await db.get_team(tid)
+    if not cur_team:
+        raise HTTPException(404, "Team not found")
+    merged_bf = (
+        str(battle_format).strip()
+        if battle_format is not None
+        else str(cur_team.get("battle_format") or "").strip()
+    )
+    if not merged_bf:
+        raise HTTPException(400, "battle_format is required")
+    try:
+        row = await db.update_team(
+            tid,
+            name=str(name).strip() if name is not None else None,
+            battle_format=str(battle_format).strip()
+            if battle_format is not None
+            else None,
+            showdown_text=str(showdown_text).strip()
+            if showdown_text is not None
+            else None,
+            notes=str(notes) if notes is not None else None,
+        )
+    except ValueError as exc:
+        if exc.args and exc.args[0] == "duplicate_team_name":
+            raise HTTPException(409, "A team with this name already exists") from None
+        raise
+    if not row:
+        raise HTTPException(404, "Team not found")
+    await notify_manager_events()
+    return dict(row)
+
+
+@router.delete("/api/manager/teams/{tid}", response_class=JSONResponse)
+async def api_delete_team(tid: int):
+    try:
+        ok = await db.delete_team(tid)
+    except ValueError as exc:
+        if exc.args and exc.args[0] == "team_in_active_matches":
+            raise HTTPException(
+                409,
+                "Cannot delete team while it is referenced by a queued or running match",
+            ) from None
+        raise
+    if not ok:
+        raise HTTPException(404, "Team not found")
+    await notify_manager_events()
+    return {"status": "deleted"}
+
+
+@router.patch(
+    "/api/manager/tournament-entries/{entry_id}",
+    response_class=JSONResponse,
+)
+async def api_patch_tournament_entry(entry_id: int, request: Request):
+    body = await request.json()
+    if "team_id" not in body:
+        raise HTTPException(400, "team_id is required")
+    tid = _optional_team_id(body.get("team_id"))
+    entry_row = await db.get_tournament_entry(entry_id)
+    if not entry_row:
+        raise HTTPException(404, "Tournament entry not found")
+    tournament_row = await db.get_tournament(int(entry_row["tournament_id"]))
+    if not tournament_row:
+        raise HTTPException(404, "Tournament not found")
+    t_fmt = str(tournament_row.get("battle_format") or "")
+    if tid is not None:
+        if battle_format_rules.uses_server_assigned_teams(t_fmt):
+            raise HTTPException(
+                400,
+                f"team_id is not allowed for server-assigned team formats "
+                f"(*{battle_format_rules.SHOWDOWN_SERVER_ASSIGNED_TEAM_SUFFIX}).",
+            )
+        await _require_team_preset_matches_battle_format(
+            f"Tournament entry {entry_id}", t_fmt, tid
+        )
+    ok = await db.update_tournament_entry_team(entry_id, tid)
+    if not ok:
+        raise HTTPException(404, "Tournament entry not found")
+    await notify_manager_events(queue=True)
+    return {"status": "ok", "team_id": tid}
 
 
 # --- Tournaments ---
@@ -687,19 +1039,36 @@ async def api_create_tournament(request: Request):
     if best_of < 1 or best_of % 2 == 0:
         raise HTTPException(400, "best_of must be a positive odd number")
 
+    normalized_entries: list[dict] = []
     for i, e in enumerate(entries):
         if not e.get("provider") or not e.get("model") or not e.get("persona_slug"):
             raise HTTPException(
                 400, f"Entry {i + 1} missing provider, model, or persona_slug"
             )
         _require_provider_model_pair(f"Entry {i + 1}", e["provider"], e["model"])
+        etid = _optional_team_id(e.get("team_id"))
+        if battle_format_rules.uses_server_assigned_teams(fmt):
+            etid = None
+        elif etid is None:
+            raise HTTPException(
+                400,
+                f"Entry {i + 1}: team_id is required for custom-team battle formats "
+                f"(not *{battle_format_rules.SHOWDOWN_SERVER_ASSIGNED_TEAM_SUFFIX}).",
+            )
+        else:
+            await _require_team_preset_matches_battle_format(
+                f"Entry {i + 1}", fmt, etid
+            )
+        ne = dict(e)
+        ne["team_id"] = etid
+        normalized_entries.append(ne)
 
     tournament = await db.create_tournament(
         name=name,
         type=t_type,
         battle_format=fmt,
         best_of=best_of,
-        entries=entries,
+        entries=normalized_entries,
         single_elim_bracket=single_elim_bracket,
     )
     await tournament_logic.generate_bracket(tournament)
@@ -760,6 +1129,18 @@ async def api_create_series(request: Request):
         "Player 2", body["player2_provider"], body["player2_model"]
     )
 
+    p1t = _optional_team_id(body.get("player1_team_id"))
+    p2t = _optional_team_id(body.get("player2_team_id"))
+    for side, tid in (("player1", p1t), ("player2", p2t)):
+        if tid is not None and battle_format_rules.uses_server_assigned_teams(fmt):
+            raise HTTPException(
+                400,
+                f"{side}_team_id is not allowed for server-assigned team formats",
+            )
+    _require_player_teams_for_custom_battle_format(fmt, p1t, p2t)
+    await _require_team_preset_matches_battle_format("Player 1", fmt, p1t)
+    await _require_team_preset_matches_battle_format("Player 2", fmt, p2t)
+
     series = await db.create_series(
         best_of=best_of,
         battle_format=fmt,
@@ -769,6 +1150,8 @@ async def api_create_series(request: Request):
         player2_provider=body["player2_provider"],
         player2_model=body["player2_model"],
         player2_persona=body["player2_persona"],
+        player1_team_id=p1t,
+        player2_team_id=p2t,
     )
     t_extra = (
         [int(series["tournament_id"])]
@@ -821,6 +1204,19 @@ async def api_create_matches(request: Request):
         "Player 2", body["player2_provider"], body["player2_model"]
     )
 
+    p1t = _optional_team_id(body.get("player1_team_id"))
+    p2t = _optional_team_id(body.get("player2_team_id"))
+    for side, tid in (("player1", p1t), ("player2", p2t)):
+        if tid is not None and battle_format_rules.uses_server_assigned_teams(fmt):
+            raise HTTPException(
+                400,
+                f"{side}_team_id is not allowed for server-assigned team formats "
+                f"(*{battle_format_rules.SHOWDOWN_SERVER_ASSIGNED_TEAM_SUFFIX}).",
+            )
+    _require_player_teams_for_custom_battle_format(fmt, p1t, p2t)
+    await _require_team_preset_matches_battle_format("Player 1", fmt, p1t)
+    await _require_team_preset_matches_battle_format("Player 2", fmt, p2t)
+
     # best_of > 0 means create a series; count is ignored
     if best_of > 0:
         if best_of % 2 == 0:
@@ -834,6 +1230,8 @@ async def api_create_matches(request: Request):
             player2_provider=body["player2_provider"],
             player2_model=body["player2_model"],
             player2_persona=body["player2_persona"],
+            player1_team_id=p1t,
+            player2_team_id=p2t,
         )
         await notify_manager_events(queue=True, series_ids=[int(series["id"])])
         return {"type": "series", "series": series}
@@ -850,6 +1248,8 @@ async def api_create_matches(request: Request):
             player2_provider=body["player2_provider"],
             player2_model=body["player2_model"],
             player2_persona=body["player2_persona"],
+            player1_team_id=p1t,
+            player2_team_id=p2t,
         )
         created.append(m)
     await notify_manager_events(queue=True)
@@ -1173,9 +1573,46 @@ async def api_results(
 
 
 @router.get("/api/manager/stats", response_class=JSONResponse)
-async def api_stats(formats: list[str] = Query(default=[])):
+async def api_stats(
+    formats: list[str] = Query(default=[]),
+    download: str | None = Query(
+        None,
+        description="Set to json or csv to download with Content-Disposition attachment.",
+    ),
+):
     battle_formats, _ = await _analytics_format_filter(formats)
-    return await db.get_stats(battle_formats=battle_formats)
+    stats = await db.get_stats(battle_formats=battle_formats)
+    if not download or not download.strip():
+        return stats
+    kind = download.strip().lower()
+    stem = _stats_export_timestamp_stem()
+    if kind in ("json", "1", "true"):
+        payload = {
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "battle_formats_filter": battle_formats,
+            **stats,
+        }
+        body = json.dumps(payload, indent=2)
+        return Response(
+            content=body,
+            media_type="application/json; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="analytics-stats-{stem}.json"'
+            },
+        )
+    if kind == "csv":
+        csv_text = _stats_to_csv(stats, battle_formats)
+        return Response(
+            content=csv_text.encode("utf-8"),
+            media_type="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="analytics-stats-{stem}.csv"'
+            },
+        )
+    raise HTTPException(
+        status_code=400,
+        detail='Invalid download; use "json" or "csv".',
+    )
 
 
 # ===================================================================
@@ -1298,6 +1735,7 @@ async def page_tournament_new(request: Request):
             "battle_formats": BATTLE_FORMATS,
             "personas": _scan_personas(),
             "tournament_presets": tournament_presets,
+            "random_team_battle_format_suffix": battle_format_rules.SHOWDOWN_SERVER_ASSIGNED_TEAM_SUFFIX,
         },
     )
 
@@ -1315,6 +1753,56 @@ async def page_tournament_detail(request: Request, tid: int):
     )
 
 
+@router.get("/manager/teams", response_class=HTMLResponse)
+async def page_teams_list(request: Request):
+    rows = await db.list_teams()
+    return templates.TemplateResponse(
+        request=request,
+        name="manager/teams_list.html",
+        context={
+            "request": request,
+            "teams": rows,
+            "showdown_view_base": SHOWDOWN_VIEW_BASE,
+        },
+    )
+
+
+@router.get("/manager/teams/new", response_class=HTMLResponse)
+async def page_teams_new(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name="manager/team_form.html",
+        context={
+            "request": request,
+            "team": None,
+            "team_format_hints": BATTLE_FORMATS_TEAM_PRESET_HINTS,
+            "team_format_needs_repick": False,
+            "showdown_view_base": SHOWDOWN_VIEW_BASE,
+        },
+    )
+
+
+@router.get("/manager/teams/{team_id}/edit", response_class=HTMLResponse)
+async def page_teams_edit(request: Request, team_id: int):
+    team = await db.get_team(team_id)
+    if not team:
+        raise HTTPException(404, "Team not found")
+    needs_repick = not _team_battle_format_in_preset_hints(
+        str(team.get("battle_format") or "")
+    )
+    return templates.TemplateResponse(
+        request=request,
+        name="manager/team_form.html",
+        context={
+            "request": request,
+            "team": team,
+            "team_format_hints": BATTLE_FORMATS_TEAM_PRESET_HINTS,
+            "team_format_needs_repick": needs_repick,
+            "showdown_view_base": SHOWDOWN_VIEW_BASE,
+        },
+    )
+
+
 @router.get("/manager/matches/new", response_class=HTMLResponse)
 async def page_match_new(request: Request):
     return templates.TemplateResponse(
@@ -1325,6 +1813,7 @@ async def page_match_new(request: Request):
             "providers": ALLOWED_PROVIDERS,
             "battle_formats": BATTLE_FORMATS,
             "personas": _scan_personas(),
+            "random_team_battle_format_suffix": battle_format_rules.SHOWDOWN_SERVER_ASSIGNED_TEAM_SUFFIX,
         },
     )
 
@@ -1398,6 +1887,11 @@ async def page_stats(request: Request, formats: list[str] = Query(default=[])):
         clean = request.url.replace(query="")
         return RedirectResponse(url=str(clean), status_code=307)
     stats = await db.get_stats(battle_formats=battle_formats)
+    export_params: list[tuple[str, str]] = []
+    if battle_formats is not None:
+        for bf in battle_formats:
+            export_params.append(("formats", bf))
+    stats_export_query = urlencode(export_params)
     return templates.TemplateResponse(
         request=request,
         name="manager/stats.html",
@@ -1406,6 +1900,7 @@ async def page_stats(request: Request, formats: list[str] = Query(default=[])):
             "stats": stats,
             "all_battle_formats": all_battle_formats,
             "selected_formats": battle_formats,
+            "stats_export_query": stats_export_query,
         },
     )
 

@@ -54,11 +54,20 @@
         </div>
         <div class="form-group">
             <label>Participants</label>
+            {# Per-row team preset &lt;select name="team_id"&gt; is injected in addEntry() below. #}
             <div id="entries-container"></div>
             <button type="button"
                     class="btn btn-secondary mt-1"
                     id="add-entry-btn"
                     onclick="addEntry()">+ Add Participant</button>
+            <p id="tournament-team-preset-hint"
+               class="text-muted text-small mt-1"
+               style="display:none">
+                Custom-team formats require a <strong>team preset</strong> per participant;
+                each preset’s <strong>battle format</strong> must match the tournament format.
+                Build teams in the <a href="/manager/teams">team library</a>.
+                Not used for <code>*{{ random_team_battle_format_suffix }}</code>.
+            </p>
         </div>
         <details class="import-def-block import-def-collapsible"
                  id="import-def-section"
@@ -70,9 +79,11 @@
                     Paste a definition or choose a file below.
                     If this box contains any non-empty text when you click <strong>Create Tournament</strong>, that definition is parsed and used instead of the fields above.
                     Headers use <code>Key: value</code>. Line comments start with <code>#</code>.
-                    After a <code>Participants:</code> line, each participant is
-                    <code>provider, model, persona</code> or pipe-separated; optional 4th field is <code>seed</code>
-                    (then every line must include a seed). Use <code>|</code> if a model id contains commas.
+                    After <code>Participants:</code>, each line is comma- or pipe-separated:
+                    <code>*randombattle</code> formats use <code>provider, model, persona</code> (optional 4th <code>seed</code>).
+                    Custom-team formats need a manager <strong>team id</strong> as the last column
+                    (<code>…, team_id</code> or <code>…, seed, team_id</code> if every line has a seed).
+                    Use <code>|</code> if a model id contains commas.
                 </p>
                 <div class="form-group mt-1">
                     <label for="preset-load">Load saved preset</label>
@@ -114,6 +125,7 @@ Participants:
   # or: provider | model | persona [| seed]
   # provider: anthropic | deepseek | openrouter
   # persona_slug: filename in /personas (e.g. aggro, stall)
+  # Custom-team formats: add team_id (and seed before it if using seeds on every line)
 
 # Validation runs the same provider/model checks as the form; unknown persona slugs are rejected.</pre>
                 </details>
@@ -125,12 +137,14 @@ Participants:
         </details>
         <div id="form-error" class="form-error" style="display:none"></div>
         <div class="form-actions form-actions--after-import">
-            <button type="submit" class="btn btn-primary">Create Tournament</button>
+            <button type="submit" id="tournament-submit-btn" class="btn btn-primary" disabled>Create Tournament</button>
             <a href="/manager/tournaments" class="btn btn-secondary">Cancel</a>
         </div>
     </form>
 {% endblock %}
 {% block scripts %}
+    <script>window.MANAGER_RANDOM_TEAM_BATTLE_FORMAT_SUFFIX = {{ random_team_battle_format_suffix | tojson }};</script>
+    <script src="/static/battle-format-team-presets.js"></script>
     <script src="/static/provider-model-validate.js"></script>
     <script>
 const providers = {{ providers | tojson }};
@@ -146,23 +160,144 @@ function addEntry(defaults) {
   div.className = 'entry-row';
   div.dataset.idx = entryCount;
 
+  const teamSel = typeof d.team_id !== 'undefined' && d.team_id != null && d.team_id !== ''
+    ? String(d.team_id)
+    : '';
   div.innerHTML = `
-    <span class="entry-num">#${entryCount}</span>
-    <select name="provider" class="entry-provider">
-      ${providers.map(p => `<option value="${p}" ${d.provider===p?'selected':''}>${p}</option>`).join('')}
-    </select>
-    <input type="text" name="model" placeholder="e.g. claude-haiku-4-5-20251001" value="${d.model||''}">
-    <select name="persona">
-      ${personas.map(p => `<option value="${p.slug}" ${d.persona===p.slug?'selected':''}>${p.name} (${p.slug})</option>`).join('')}
-    </select>
-    <input type="number" name="seed" value="${d.seed||entryCount}" min="1" style="width:60px" title="Seed">
-    <button type="button" class="btn btn-sm btn-danger" onclick="this.parentElement.remove()">×</button>
+    <div class="entry-row-fields">
+      <span class="entry-num">#${entryCount}</span>
+      <select name="provider" class="entry-provider">
+        ${providers.map(p => `<option value="${p}" ${d.provider===p?'selected':''}>${p}</option>`).join('')}
+      </select>
+      <input type="text" name="model" class="entry-model" placeholder="e.g. claude-haiku-4-5-20251001" value="${d.model||''}">
+      <select name="persona" class="entry-persona">
+        ${personas.map(p => `<option value="${p.slug}" ${d.persona===p.slug?'selected':''}>${p.name} (${p.slug})</option>`).join('')}
+      </select>
+      <input type="number" name="seed" value="${d.seed||entryCount}" min="1" class="entry-seed" title="Seed">
+      <button type="button" class="btn btn-sm btn-danger entry-remove" onclick="this.closest('.entry-row').remove(); updateTournamentSubmitEnabled();">×</button>
+    </div>
+    <div class="entry-team-wrap" data-team-preset style="display:none">
+      <label class="entry-team-label text-small text-muted" for="entry-team-${entryCount}">Team preset</label>
+      <select id="entry-team-${entryCount}" name="team_id" class="entry-team" title="Team preset (custom-team formats)">
+        <option value="">— Choose team —</option>
+      </select>
+    </div>
   `;
   container.appendChild(div);
+  const sel = div.querySelector('select[name=team_id]');
+  if (sel) {
+    sel.dataset.teamValue = teamSel;
+    fillTeamSelectOptions(sel);
+  }
+  updateTournamentSubmitEnabled();
+}
+
+let _teamsCache = null;
+
+async function loadTeamsForEntries() {
+  try {
+    const res = await fetch('/api/manager/teams');
+    if (res.ok) _teamsCache = await res.json();
+    else _teamsCache = [];
+  } catch (_) {
+    _teamsCache = [];
+  }
+  document.querySelectorAll('select[name=team_id]').forEach(fillTeamSelectOptions);
+}
+
+function fillTeamSelectOptions(sel) {
+  if (!sel || !_teamsCache) return;
+  const cur = sel.dataset.teamValue || sel.value || '';
+  const bf = effectiveTournamentBattleFormat();
+  sel.innerHTML = '<option value="">— Choose team —</option>';
+  for (const r of _teamsCache) {
+    if (!window.managerTeamRowMatchesBattleFormat(r, bf)) continue;
+    const o = document.createElement('option');
+    o.value = String(r.id);
+    o.textContent = r.name + (r.battle_format ? ` (${r.battle_format})` : '');
+    sel.appendChild(o);
+  }
+  if (cur && [...sel.options].some(o => o.value === cur)) sel.value = cur;
+  else if (cur) sel.dataset.teamValue = '';
+}
+
+function effectiveTournamentBattleFormat() {
+  const customFmt = document.getElementById('battle_format_custom').value.trim();
+  return customFmt || document.getElementById('battle_format').value;
+}
+
+function syncEntryTeamPickers() {
+  const bf = effectiveTournamentBattleFormat();
+  const en = window.managerTeamPresetPickersEnabled(bf);
+  const hint = document.getElementById('tournament-team-preset-hint');
+  if (hint) hint.style.display = en ? '' : 'none';
+  for (const sel of document.querySelectorAll('select[name=team_id]')) {
+    const wrap = sel.closest('.entry-team-wrap');
+    if (wrap) wrap.style.display = en ? '' : 'none';
+    sel.disabled = false;
+    if (!en) {
+      sel.value = '';
+      sel.dataset.teamValue = '';
+    }
+  }
+  if (en && _teamsCache) {
+    document.querySelectorAll('select[name=team_id]').forEach(fillTeamSelectOptions);
+  }
+  updateTournamentSubmitEnabled();
+}
+
+function updateTournamentSubmitEnabled() {
+  const btn = document.getElementById('tournament-submit-btn');
+  if (!btn) return;
+  const defText = document.getElementById('tournament-def-text').value.trim();
+  if (defText) {
+    btn.disabled = false;
+    return;
+  }
+  const nameVal = document.getElementById('name').value.trim();
+  if (!nameVal) {
+    btn.disabled = true;
+    return;
+  }
+  const rows = document.querySelectorAll('.entry-row');
+  if (rows.length < 2) {
+    btn.disabled = true;
+    return;
+  }
+  const bf = effectiveTournamentBattleFormat();
+  const needTeams = window.managerTeamPresetPickersEnabled(bf);
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const mod = row.querySelector('[name=model]')?.value.trim() || '';
+    if (!mod) {
+      btn.disabled = true;
+      return;
+    }
+    if (needTeams) {
+      const tid = row.querySelector('[name=team_id]')?.value.trim() || '';
+      if (!tid) {
+        btn.disabled = true;
+        return;
+      }
+    }
+  }
+  btn.disabled = false;
 }
 
 // Start with 2 entries
 addEntry(); addEntry();
+loadTeamsForEntries().then(function () { syncEntryTeamPickers(); });
+
+document.getElementById('name').addEventListener('input', updateTournamentSubmitEnabled);
+document.getElementById('tournament-def-text').addEventListener('input', updateTournamentSubmitEnabled);
+document.getElementById('entries-container').addEventListener('input', function (e) {
+  if (e.target && e.target.matches && e.target.matches('[name=model]')) updateTournamentSubmitEnabled();
+});
+document.getElementById('entries-container').addEventListener('change', function (e) {
+  if (e.target && e.target.matches && e.target.matches('[name=team_id]')) updateTournamentSubmitEnabled();
+});
+document.getElementById('battle_format').addEventListener('change', syncEntryTeamPickers);
+document.getElementById('battle_format_custom').addEventListener('input', syncEntryTeamPickers);
 
 function syncSingleElimBracketVisibility() {
   const type = document.getElementById('type').value;
@@ -181,12 +316,17 @@ function buildCreateBodyFromParseData(data) {
     battle_format: String(data.battle_format || '').trim(),
     best_of: parseInt(String(data.best_of), 10),
     entries: (data.entries || []).map(function (e, idx) {
-      return {
+      var row = {
         provider: e.provider,
         model: String(e.model || '').trim(),
         persona_slug: e.persona_slug,
         seed: parseInt(String(e.seed), 10) || idx + 1,
       };
+      if (e.team_id != null && e.team_id !== '') {
+        var tid = parseInt(String(e.team_id), 10);
+        if (!Number.isNaN(tid)) row.team_id = tid;
+      }
+      return row;
     }),
   };
   if (body.type === 'single_elimination' || body.type === 'double_elimination') {
@@ -211,6 +351,7 @@ document.getElementById('tournament-def-file').addEventListener('change', functi
   var rd = new FileReader();
   rd.onload = function () {
     document.getElementById('tournament-def-text').value = String(rd.result || '');
+    updateTournamentSubmitEnabled();
   };
   rd.readAsText(f, 'UTF-8');
   ev.target.value = '';
@@ -229,6 +370,7 @@ document.getElementById('preset-load').addEventListener('change', async function
     if (!res.ok) throw new Error('Failed to load preset');
     var p = await res.json();
     document.getElementById('tournament-def-text').value = p.body || '';
+    updateTournamentSubmitEnabled();
     var imp = document.getElementById('import-def-section');
     imp.open = true;
     imp.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -246,6 +388,7 @@ document.getElementById('import-clear-btn').addEventListener('click', function (
   fb.style.display = 'none';
   fb.textContent = '';
   fb.classList.remove('import-def-warn');
+  updateTournamentSubmitEnabled();
 });
 
 document.getElementById('tournament-form').addEventListener('submit', async (e) => {
@@ -289,6 +432,16 @@ document.getElementById('tournament-form').addEventListener('submit', async (e) 
         return;
       }
     }
+    if (window.managerTeamPresetPickersEnabled(body.battle_format)) {
+      for (let i = 0; i < body.entries.length; i++) {
+        if (body.entries[i].team_id == null) {
+          errEl.textContent =
+            'Imported definition must include a team_id on every participant for this battle format.';
+          errEl.style.display = 'block';
+          return;
+        }
+      }
+    }
   } else {
     const nameVal = document.getElementById('name').value.trim();
     if (!nameVal) {
@@ -311,12 +464,28 @@ document.getElementById('tournament-form').addEventListener('submit', async (e) 
         errEl.style.display = 'block';
         return;
       }
-      entries.push({
+      const teamEl = row.querySelector('[name=team_id]');
+      const teamRaw = teamEl ? teamEl.value.trim() : '';
+      if (window.managerTeamPresetPickersEnabled(battle_format)) {
+        if (!teamRaw) {
+          errEl.textContent =
+            'Choose a team preset for every participant (or switch to *' +
+            (window.MANAGER_RANDOM_TEAM_BATTLE_FORMAT_SUFFIX || 'randombattle') +
+            ').';
+          errEl.style.display = 'block';
+          return;
+        }
+      }
+      const rowEntry = {
         provider: prov,
         model: mod,
         persona_slug: row.querySelector('[name=persona]').value,
         seed: parseInt(row.querySelector('[name=seed]').value) || entries.length + 1,
-      });
+      };
+      if (teamRaw) {
+        rowEntry.team_id = parseInt(teamRaw, 10);
+      }
+      entries.push(rowEntry);
     }
 
     const typeVal = document.getElementById('type').value;
