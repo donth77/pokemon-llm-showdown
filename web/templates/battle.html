@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Battle Control</title>
+  <link rel="stylesheet" href="/static/battle.css?v={{ cache_bust }}">
+</head>
+<body class="battle-page">
+  <div class="battle-container">
+
+    <!-- Opponent Persona Panel -->
+    <div class="panel opponent-panel" id="opponent-panel">
+      <img class="opponent-portrait is-loading" id="opponent-portrait" alt="Opponent portrait loading">
+      <div class="opponent-info">
+        <div class="opponent-name" id="opponent-name">Waiting for opponent...</div>
+        <div class="opponent-pokemon" id="opponent-pokemon"></div>
+        <div class="callout-bubble" id="callout-bubble"></div>
+      </div>
+    </div>
+
+    <!-- AI Reasoning Feed -->
+    <div class="panel reasoning-panel" id="reasoning-panel"></div>
+
+    <!-- Field Conditions Bar -->
+    <div class="panel field-bar" id="field-bar">
+      <div class="field-conditions" id="field-conditions"></div>
+      <div class="turn-info" id="turn-info">Waiting...</div>
+    </div>
+
+    <!-- Main split: action controls (left) + battle iframe (right) on wide screens. -->
+    <div class="main-split">
+      <div class="control-column">
+        <!-- Your Active Pokemon -->
+        <div class="panel your-pokemon" id="your-pokemon">
+          <div>
+            <div class="pokemon-name" id="your-pokemon-name">--</div>
+            <div class="pokemon-types" id="your-pokemon-types"></div>
+            <div class="pokemon-detail" id="your-pokemon-detail"></div>
+          </div>
+          <div class="hp-bar-wrap">
+            <div class="hp-bar green" id="your-hp-bar" style="width:100%"></div>
+          </div>
+          <div class="hp-text" id="your-hp-text">--</div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="panel actions-panel" id="actions-panel" style="display:none">
+          <div class="actions-grid" id="actions-grid"></div>
+        </div>
+
+        <!-- Waiting / Status -->
+        <div class="panel status-banner waiting" id="status-banner">
+          Waiting for battle to start...
+        </div>
+
+        <!-- Footer: Timer + Submit -->
+        <div class="panel footer-bar" id="footer-bar" style="display:none">
+          <div class="timer" id="timer">--:--</div>
+          <button class="submit-btn" id="submit-btn" disabled>Submit</button>
+        </div>
+      </div>
+
+      <!-- Battle iframe (Showdown battle view) -->
+      <div class="panel battle-iframe-wrap" id="battle-iframe-wrap" style="display:none">
+        <iframe id="battle-iframe" src="" title="Battle view" allow="autoplay; fullscreen"></iframe>
+      </div>
+    </div>
+
+    <!-- Match Result -->
+    <div class="panel result-overlay" id="result-overlay">
+      <div class="result-title" id="result-title"></div>
+      <p id="result-detail"></p>
+      <p><a href="/manager" class="result-link">Back to Manager</a></p>
+    </div>
+  </div>
+
+  <script>
+    window.__BATTLE_CONFIG__ = {
+      matchId: {{ match_id }},
+      stateStreamUrl: "/api/battle/{{ match_id }}/stream",
+      actionUrl: "/api/battle/{{ match_id }}/action",
+      thoughtsWsUrl: (location.protocol === "https:" ? "wss:" : "ws:") +
+                      "//" + location.host + "/thoughts/ws",
+      showdownUrl: "{{ showdown_local_url }}",
+      turnTimeout: 150,
+    };
+  </script>
+  <script src="/static/battle.js?v={{ cache_bust }}"></script>
+</body>
+</html>

@@ -393,6 +393,54 @@
           setTimeout(forceShowBattleRoom, 400);
         });
 
+        // --- Auto-nick from URL ?nick=Name (or hash #nick=Name) ---
+        // With `loginserver = ""` the native "Choose name" dialog silently
+        // fails.  Instead, we let callers pass ?nick=Name in the URL, and
+        // automatically send `/trn Name,0,` once the client is connected.
+        (function () {
+          function parseNick() {
+            try {
+              var q = new URLSearchParams(window.location.search || "");
+              var n = q.get("nick");
+              if (n && n.trim()) return n.trim().slice(0, 18);
+              // Also support hash (`#nick=Name`) for battle pages that use the hash.
+              var h = window.location.hash || "";
+              var m = h.match(/[?&]nick=([^&]+)/);
+              if (m) return decodeURIComponent(m[1]).trim().slice(0, 18);
+            } catch (_) {}
+            return "";
+          }
+          var wantedNick = parseNick();
+          if (!wantedNick) return;
+          var sent = false;
+          function trySendNick() {
+            if (sent) return true;
+            if (!window.app || typeof app.send !== "function") return false;
+            var me = (app.user && app.user.get && app.user.get("name")) || "";
+            // Strip the guest prefix/spaces for comparison.
+            var norm = function (s) {
+              return String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+            };
+            if (norm(me) === norm(wantedNick)) {
+              sent = true;
+              return true;
+            }
+            try {
+              // |/trn NAME,0,  — rename on an unauth server.
+              app.send("|/trn " + wantedNick + ",0,");
+              sent = true;
+              return true;
+            } catch (_) {
+              return false;
+            }
+          }
+          var tries = 0;
+          var iv = setInterval(function () {
+            tries += 1;
+            if (trySendNick() || tries > 40) clearInterval(iv);
+          }, 250);
+        })();
+
         // Aggressively keep hiding chrome and forcing battle room visible.
         if (__hideBattleUI) {
           setInterval(function () {
@@ -1182,7 +1230,10 @@
           pill.textContent = trimmed;
           var yOffset = side === "near" ? -10 : -18;
           if (!anchor || !setPillPosition(pill, anchor, yOffset)) {
-            setFallbackPosition(side, pill);
+            // Trainer anchor not visible (e.g., user switched to chat view) —
+            // hide the pill rather than falling back over the chat panel.
+            hidePill(pill, side);
+            return;
           }
           pill.classList.add("show");
           if (side === "near") {
@@ -1203,13 +1254,14 @@
           if (nearPill.classList.contains("show")) {
             var nearAnchor = getAnchor("near");
             if (!nearAnchor || !setPillPosition(nearPill, nearAnchor, -10)) {
-              setFallbackPosition("near", nearPill);
+              // Anchor vanished (chat view) — hide rather than drifting over the chat.
+              hidePill(nearPill, "near");
             }
           }
           if (farPill.classList.contains("show")) {
             var farAnchor = getAnchor("far");
             if (!farAnchor || !setPillPosition(farPill, farAnchor, -18)) {
-              setFallbackPosition("far", farPill);
+              hidePill(farPill, "far");
             }
           }
         }

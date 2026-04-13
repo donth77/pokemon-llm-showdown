@@ -155,6 +155,10 @@ async def _migrate_sqlite_columns() -> None:
             ("completed_at", "REAL"),
             ("series_id", "INTEGER"),
             ("tournament_id", "INTEGER"),
+            ("player1_type", "TEXT NOT NULL DEFAULT 'llm'"),
+            ("player2_type", "TEXT NOT NULL DEFAULT 'llm'"),
+            ("human_display_name", "TEXT"),
+            ("human_play_mode", "TEXT NOT NULL DEFAULT 'showdown'"),
         ]
         for col, ctype in needed:
             if col not in have:
@@ -253,6 +257,30 @@ async def _migrate_tournament_columns() -> None:
         await db.commit()
 
 
+async def _migrate_human_player_columns() -> None:
+    """Add player_type + human_display_name columns to matches and series."""
+    async with aiosqlite.connect(str(DB_PATH)) as db:
+        for table in ("matches", "series"):
+            cur = await db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                (table,),
+            )
+            if not await cur.fetchone():
+                continue
+            cur = await db.execute(f"PRAGMA table_info({table})")
+            have = {r[1] for r in await cur.fetchall()}
+            needed = [
+                ("player1_type", "TEXT NOT NULL DEFAULT 'llm'"),
+                ("player2_type", "TEXT NOT NULL DEFAULT 'llm'"),
+                ("human_display_name", "TEXT"),
+                ("human_play_mode", "TEXT NOT NULL DEFAULT 'showdown'"),
+            ]
+            for col, ctype in needed:
+                if col not in have:
+                    await db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ctype}")
+        await db.commit()
+
+
 async def init_db() -> None:
     """Create tables if they don't exist and stamp the schema version."""
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -271,6 +299,7 @@ async def init_db() -> None:
     await _migrate_tournament_columns()
     await _ensure_tournament_presets_table()
     await _migrate_teams_library()
+    await _migrate_human_player_columns()
 
 
 async def _ensure_tournament_presets_table() -> None:
@@ -1075,6 +1104,10 @@ async def create_match(
     player2_persona: str,
     player1_team_id: int | None = None,
     player2_team_id: int | None = None,
+    player1_type: str = "llm",
+    player2_type: str = "llm",
+    human_display_name: str | None = None,
+    human_play_mode: str = "showdown",
 ) -> dict:
     now = _now()
     async with _db() as db:
@@ -1087,8 +1120,10 @@ async def create_match(
                 player2_provider, player2_model, player2_persona,
                 player1_team_id, player2_team_id,
                 player1_team_showdown, player2_team_showdown,
+                player1_type, player2_type, human_display_name,
+                human_play_mode,
                 queued_at)
-               VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 series_id,
                 tournament_id,
@@ -1104,6 +1139,10 @@ async def create_match(
                 p2_tid,
                 p1_txt,
                 p2_txt,
+                player1_type,
+                player2_type,
+                human_display_name,
+                human_play_mode,
                 now,
             ),
         )

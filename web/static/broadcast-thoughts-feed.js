@@ -154,14 +154,21 @@
 
   function applyScoreboardToThoughts(data) {
     if (!data || typeof data !== "object") return;
-    const p1 = data.player1_name;
-    const p2 = data.player2_name;
+    var p1 = data.player1_name;
+    var p2 = data.player2_name;
     if (p1 && p2) {
       setThoughtPlayerNames(p1, p2);
     } else {
       const wins = data.wins || {};
       const names = Object.keys(wins);
       if (names.length >= 2) setThoughtPlayerNames(names[0], names[1]);
+    }
+    // Show "HUMAN" badge on human player's title.
+    if (data.player1_type === "human" && thoughtsTitleP1) {
+      thoughtsTitleP1.textContent = (p1 || thoughtPlayer1) + " (HUMAN)";
+    }
+    if (data.player2_type === "human" && thoughtsTitleP2) {
+      thoughtsTitleP2.textContent = (p2 || thoughtPlayer2) + " (HUMAN)";
     }
     setThoughtPortraitsFromScoreboard(data);
     requestAnimationFrame(function () {

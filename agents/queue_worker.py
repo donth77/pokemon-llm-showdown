@@ -354,6 +354,16 @@ async def main() -> None:
                 s = str(raw).strip()
                 return s or None
 
+            p1_type = match.get("player1_type") or "llm"
+            p2_type = match.get("player2_type") or "llm"
+            if p1_type == "human" or p2_type == "human":
+                h_name = match.get("human_display_name") or "Challenger"
+                log_print(
+                    f"[queue] Human vs AI match — human '{h_name}' plays via "
+                    f"/battle/{match_id}",
+                    flush=True,
+                )
+
             result = await run_single_match(
                 battle_format=match["battle_format"],
                 player1_provider=match["player1_provider"],
@@ -373,6 +383,8 @@ async def main() -> None:
                 series_snapshot=series_snapshot,
                 tourney_context=tourney_ctx,
                 manager_match_id=int(match_id),
+                player1_type=p1_type,
+                player2_type=p2_type,
             )
 
             if result.error:

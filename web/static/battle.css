@@ -1,0 +1,515 @@
+/* Battle Control Page — Human vs AI */
+
+:root {
+  --battle-bg: #0b1020;
+  --panel-bg: rgba(4, 10, 24, 0.85);
+  --panel-border: rgba(255, 255, 255, 0.15);
+  --text: rgba(255, 255, 255, 0.92);
+  --text-dim: rgba(255, 255, 255, 0.55);
+  --text-muted: rgba(255, 255, 255, 0.35);
+  --accent-red: #ff6b6b;
+  --accent-blue: #74b9ff;
+  --accent-gold: #f0c040;
+  --hp-green: #4caf50;
+  --hp-yellow: #ffca28;
+  --hp-red: #ef5350;
+  --btn-bg: rgba(255, 255, 255, 0.08);
+  --btn-hover: rgba(255, 255, 255, 0.15);
+  --btn-selected: rgba(255, 255, 255, 0.22);
+  --radius: 10px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body.battle-page {
+  background: var(--battle-bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  padding: 16px;
+}
+
+.battle-container {
+  width: 100%;
+  max-width: 680px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* main-split: control column + battle iframe. Stacks vertically on narrow
+   viewports; becomes a 2-column row on wide screens. */
+.main-split {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.control-column {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+@media (min-width: 1100px) {
+  .battle-container { max-width: 1280px; }
+  .main-split {
+    flex-direction: row;
+    align-items: flex-start;
+  }
+  .control-column {
+    flex: 1 1 360px;
+    min-width: 340px;
+  }
+  .battle-iframe-wrap {
+    flex: 1.2 1 560px;
+    min-width: 0;
+    position: sticky;
+    top: 12px;
+  }
+}
+
+/* --- Panels --- */
+
+.panel {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  padding: 16px;
+  backdrop-filter: blur(8px);
+}
+
+/* --- Opponent Persona --- */
+
+.opponent-panel {
+  display: flex;
+  gap: 16px;
+}
+
+.opponent-portrait {
+  width: 100px;
+  height: 100px;
+  border-radius: 10px;
+  object-fit: cover;
+  object-position: center top;
+  border: 2px solid var(--panel-border);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  flex-shrink: 0;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.04) 0%,
+    rgba(255, 255, 255, 0.12) 50%,
+    rgba(255, 255, 255, 0.04) 100%
+  );
+  background-size: 200% 200%;
+  transition: opacity 0.3s ease;
+}
+
+.opponent-portrait.is-loading {
+  animation: portrait-shimmer 1.4s ease-in-out infinite;
+}
+
+.opponent-portrait.is-loaded {
+  animation: none;
+  background: transparent;
+}
+
+@keyframes portrait-shimmer {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.opponent-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.opponent-name {
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--accent-red);
+  margin-bottom: 6px;
+}
+
+.opponent-pokemon {
+  font-size: 0.9rem;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.callout-bubble {
+  background: rgba(255, 107, 107, 0.12);
+  border-left: 3px solid var(--accent-red);
+  border-radius: 0 8px 8px 0;
+  padding: 8px 12px;
+  font-style: italic;
+  font-size: 0.95rem;
+  color: var(--text);
+  min-height: 0;
+  display: none;
+}
+
+.callout-bubble.visible {
+  display: block;
+}
+
+/* --- Reasoning Feed --- */
+
+.reasoning-panel {
+  max-height: 120px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.15) transparent;
+}
+
+.reasoning-item {
+  font-size: 0.85rem;
+  line-height: 1.4;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+  padding-left: 8px;
+  border-left: 2px solid rgba(255, 255, 255, 0.1);
+}
+
+.reasoning-item .turn-label {
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.78rem;
+  margin-right: 6px;
+}
+
+/* --- Battle Iframe --- */
+
+.battle-iframe-wrap {
+  padding: 0;
+  overflow: hidden;
+  background: #000;
+  line-height: 0; /* kill inline-baseline gap under iframe */
+}
+
+.battle-iframe-wrap iframe {
+  display: block;
+  width: 100%;
+  /* Showdown's native battle view is ~480×580 (≈4:5).  Using aspect-ratio
+     lets the iframe height track its actual content without dead space. */
+  aspect-ratio: 4 / 5;
+  height: auto;
+  border: 0;
+  background: #000;
+}
+
+/* On wide screens the iframe sits next to the controls — keep it bounded so
+   it doesn't dominate the viewport. */
+@media (min-width: 1100px) {
+  .battle-iframe-wrap iframe {
+    aspect-ratio: auto;
+    height: calc(100vh - 40px);
+    max-height: 900px;
+    min-height: 560px;
+  }
+}
+
+/* --- Field Bar --- */
+
+.field-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.field-bar .field-conditions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.field-bar .turn-info {
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* --- Your Pokemon --- */
+
+.your-pokemon {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+}
+
+.pokemon-name {
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.pokemon-types {
+  display: flex;
+  gap: 4px;
+}
+
+.pokemon-detail {
+  font-size: 0.82rem;
+  color: var(--text-dim);
+}
+
+/* --- HP Bar --- */
+
+.hp-bar-wrap {
+  flex: 1;
+  max-width: 200px;
+  height: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.hp-bar {
+  height: 100%;
+  border-radius: 5px;
+  transition: width 0.4s ease, background-color 0.4s ease;
+}
+
+.hp-bar.green { background: var(--hp-green); }
+.hp-bar.yellow { background: var(--hp-yellow); }
+.hp-bar.red { background: var(--hp-red); }
+
+.hp-text {
+  font-size: 0.85rem;
+  font-weight: 600;
+  min-width: 40px;
+  text-align: right;
+}
+
+/* --- Type Badges --- */
+
+.type-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #fff;
+}
+
+.type-normal { background: #a8a878; }
+.type-fire { background: #f08030; }
+.type-water { background: #6890f0; }
+.type-electric { background: #f8d030; color: #333; }
+.type-grass { background: #78c850; }
+.type-ice { background: #98d8d8; color: #333; }
+.type-fighting { background: #c03028; }
+.type-poison { background: #a040a0; }
+.type-ground { background: #e0c068; color: #333; }
+.type-flying { background: #a890f0; }
+.type-psychic { background: #f85888; }
+.type-bug { background: #a8b820; }
+.type-rock { background: #b8a038; }
+.type-ghost { background: #705898; }
+.type-dragon { background: #7038f8; }
+.type-dark { background: #705848; }
+.type-steel { background: #b8b8d0; color: #333; }
+.type-fairy { background: #ee99ac; }
+.type-stellar { background: #40b5a0; }
+
+/* --- Effectiveness Badge --- */
+
+.eff-badge {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  margin-left: 6px;
+}
+
+.eff-immune { background: rgba(255,255,255,0.1); color: var(--text-muted); }
+.eff-resist { background: rgba(239,83,80,0.2); color: #ef9a9a; }
+.eff-neutral { background: rgba(255,255,255,0.08); color: var(--text-dim); }
+.eff-super { background: rgba(76,175,80,0.25); color: #81c784; }
+.eff-ultra { background: rgba(76,175,80,0.4); color: #66bb6a; }
+
+/* --- Action Panel --- */
+
+.actions-panel {
+  padding: 12px;
+}
+
+.actions-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.action-section-label {
+  grid-column: 1 / -1;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  margin-top: 8px;
+  margin-bottom: 2px;
+}
+
+.action-section-label:first-child {
+  margin-top: 0;
+}
+
+.action-btn {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  background: var(--btn-bg);
+  border: 2px solid transparent;
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: left;
+  font-family: inherit;
+}
+
+.action-btn:hover:not(:disabled) {
+  background: var(--btn-hover);
+}
+
+.action-btn.selected {
+  background: var(--btn-selected);
+  border-color: var(--accent-gold);
+}
+
+.action-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.action-btn .move-name {
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.action-btn .move-meta {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.action-btn .switch-hp {
+  font-size: 0.82rem;
+  color: var(--text-dim);
+}
+
+/* --- Footer Bar --- */
+
+.footer-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+}
+
+.timer {
+  font-size: 1.1rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+.timer.urgent {
+  color: var(--hp-red);
+}
+
+.submit-btn {
+  padding: 10px 32px;
+  background: var(--accent-gold);
+  color: #1a1a2e;
+  border: none;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.submit-btn:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.submit-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* --- Status / Waiting --- */
+
+.status-banner {
+  text-align: center;
+  padding: 24px 16px;
+  font-size: 1rem;
+  color: var(--text-dim);
+}
+
+.status-banner.waiting {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+/* --- Match Result --- */
+
+.result-overlay {
+  display: none;
+  text-align: center;
+  padding: 32px 16px;
+}
+
+.result-overlay.visible {
+  display: block;
+}
+
+.result-title {
+  font-size: 1.8rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  margin-bottom: 12px;
+}
+
+.result-title.win { color: var(--accent-gold); }
+.result-title.loss { color: var(--accent-red); }
+.result-title.draw { color: var(--text-dim); }
+
+.result-link {
+  color: var(--accent-blue);
+  text-decoration: none;
+}
+
+.result-link:hover {
+  text-decoration: underline;
+}
+
+/* --- Responsive --- */
+
+@media (max-width: 520px) {
+  body.battle-page { padding: 8px; }
+  .opponent-panel { flex-direction: column; align-items: center; text-align: center; }
+  .opponent-portrait { width: 80px; height: 80px; }
+  .actions-grid { grid-template-columns: 1fr; }
+  .callout-bubble { border-left: none; border-top: 3px solid var(--accent-red); border-radius: 0 0 8px 8px; }
+}

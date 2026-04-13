@@ -12,10 +12,6 @@
                 <select id="battle_format">
                     {% for fmt in battle_formats %}<option value="{{ fmt }}">{{ fmt }}</option>{% endfor %}
                 </select>
-                <input type="text"
-                       id="battle_format_custom"
-                       placeholder="Or type a custom format..."
-                       class="mt-1">
             </div>
             <div class="form-group">
                 <label for="match_type">Match Type</label>
@@ -43,46 +39,82 @@
             <div class="player-config">
                 <h3>Player 1</h3>
                 <div class="form-group">
-                    <label>Provider</label>
-                    <select id="p1_provider">
-                        {% for p in providers %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+                    <label>Player Type</label>
+                    <select id="p1_type" onchange="togglePlayerType('p1')">
+                        <option value="llm">AI</option>
+                        <option value="human">Human</option>
                     </select>
                 </div>
-                <div class="form-group">
-                    <label>Model</label>
-                    <input type="text"
-                           id="p1_model"
-                           placeholder="e.g. claude-haiku-4-5-20251001"
-                           required>
+                <div id="p1_llm_fields">
+                    <div class="form-group">
+                        <label>Provider</label>
+                        <select id="p1_provider">
+                            {% for p in providers %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Model</label>
+                        <input type="text"
+                               id="p1_model"
+                               placeholder="e.g. claude-haiku-4-5-20251001"
+                               required>
+                    </div>
+                    <div class="form-group">
+                        <label>Persona</label>
+                        <select id="p1_persona">
+                            {% for p in personas %}<option value="{{ p.slug }}">{{ p.name }} ({{ p.slug }})</option>{% endfor %}
+                        </select>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label>Persona</label>
-                    <select id="p1_persona">
-                        {% for p in personas %}<option value="{{ p.slug }}">{{ p.name }} ({{ p.slug }})</option>{% endfor %}
-                    </select>
+                <div id="p1_human_fields" style="display:none">
+                    <div class="form-group">
+                        <label>Display Name</label>
+                        <input type="text"
+                               id="p1_human_name"
+                               placeholder="Challenger"
+                               maxlength="18">
+                    </div>
                 </div>
             </div>
             <div class="versus-divider">VS</div>
             <div class="player-config">
                 <h3>Player 2</h3>
                 <div class="form-group">
-                    <label>Provider</label>
-                    <select id="p2_provider">
-                        {% for p in providers %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+                    <label>Player Type</label>
+                    <select id="p2_type" onchange="togglePlayerType('p2')">
+                        <option value="llm">AI</option>
+                        <option value="human">Human</option>
                     </select>
                 </div>
-                <div class="form-group">
-                    <label>Model</label>
-                    <input type="text"
-                           id="p2_model"
-                           placeholder="e.g. claude-haiku-4-5-20251001"
-                           required>
+                <div id="p2_llm_fields">
+                    <div class="form-group">
+                        <label>Provider</label>
+                        <select id="p2_provider">
+                            {% for p in providers %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Model</label>
+                        <input type="text"
+                               id="p2_model"
+                               placeholder="e.g. claude-haiku-4-5-20251001"
+                               required>
+                    </div>
+                    <div class="form-group">
+                        <label>Persona</label>
+                        <select id="p2_persona">
+                            {% for p in personas %}<option value="{{ p.slug }}">{{ p.name }} ({{ p.slug }})</option>{% endfor %}
+                        </select>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label>Persona</label>
-                    <select id="p2_persona">
-                        {% for p in personas %}<option value="{{ p.slug }}">{{ p.name }} ({{ p.slug }})</option>{% endfor %}
-                    </select>
+                <div id="p2_human_fields" style="display:none">
+                    <div class="form-group">
+                        <label>Display Name</label>
+                        <input type="text"
+                               id="p2_human_name"
+                               placeholder="Challenger"
+                               maxlength="18">
+                    </div>
                 </div>
             </div>
         </div>
@@ -125,27 +157,80 @@
     <script src="/static/provider-model-validate.js"></script>
     <script>
 function effectiveBattleFormat() {
-  const customFmt = document.getElementById('battle_format_custom').value.trim();
-  return customFmt || document.getElementById('battle_format').value;
+  return document.getElementById('battle_format').value;
+}
+
+function isHuman(side) {
+  return document.getElementById(side + '_type')?.value === 'human';
+}
+
+function togglePlayerType(side) {
+  const human = isHuman(side);
+  const other = side === 'p1' ? 'p2' : 'p1';
+  document.getElementById(side + '_llm_fields').style.display = human ? 'none' : '';
+  document.getElementById(side + '_human_fields').style.display = human ? '' : 'none';
+  // Toggle `required` so the browser's HTML5 validation matches the visible fields.
+  const modelEl = document.getElementById(side + '_model');
+  if (modelEl) {
+    if (human) modelEl.removeAttribute('required');
+    else modelEl.setAttribute('required', '');
+  }
+  const humanNameEl = document.getElementById(side + '_human_name');
+  if (humanNameEl) {
+    if (human) humanNameEl.setAttribute('required', '');
+    else humanNameEl.removeAttribute('required');
+  }
+  // Only one side can be human — lock the other to AI.
+  const otherSel = document.getElementById(other + '_type');
+  if (human) {
+    otherSel.value = 'llm';
+    otherSel.disabled = true;
+    togglePlayerType(other);  // ensure other side shows LLM fields
+    otherSel.disabled = true; // re-disable after recursive call
+  } else {
+    otherSel.disabled = false;
+  }
+  // Human matches only support Single Match — hide Multi/Series options.
+  const anyHuman = isHuman('p1') || isHuman('p2');
+  const matchTypeSel = document.getElementById('match_type');
+  if (anyHuman) {
+    matchTypeSel.value = 'single';
+    for (const opt of matchTypeSel.options) {
+      if (opt.value !== 'single') opt.disabled = true;
+    }
+    toggleMatchType();
+  } else {
+    for (const opt of matchTypeSel.options) opt.disabled = false;
+  }
+  updateMatchSubmitEnabled();
 }
 
 function updateMatchSubmitEnabled() {
   const btn = document.getElementById('match-submit-btn');
   if (!btn) return;
-  const m1 = document.getElementById('p1_model')?.value.trim() || '';
-  const m2 = document.getElementById('p2_model')?.value.trim() || '';
-  if (!m1 || !m2) {
-    btn.disabled = true;
-    return;
+  // For each side: LLM needs model, human needs display name.
+  for (const side of ['p1', 'p2']) {
+    if (isHuman(side)) {
+      const name = document.getElementById(side + '_human_name')?.value.trim() || '';
+      if (!name) { btn.disabled = true; return; }
+    } else {
+      const model = document.getElementById(side + '_model')?.value.trim() || '';
+      if (!model) { btn.disabled = true; return; }
+    }
   }
   const bf = effectiveBattleFormat();
   if (!window.managerTeamPresetPickersEnabled(bf)) {
     btn.disabled = false;
     return;
   }
-  const t1 = document.getElementById('p1_team_id')?.value.trim() || '';
-  const t2 = document.getElementById('p2_team_id')?.value.trim() || '';
-  btn.disabled = !t1 || !t2;
+  // For custom formats, only LLM sides need a team selected.
+  for (const side of ['p1', 'p2']) {
+    if (!isHuman(side)) {
+      const tid = document.getElementById(side + '_team_id')?.value.trim() || '';
+      if (!tid) { btn.disabled = true; return; }
+    }
+  }
+  btn.disabled = false;
 }
 
 function syncTeamPresetPickers() {
@@ -194,11 +279,10 @@ function toggleMatchType() {
 document.getElementById('battle_format').addEventListener('change', function () {
   loadTeamPresetOptions();
 });
-document.getElementById('battle_format_custom').addEventListener('input', function () {
-  loadTeamPresetOptions();
-});
 document.getElementById('p1_model').addEventListener('input', updateMatchSubmitEnabled);
 document.getElementById('p2_model').addEventListener('input', updateMatchSubmitEnabled);
+document.getElementById('p1_human_name').addEventListener('input', updateMatchSubmitEnabled);
+document.getElementById('p2_human_name').addEventListener('input', updateMatchSubmitEnabled);
 document.getElementById('p1_team_id').addEventListener('change', updateMatchSubmitEnabled);
 document.getElementById('p2_team_id').addEventListener('change', updateMatchSubmitEnabled);
 loadTeamPresetOptions();
@@ -214,28 +298,40 @@ document.getElementById('match-form').addEventListener('submit', async (e) => {
   const battle_format = effectiveBattleFormat();
   const matchType = document.getElementById('match_type').value;
 
+  const p1Human = isHuman('p1');
+  const p2Human = isHuman('p2');
   const body = {
     battle_format,
-    player1_provider: document.getElementById('p1_provider').value,
-    player1_model: document.getElementById('p1_model').value.trim(),
-    player1_persona: document.getElementById('p1_persona').value,
-    player2_provider: document.getElementById('p2_provider').value,
-    player2_model: document.getElementById('p2_model').value.trim(),
-    player2_persona: document.getElementById('p2_persona').value,
+    player1_type: p1Human ? 'human' : 'llm',
+    player2_type: p2Human ? 'human' : 'llm',
+    player1_provider: p1Human ? 'human' : document.getElementById('p1_provider').value,
+    player1_model:    p1Human ? 'human' : document.getElementById('p1_model').value.trim(),
+    player1_persona:  p1Human ? 'human' : document.getElementById('p1_persona').value,
+    player2_provider: p2Human ? 'human' : document.getElementById('p2_provider').value,
+    player2_model:    p2Human ? 'human' : document.getElementById('p2_model').value.trim(),
+    player2_persona:  p2Human ? 'human' : document.getElementById('p2_persona').value,
   };
+  if (p1Human || p2Human) {
+    const nameEl = document.getElementById(p1Human ? 'p1_human_name' : 'p2_human_name');
+    body.human_display_name = (nameEl?.value || '').trim() || undefined;
+    // Only one play mode supported: the custom battle control page.
+    body.human_play_mode = 'control_page';
+  }
   if (window.managerTeamPresetPickersEnabled(battle_format)) {
-    const t1 = document.getElementById('p1_team_id').value.trim();
-    const t2 = document.getElementById('p2_team_id').value.trim();
-    if (!t1 || !t2) {
-      errEl.textContent =
-        'Choose a team preset for both players for this battle format, or use a *' +
-        (window.MANAGER_RANDOM_TEAM_BATTLE_FORMAT_SUFFIX || 'randombattle') +
-        ' format.';
-      errEl.style.display = 'block';
-      return;
+    // Only require team presets for LLM sides.
+    for (const [side, human] of [['p1', p1Human], ['p2', p2Human]]) {
+      if (human) continue;
+      const tid = document.getElementById(side + '_team_id').value.trim();
+      if (!tid) {
+        errEl.textContent =
+          'Choose a team preset for the AI player for this battle format, or use a *' +
+          (window.MANAGER_RANDOM_TEAM_BATTLE_FORMAT_SUFFIX || 'randombattle') +
+          ' format.';
+        errEl.style.display = 'block';
+        return;
+      }
+      body[side === 'p1' ? 'player1_team_id' : 'player2_team_id'] = parseInt(tid, 10);
     }
-    body.player1_team_id = parseInt(t1, 10);
-    body.player2_team_id = parseInt(t2, 10);
   }
 
   if (matchType === 'series') {
@@ -244,17 +340,22 @@ document.getElementById('match-form').addEventListener('submit', async (e) => {
     body.count = parseInt(document.getElementById('count').value);
   }
 
-  const v1 = validateProviderModel(body.player1_provider, body.player1_model, 'Player 1');
-  if (!v1.ok) {
-    errEl.textContent = v1.message;
-    errEl.style.display = 'block';
-    return;
+  // Only validate provider/model for LLM sides.
+  if (!p1Human) {
+    const v1 = validateProviderModel(body.player1_provider, body.player1_model, 'Player 1');
+    if (!v1.ok) {
+      errEl.textContent = v1.message;
+      errEl.style.display = 'block';
+      return;
+    }
   }
-  const v2 = validateProviderModel(body.player2_provider, body.player2_model, 'Player 2');
-  if (!v2.ok) {
-    errEl.textContent = v2.message;
-    errEl.style.display = 'block';
-    return;
+  if (!p2Human) {
+    const v2 = validateProviderModel(body.player2_provider, body.player2_model, 'Player 2');
+    if (!v2.ok) {
+      errEl.textContent = v2.message;
+      errEl.style.display = 'block';
+      return;
+    }
   }
 
   try {
@@ -270,8 +371,15 @@ document.getElementById('match-form').addEventListener('submit', async (e) => {
       throw new Error(msg || 'Failed to create match');
     }
     const data = await res.json();
+    const anyHuman = body.player1_type === 'human' || body.player2_type === 'human';
     if (data.type === 'series') {
       successEl.innerHTML = `Series created! <a href="/manager/series/${data.series.id}">View series</a>`;
+    } else if (anyHuman && data.matches && data.matches.length === 1) {
+      const mid = data.matches[0].id;
+      successEl.innerHTML =
+        `<strong>Match queued!</strong> ` +
+        `<a href="/battle/${mid}" class="btn btn-primary" style="margin-right:8px">Open Battle Page →</a> ` +
+        `<a href="/manager">Dashboard</a>`;
     } else {
       successEl.innerHTML = `${data.matches.length} match(es) queued. <a href="/manager">Go to dashboard</a>`;
     }

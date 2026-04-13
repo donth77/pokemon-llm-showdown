@@ -26,6 +26,7 @@ from manager import db
 from manager.env_host_file import configured_host_env_path, load_host_env_map
 from manager.personas_store import resolve_portrait_url
 from manager.routes import router as manager_router
+from battle_relay import router as battle_relay_router
 from scoreboard_stream import (
     request_scoreboard_publish,
     scoreboard_sse,
@@ -82,6 +83,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Gotta Prompt 'Em All — Web", lifespan=lifespan)
 app.include_router(manager_router)
+app.include_router(battle_relay_router)
 templates = Jinja2Templates(directory="templates")
 _BOOT_TS = str(int(time.time()))
 templates.env.globals["cache_bust"] = _BOOT_TS
@@ -359,6 +361,8 @@ async def build_scoreboard_payload() -> dict:
         "player2_portrait_square_url": _safe_square_portrait_url(
             state.get("player2_persona_slug")
         ),
+        "player1_type": state.get("player1_type") or "llm",
+        "player2_type": state.get("player2_type") or "llm",
         "battle_status": (state.get("status") or "idle"),
         "battle_format": state.get("battle_format") or "",
         "battle_tag": state.get("battle_tag"),
@@ -596,6 +600,20 @@ async def get_broadcast_battle_frame(request: Request):
         context={
             "request": request,
             "showdown_local_url": showdown_browser,
+        },
+    )
+
+
+@app.get("/battle/{match_id}", response_class=HTMLResponse)
+async def battle_control_page(request: Request, match_id: int):
+    """Battle control page — human plays through this UI instead of Showdown client."""
+    return templates.TemplateResponse(
+        request=request,
+        name="battle.html",
+        context={
+            "request": request,
+            "match_id": match_id,
+            "showdown_local_url": _showdown_browser_client_url(hide_battle_ui=True),
         },
     )
 

@@ -4,7 +4,7 @@ Contributor and coding-agent orientation for this repository. Tools that only lo
 
 ## Project Overview
 
-Two LLM-powered agents battle on a local Pokémon Showdown server. The **manager** (web UI + API) and **scripts** queue matchups and tournaments so you can **compare models, providers, and personas** via results, stats, and replays. **Streaming is optional:** core Compose is `showdown` + `web` + `agents`; the **`stream`** service adds headless Xvfb + Chromium + FFmpeg → Twitch RTMP (no OBS required for that path). You can also drive the same broadcast URLs from **OBS** (see README).
+Two LLM-powered agents battle on a local Pokémon Showdown server. The **manager** (web UI + API) and **scripts** queue matchups and tournaments so you can **compare models, providers, and personas** via results, stats, and replays. **Human vs AI** is also supported: either side of a match can be set to **human**, and the human plays through a custom **battle control page** at **`/battle/{match_id}`** (live AI persona portrait, reasoning feed, callouts, styled move/switch buttons, embedded Showdown battle iframe). **Streaming is optional:** core Compose is `showdown` + `web` + `agents`; the **`stream`** service adds headless Xvfb + Chromium + FFmpeg → Twitch RTMP (no OBS required for that path). You can also drive the same broadcast URLs from **OBS** (see README).
 
 ## Architecture
 
@@ -17,7 +17,7 @@ Four Docker services on a shared bridge network (`battle-net`), plus repo-root *
 | `agents` | `agents/` | — | LLM battle agents (Python, poke-env); queue worker polls `/api/manager` for matches |
 | `stream` | `stream/` | 9222 | Xvfb + Chromium + FFmpeg → Twitch RTMP capture pipeline |
 
-**Data flow:** Agents ↔ Showdown (WebSocket game protocol) · Agents → Web (`/thought`, match completion via `/api/manager/matches/{id}/complete`, plus `current_battle.json` / `thoughts.json` on `state-data`) · Optional persona memory files on `state-data` (`/state/personas/{slug}/memory.md`, `learnings.md`, `_memory_state.json` when `ENABLE_MEMORY=true`) · Stream → Web + Showdown (HTTP, for browser capture only)
+**Data flow:** Agents ↔ Showdown (WebSocket game protocol) · Agents → Web (`/thought`, match completion via `/api/manager/matches/{id}/complete`, plus `current_battle.json` / `thoughts.json` on `state-data`) · Optional persona memory files on `state-data` (`/state/personas/{slug}/memory.md`, `learnings.md`, `_memory_state.json` when `ENABLE_MEMORY=true`) · **Human vs AI relay:** `HumanPlayer` (agents) ↔ Web **`/api/battle/{id}/state`** (POST state) / **`/action`** (GET human's move) ↔ Browser **`/battle/{id}`** (SSE stream + POST action) — see **Human vs AI** below. Stream → Web + Showdown (HTTP, for browser capture only)
 
 **Shared Docker volumes:**
 - `web-data` → `/data` (legacy flat `results.json` if used; scoreboard primarily reads SQLite on `manager-data`)
@@ -27,6 +27,8 @@ Four Docker services on a shared bridge network (`battle-net`), plus repo-root *
 - `state-data` → `/state` (`current_battle.json`, `thoughts.json` — written by agents, read by web; optional **`personas/{slug}/`** adaptive memory files when enabled)
 
 **Match queue (design):** The queue is **not** a separate service — it is **`matches` rows** in SQLite (`status`, `queued_at`). Dequeue = transactional **UPDATE** `queued` → `running` in `pop_next_queued_match()`. Completed matches remain in the same table (`completed` / `error` / `cancelled`) for results and stats. Workers pull jobs via **`GET /api/manager/queue/next`** (HTTP polling in `agents/queue_worker.py`), not via Redis or an internal task queue. For custom-team formats, each match row may store **`player1_team_showdown`** / **`player2_team_showdown`** (snapshotted from the team library at enqueue); the worker passes them to **`match_runner.run_single_match`** → poke-env **`Player`** as the **`team=`** kwarg when non-empty.
+
+**Human vs AI rows:** the same **`matches`** table also stores **`player1_type`** / **`player2_type`** (defaults `'llm'`, set to `'human'` for the human side) and **`human_display_name`** (the Showdown username + `{opponent_name}` value in the AI's prompt; defaults to `"Challenger"`). **`human_play_mode`** is also persisted (currently always `'control_page'` — Showdown-client mode is disabled for now). `run_single_match()` dispatches to **`_run_human_vs_ai_match()`** when either side is human; only one poke-env `LLMPlayer` and one `HumanPlayer` are created (rather than two `LLMPlayer` instances), and **`battle_against()`** drives the match. Human matches are **single-match only** (Multi / Series / tournament participation is disabled in the UI and API).
 
 ## Static files (`assets/` vs `web/static`)
 
@@ -140,6 +142,11 @@ cd web && pip install -r requirements-dev.txt && pytest manager/verify_brackets_
 | `/thought` | POST | Submit a player thought (called by agents) |
 | `/thoughts/clear` | POST | Clear thought history |
 | `/thoughts/ws` | WebSocket | Real-time thought stream |
+| `/battle/{match_id}` | GET | **Human vs AI** battle control page (HTML) — opponent persona panel, reasoning feed, callouts, Showdown battle iframe, typed move/switch buttons. Pulls state via the battle relay SSE below. |
+| `/api/battle/{match_id}/state` | POST, GET | `POST` (from **`HumanPlayer`**): push current battle state as structured JSON — stored in memory and broadcast to all SSE subscribers. `GET` (from browser fallback): return the latest state. |
+| `/api/battle/{match_id}/stream` | GET | **SSE** per-subscriber queue fan-out: browser subscribes and receives each new state push. Ends with `event: match_end` when the relay is cleaned up or `finished:true` arrives. |
+| `/api/battle/{match_id}/action` | POST, GET | `POST` (from browser): submit human's `{action_type, index}` (1-based). Validates against the current state. `GET` (from `HumanPlayer`): pop the pending action (404 if none). |
+| `/api/battle/{match_id}/relay` | DELETE | `HumanPlayer` cleanup at match end; sends `match_end` to any subscriber. |
 | `/health` | GET | Health check |
 
 **Offset pagination (HTML):** `/manager` (`upcoming_offset`, `upcoming_limit`), `/manager/tournaments` (`offset`, `limit`), `/manager/results` (`matches_offset` / `matches_limit`, `series_offset` / `series_limit`), and `/replays` (`offset`, `limit`) use the same pattern: default page size **10**, max **200** (`_HTML_LIST_DEFAULT` / `_HTML_LIST_MAX` in `web/manager/routes.py`; replays use `_REPLAYS_PAGE_*` in `web/main.py`).
@@ -166,6 +173,32 @@ Shipped example slugs include `aggro`, `stall`, `nerd`, `neutral`, `gambler`, `z
 **Adaptive memory (optional, default off):** When `ENABLE_MEMORY=true`, `match_runner._load_persona_memory_texts()` reads `/state/personas/{slug}/memory.md` and `learnings.md`; `build_system_prompt()` injects them before `ACTION_FORMAT_INSTRUCTIONS`. After each successful match, `_post_match_persona_memory()` may call `_run_one_persona_reflection()` (same provider/model as that side) to append a `## Match ...` diary block and optionally rewrite learnings; intervals and caps via `MEMORY_REFLECTION_INTERVAL`, `LEARNINGS_UPDATE_INTERVAL`, `MAX_MEMORY_ENTRIES`, `MAX_LEARNINGS_BULLETS`. Same persona slug on both sides: one reflection per match for that slug (deduped `seen_slug` set). Counter persisted in `_memory_state.json`.
 
 Match participants are configured via the **manager** (`/manager` or API), not env-only.
+
+## Human vs AI
+
+Either side of a match can be set to a human player who plays through a custom battle control page instead of another LLM.
+
+**Files:**
+| File | Role |
+| --- | --- |
+| `agents/human_player.py` | `HumanPlayer(Player)` — extends poke-env Player. `choose_move()` builds structured battle-state JSON (`build_battle_state_json`), POSTs it to `/api/battle/{match_id}/state`, polls `/api/battle/{match_id}/action` for the human's choice, and converts it into a poke-env order. Falls back to `choose_random_move()` after `HUMAN_TURN_TIMEOUT` (default 150s). |
+| `agents/match_runner.py` | `build_system_prompt()` accepts `opponent_is_human=True` → injects the `_HUMAN_OPPONENT_BLOCK` before `ACTION_FORMAT_INSTRUCTIONS` so the AI leans into callouts directed at the human. `{opponent_name}` resolves to `human_display_name`. `_run_human_vs_ai_match()` creates one `LLMPlayer` (AI side) and one `HumanPlayer` (human side), then `battle_against()` drives the match. |
+| `web/battle_relay.py` | FastAPI router mounted on `/api/battle`. In-memory `_relays: dict[int, BattleRelay]` with per-match subscriber queues (`asyncio.Queue` per browser tab). Stale relays cleaned up after 10 minutes of no state updates. |
+| `web/main.py` | `GET /battle/{match_id}` route renders `battle.html`. |
+| `web/templates/battle.html`, `web/static/battle.js`, `web/static/battle.css` | Battle control page UI: opponent persona panel (portrait, name, callout bubble), reasoning feed (subscribes to `/thoughts/ws`, filters to AI side), field bar, typed move/switch buttons with effectiveness badges, Showdown battle iframe with injected trainer sprite + (on battle tab only) callout pills, turn timer, match-end result card. Assets cache-busted via `?v={{ cache_bust }}`. |
+| `web/templates/manager/match_new.html` | Per-side **Player Type** dropdown (AI / Human). Selecting Human hides provider/model/persona, shows a **Display Name** input (required, max 18 chars), forces match type to Single, and locks the other side to AI. On successful create, the success message shows an **Open Battle Page →** button linking to `/battle/{match_id}`. |
+
+**DB columns** (`web/manager/db.py`, added via `_migrate_human_player_columns`): `player1_type`, `player2_type` (`'llm' | 'human'`, default `'llm'`), `human_display_name` (nullable TEXT), `human_play_mode` (default `'showdown'`; value stored is always `'control_page'` today). Columns exist on both `matches` and `series` (series kept for forward-compat even though human matches don't currently use series).
+
+**Showdown username:** the human's Showdown login name is the same as `human_display_name` — at queue dequeue (`api_queue_next`) the human side's `player{1,2}_showdown_account` is overridden with `human_display_name`. This flows through the existing `player{1,2}_account_name` path in `run_single_match()`.
+
+**Prompt adaptation:** `_HUMAN_OPPONENT_BLOCK` instructs the AI to address the human directly in callouts, use them more expressively than against an AI, and lean into persona voice. `{opponent_name}` in every persona template (e.g. `agents/personas/aggro.md` — "Your opponent is {opponent_name}") resolves to the human's display name, so existing trash-talk references work naturally.
+
+**Custom-team formats with a human:** only the AI side requires a team preset (`routes.py` validates this). The human builds / pastes their team in the Showdown teambuilder; no preset needed. Random-battle formats: both sides get server-assigned teams as usual.
+
+**Out of scope today:** Human vs Human, humans in tournaments, Showdown-client play mode (the UI toggle was removed — the `HumanPlayer` + relay is the only supported path).
+
+**Env:** `HUMAN_TURN_TIMEOUT` (agents; default 150s) — how long `HumanPlayer.choose_move()` polls for the human's action before falling back to random. `HUMAN_ACTION_POLL_INTERVAL` (default 0.5s).
 
 ## Team presets (BYO / custom-team formats)
 
@@ -245,6 +278,7 @@ All config is via environment variables. Copy `.env.example` to `.env` and edit.
 - **Battle pacing:** `TURN_DELAY_SECONDS`, `DELAY_BETWEEN_MATCHES`, `QUEUE_POLL_INTERVAL`, `LLM_MAX_OUTPUT_TOKENS`, `LLM_TURN_TIMEOUT`
 - **Tournament intro + match-intro sync (agents):** `TOURNAMENT_INTRO_SECONDS`, `TOURNAMENT_INTRO_DELAY_SECONDS` (queue worker holds before the first match of a tournament when the intro duration is non-zero), `MATCH_INTRO_STARTING_HOLD_SECONDS` (brief `starting` state so the hub’s **splashes** iframe can show the matchup intro before Showdown connects) — forwarded in `docker-compose.yml` for `agents`
 - **Persona memory (agents):** `ENABLE_MEMORY` (default off), `MEMORY_REFLECTION_INTERVAL`, `LEARNINGS_UPDATE_INTERVAL`, `MAX_MEMORY_ENTRIES`, `MAX_LEARNINGS_BULLETS`, `LLM_MEMORY_REFLECTION_MAX_TOKENS` — forwarded in `docker-compose.yml` for `agents`
+- **Human vs AI (agents):** `HUMAN_TURN_TIMEOUT` (seconds the `HumanPlayer` waits for the human's move before falling back to random; default 150), `HUMAN_ACTION_POLL_INTERVAL` (poll interval in seconds; default 0.5)
 - **Pokédex:** `POKEDEX_TOOL_ENABLED` (Anthropic tool calling), `POKEDEX_AUTO_ENRICH` (context injection for all providers), `POKEDEX_MAX_LOOKUPS`
 - **Storage:** `REPLAY_DIR`, `LOG_DIR`, `LOG_RAW_BATTLE`, `STATE_DIR` (in-container paths)
 - **Stream:** `TWITCH_STREAM_KEY`, `STREAM_VIEW_URL`, `STREAM_AUDIO_SOURCE`

@@ -1187,6 +1187,27 @@ async def api_create_matches(request: Request):
 
     if not fmt:
         raise HTTPException(400, "Battle format is required")
+
+    # --- Human vs AI support ---
+    p1_type = (body.get("player1_type") or "llm").strip().lower()
+    p2_type = (body.get("player2_type") or "llm").strip().lower()
+    if p1_type not in ("llm", "human") or p2_type not in ("llm", "human"):
+        raise HTTPException(400, "player_type must be 'llm' or 'human'")
+    if p1_type == "human" and p2_type == "human":
+        raise HTTPException(400, "Both players cannot be human")
+    human_display_name = (body.get("human_display_name") or "").strip() or None
+
+    # For human sides, set sentinel provider/model/persona so downstream
+    # code that expects non-empty strings keeps working.
+    if p1_type == "human":
+        body.setdefault("player1_provider", "human")
+        body.setdefault("player1_model", "human")
+        body.setdefault("player1_persona", "human")
+    if p2_type == "human":
+        body.setdefault("player2_provider", "human")
+        body.setdefault("player2_model", "human")
+        body.setdefault("player2_persona", "human")
+
     for side in ("player1", "player2"):
         if (
             not body.get(f"{side}_provider")
@@ -1197,12 +1218,15 @@ async def api_create_matches(request: Request):
                 400, f"{side} provider, model, and persona are required"
             )
 
-    _require_provider_model_pair(
-        "Player 1", body["player1_provider"], body["player1_model"]
-    )
-    _require_provider_model_pair(
-        "Player 2", body["player2_provider"], body["player2_model"]
-    )
+    # Only validate provider/model pairs for LLM sides.
+    if p1_type == "llm":
+        _require_provider_model_pair(
+            "Player 1", body["player1_provider"], body["player1_model"]
+        )
+    if p2_type == "llm":
+        _require_provider_model_pair(
+            "Player 2", body["player2_provider"], body["player2_model"]
+        )
 
     p1t = _optional_team_id(body.get("player1_team_id"))
     p2t = _optional_team_id(body.get("player2_team_id"))
@@ -1213,9 +1237,31 @@ async def api_create_matches(request: Request):
                 f"{side}_team_id is not allowed for server-assigned team formats "
                 f"(*{battle_format_rules.SHOWDOWN_SERVER_ASSIGNED_TEAM_SUFFIX}).",
             )
-    _require_player_teams_for_custom_battle_format(fmt, p1t, p2t)
-    await _require_team_preset_matches_battle_format("Player 1", fmt, p1t)
-    await _require_team_preset_matches_battle_format("Player 2", fmt, p2t)
+    # For human vs AI in custom formats, only the AI side needs a team preset.
+    # The human builds/pastes their team in the Showdown client.
+    has_human = p1_type == "human" or p2_type == "human"
+    if has_human:
+        ai_team = p2t if p1_type == "human" else p1t
+        ai_label = "Player 2" if p1_type == "human" else "Player 1"
+        if not battle_format_rules.uses_server_assigned_teams(fmt) and ai_team is None:
+            raise HTTPException(
+                400,
+                f"{ai_label} (AI) team_id is required for custom-team battle formats.",
+            )
+        await _require_team_preset_matches_battle_format(ai_label, fmt, ai_team)
+    else:
+        _require_player_teams_for_custom_battle_format(fmt, p1t, p2t)
+        await _require_team_preset_matches_battle_format("Player 1", fmt, p1t)
+        await _require_team_preset_matches_battle_format("Player 2", fmt, p2t)
+
+    # Only one play mode is supported today: the custom battle control page.
+    # Column stored as-is for forward compat.
+    human_kw = dict(
+        player1_type=p1_type,
+        player2_type=p2_type,
+        human_display_name=human_display_name,
+        human_play_mode="control_page",
+    )
 
     # best_of > 0 means create a series; count is ignored
     if best_of > 0:
@@ -1250,6 +1296,7 @@ async def api_create_matches(request: Request):
             player2_persona=body["player2_persona"],
             player1_team_id=p1t,
             player2_team_id=p2t,
+            **human_kw,
         )
         created.append(m)
     await notify_manager_events(queue=True)
@@ -1300,6 +1347,13 @@ async def api_queue_next():
     if a1 and a2:
         m["player1_showdown_account"] = a1
         m["player2_showdown_account"] = a2
+    # For human matches, use the display name as the Showdown account.
+    p1t = m.get("player1_type") or "llm"
+    p2t = m.get("player2_type") or "llm"
+    if p1t == "human":
+        m["player1_showdown_account"] = m.get("human_display_name") or "Challenger"
+    elif p2t == "human":
+        m["player2_showdown_account"] = m.get("human_display_name") or "Challenger"
     tids = [int(m["tournament_id"])] if m.get("tournament_id") is not None else []
     await notify_manager_events(
         queue=True, tournament_ids=tids, series_ids=_series_id_list_from_match(m)

@@ -23,6 +23,7 @@ from poke_env.player import Player
 from poke_env.ps_client import AccountConfiguration, ServerConfiguration
 
 from env_bool import parse_env_bool
+from human_player import HumanPlayer
 from llm_player import LLMPlayer, reflection_json_completion
 from log_print import log_print
 
@@ -186,6 +187,19 @@ def load_persona(persona_slug: str) -> PersonaDefinition:
     )
 
 
+_HUMAN_OPPONENT_BLOCK = """\
+== IMPORTANT: YOU ARE BATTLING A HUMAN PLAYER ==
+Your opponent is a real person, not another AI. This changes how you should engage:
+- Your callouts are being READ by a real person. Make them land. Address them directly.
+- Be MORE expressive with callouts — a human opponent makes big moments bigger. Use
+  callouts more freely than you would against an AI (but still not every single turn).
+- Lean into your persona harder. Trash talk, bravado, dramatic flair — the human is
+  your audience. They chose to fight you.
+- Your reasoning is still shown to spectators, so keep it tight and entertaining.
+- Play to WIN. Don't go easy. A human opponent deserves your best tactical game AND
+  your best performance."""
+
+
 def build_system_prompt(
     prompt_body: str,
     *,
@@ -193,6 +207,7 @@ def build_system_prompt(
     opponent_name: str,
     memory_md: str = "",
     learnings_md: str = "",
+    opponent_is_human: bool = False,
 ) -> str:
     try:
         persona_prompt = prompt_body.format(
@@ -207,6 +222,8 @@ def build_system_prompt(
     learn = (learnings_md or "").strip()
     if learn:
         blocks.append(f"== YOUR TACTICAL LEARNINGS ==\n{learn}")
+    if opponent_is_human:
+        blocks.append(_HUMAN_OPPONENT_BLOCK)
     blocks.append(ACTION_FORMAT_INSTRUCTIONS)
     return "\n\n".join(blocks)
 
@@ -717,6 +734,8 @@ def write_current_battle_state(
     manager_match_id: int | None = None,
     tournament_intro_roster: list[dict] | None = None,
     tournament_best_of: int | None = None,
+    player1_type: str | None = None,
+    player2_type: str | None = None,
 ) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     payload: dict = {
@@ -756,6 +775,10 @@ def write_current_battle_state(
                 payload[key] = val
     if manager_match_id is not None:
         payload["match_id"] = manager_match_id
+    if player1_type is not None:
+        payload["player1_type"] = player1_type
+    if player2_type is not None:
+        payload["player2_type"] = player2_type
     if tournament_intro_roster is not None:
         payload["tournament_intro_roster"] = tournament_intro_roster
     if tournament_best_of is not None:
@@ -875,6 +898,317 @@ class MatchResult:
     error: str | None = None
 
 
+async def _run_human_vs_ai_match(
+    *,
+    battle_format: str,
+    human_side: str,
+    human_name: str,
+    ai_provider: str,
+    ai_model: str,
+    ai_persona_slug: str,
+    ai_team_showdown: str | None = None,
+    series_snapshot: dict | None = None,
+    tourney_context: dict | None = None,
+    manager_match_id: int | None = None,
+) -> MatchResult:
+    """
+    Run a battle where one side is a human playing through the Showdown client.
+
+    The AI LLMPlayer sends a challenge to the human's Showdown username.  The
+    human accepts in their browser and plays moves there.  poke-env only manages
+    the AI side.
+    """
+    server_config = make_server_config()
+    ai_persona = load_persona(ai_persona_slug)
+    ai_mem, ai_learn = _load_persona_memory_texts(ai_persona.slug)
+    ai_side = "p2" if human_side == "p1" else "p1"
+
+    ai_player_name = _make_player_name(ai_provider, ai_model, ai_persona.name)
+    # Ensure the AI username doesn't collide with the human's display name
+    if ai_player_name.lower().replace(" ", "") == human_name.lower().replace(" ", ""):
+        ai_player_name = _showdown_name_with_numeric_suffix(ai_player_name, 1)
+
+    if human_side == "p1":
+        player1_name, player2_name = human_name, ai_player_name
+        player1_model_id, player2_model_id = "human", ai_model
+    else:
+        player1_name, player2_name = ai_player_name, human_name
+        player1_model_id, player2_model_id = ai_model, "human"
+
+    ai_agent: Player | None = None
+
+    try:
+        ai_team = (ai_team_showdown or "").strip() or None
+        ai_agent_kw: dict = dict(
+            account_configuration=AccountConfiguration(ai_player_name, None),
+            server_configuration=server_config,
+            battle_format=battle_format,
+            max_concurrent_battles=1,
+            save_replays=True,
+            provider=ai_provider,
+            model_id=ai_model,
+            opponent_name=human_name,
+            opponent_account_name=human_name,
+            turn_delay_seconds=TURN_DELAY_SECONDS,
+            battle_side=ai_side,
+            system_prompt=build_system_prompt(
+                ai_persona.prompt_body,
+                player_name=ai_player_name,
+                opponent_name=human_name,
+                memory_md=ai_mem,
+                learnings_md=ai_learn,
+                opponent_is_human=True,
+            ),
+        )
+        if ai_team:
+            ai_agent_kw["team"] = ai_team
+        ai_agent = LLMPlayer(**ai_agent_kw)
+
+        # Build PersonaDefinition-like objects for current_battle.json.
+        # Human side has no persona, but broadcast expects both fields.
+        human_pseudo_persona = PersonaDefinition(
+            slug="human",
+            name=human_name,
+            abbreviation=human_name,
+            description="Human player",
+            prompt_body="",
+            sprite_url="",
+        )
+        p1_persona = human_pseudo_persona if human_side == "p1" else ai_persona
+        p2_persona = ai_persona if human_side == "p1" else human_pseudo_persona
+        p1_type = "human" if human_side == "p1" else "llm"
+        p2_type = "human" if human_side == "p2" else "llm"
+
+        write_current_battle_state(
+            status="waiting_for_human",
+            battle_format=battle_format,
+            player1_name=player1_name,
+            player2_name=player2_name,
+            player1_model_id=player1_model_id,
+            player2_model_id=player2_model_id,
+            player1_persona=p1_persona,
+            player2_persona=p2_persona,
+            player1_type=p1_type,
+            player2_type=p2_type,
+            series_snapshot=series_snapshot,
+            tourney_context=tourney_context,
+            manager_match_id=manager_match_id,
+        )
+        if _MATCH_INTRO_STARTING_HOLD_SEC > 0:
+            await asyncio.sleep(_MATCH_INTRO_STARTING_HOLD_SEC)
+        clear_thoughts_state()
+        await _post_thoughts_clear()
+
+        # Human plays via the custom battle control page at /battle/{match_id}.
+        # poke-env drives both sides: the AI's LLMPlayer and the HumanPlayer
+        # relay (which pushes state to the web relay and polls for the human's
+        # move submitted from the browser).
+        log_print(
+            f"[match] Human vs AI — human plays via /battle/{manager_match_id}. "
+            f"AI: '{ai_player_name}' ({ai_persona.name}).",
+            flush=True,
+        )
+        human_agent = HumanPlayer(
+            account_configuration=AccountConfiguration(human_name, None),
+            server_configuration=server_config,
+            battle_format=battle_format,
+            max_concurrent_battles=1,
+            save_replays=True,
+            match_id=manager_match_id,
+            battle_side=human_side,
+        )
+        match_start = time.time()
+        if human_side == "p1":
+            battle_task = asyncio.create_task(
+                human_agent.battle_against(ai_agent, n_battles=1)
+            )
+        else:
+            battle_task = asyncio.create_task(
+                ai_agent.battle_against(human_agent, n_battles=1)
+            )
+
+        # Monitor for battle start (same pattern as AI-vs-AI).
+        known_tags = set(ai_agent.battles.keys())
+        live_battle_tag: str | None = None
+        while not battle_task.done():
+            current_tags = set(ai_agent.battles.keys())
+            new_tags = list(current_tags - known_tags)
+            if new_tags and not live_battle_tag:
+                live_battle_tag = new_tags[0].lstrip(">")
+                write_current_battle_state(
+                    status="live",
+                    battle_tag=live_battle_tag,
+                    battle_format=battle_format,
+                    player1_name=player1_name,
+                    player2_name=player2_name,
+                    player1_model_id=player1_model_id,
+                    player2_model_id=player2_model_id,
+                    player1_persona=p1_persona,
+                    player2_persona=p2_persona,
+                    player1_type=p1_type,
+                    player2_type=p2_type,
+                    series_snapshot=series_snapshot,
+                    tourney_context=tourney_context,
+                    manager_match_id=manager_match_id,
+                )
+                log_print(f"Live battle detected: {live_battle_tag}", flush=True)
+            await asyncio.sleep(0.3)
+
+        await battle_task
+
+        last_battle = list(ai_agent.battles.values())[-1]
+        # From the AI agent's perspective: won/lost refers to the AI side.
+        if last_battle.won:
+            winner_name = ai_player_name
+            loser_name = human_name
+            winner_side = ai_side
+        elif last_battle.lost:
+            winner_name = human_name
+            loser_name = ai_player_name
+            winner_side = human_side
+        else:
+            winner_name, loser_name = "Draw", "Draw"
+            winner_side = "p1"
+
+        match_duration = time.time() - match_start
+        safe_tag = last_battle.battle_tag.lstrip(">").replace("/", "_")
+
+        write_current_battle_state(
+            status="idle",
+            battle_format=battle_format,
+            player1_name=player1_name,
+            player2_name=player2_name,
+            player1_model_id=player1_model_id,
+            player2_model_id=player2_model_id,
+            player1_persona=p1_persona,
+            player2_persona=p2_persona,
+            player1_type=p1_type,
+            player2_type=p2_type,
+            series_snapshot=series_snapshot,
+            tourney_context=tourney_context,
+            manager_match_id=manager_match_id,
+        )
+        clear_thoughts_state()
+        await _post_thoughts_clear()
+
+        if manager_match_id is not None:
+            body = await _post_manager_match_complete(
+                int(manager_match_id),
+                winner=winner_name,
+                loser=loser_name,
+                winner_side=winner_side,
+                duration=round(match_duration, 1),
+                replay_file=None,
+                log_file=None,
+                battle_tag=safe_tag,
+            )
+            if isinstance(body, dict):
+                snap = body.get("series_snapshot")
+                if isinstance(snap, dict):
+                    _merge_series_snapshot_into_current_battle(snap)
+
+        replay_path = save_local_replay(ai_agent, last_battle.battle_tag)
+        log_path = save_raw_battle_log(
+            last_battle,
+            safe_tag=safe_tag,
+            winner=winner_name,
+            loser=loser_name,
+            battle_format=battle_format,
+            provider=ai_provider,
+            model_id=ai_model,
+            replay_path=replay_path,
+        )
+
+        # Run persona memory reflection for the AI side only.
+        is_draw = winner_name == "Draw"
+        try:
+            if ENABLE_MEMORY and MEMORY_REFLECTION_INTERVAL > 0:
+                n = _increment_persona_match_count(ai_persona.slug)
+                if n % MEMORY_REFLECTION_INTERVAL == 0:
+                    outcome = (
+                        "DRAW"
+                        if is_draw
+                        else ("WIN" if winner_side == ai_side else "LOSS")
+                    )
+                    update_learnings = LEARNINGS_UPDATE_INTERVAL > 0 and (
+                        n % LEARNINGS_UPDATE_INTERVAL == 0
+                    )
+                    await _run_one_persona_reflection(
+                        persona_slug=ai_persona.slug,
+                        provider=ai_provider,
+                        model_id=ai_model,
+                        persona_display_name=ai_persona.name,
+                        opponent_persona_name=human_name,
+                        battle_format=battle_format,
+                        outcome=outcome,
+                        battle_log_text=_battle_log_text_for_reflection(
+                            log_file=log_path.name if log_path else None,
+                            replay_path=replay_path,
+                        ),
+                        update_learnings=update_learnings,
+                    )
+        except Exception as e:
+            log_print(f"[memory] post-match memory cycle failed: {e}", flush=True)
+            traceback.print_exc()
+
+        return MatchResult(
+            winner=winner_name,
+            loser=loser_name,
+            winner_side=winner_side,
+            duration=round(match_duration, 1),
+            replay_file=replay_path.name,
+            log_file=log_path.name if log_path else None,
+            battle_tag=safe_tag,
+        )
+
+    except Exception as e:
+        write_current_battle_state(
+            status="error",
+            battle_format=battle_format,
+            player1_name=player1_name,
+            player2_name=player2_name,
+            player1_model_id=player1_model_id,
+            player2_model_id=player2_model_id,
+            player1_persona=p1_persona,
+            player2_persona=p2_persona,
+            player1_type=p1_type,
+            player2_type=p2_type,
+            series_snapshot=series_snapshot,
+            tourney_context=tourney_context,
+            manager_match_id=manager_match_id,
+        )
+        clear_thoughts_state()
+        await _post_thoughts_clear()
+        log_print(f"Error in human match: {e}", flush=True)
+        traceback.print_exc()
+        err_str = str(e)
+        err_lower = err_str.lower()
+        if (
+            "nametaken" in err_lower
+            or "name taken" in err_lower
+            or "|nametaken|" in err_str
+        ):
+            friendly = (
+                f"Showdown username '{human_name}' is already logged in from another "
+                f"session.  Pick a different display name for this match."
+            )
+        else:
+            friendly = err_str
+        return MatchResult(
+            winner="",
+            loser="",
+            winner_side="",
+            duration=0,
+            replay_file=None,
+            log_file=None,
+            battle_tag=None,
+            error=friendly,
+        )
+
+    finally:
+        await _disconnect_players(ai_agent, human_agent)
+
+
 async def run_single_match(
     *,
     battle_format: str,
@@ -891,12 +1225,41 @@ async def run_single_match(
     series_snapshot: dict | None = None,
     tourney_context: dict | None = None,
     manager_match_id: int | None = None,
+    player1_type: str = "llm",
+    player2_type: str = "llm",
 ) -> MatchResult:
     """
     Run a single battle and return the result.
 
     This is the core execution function used by the queue worker.
     """
+    p1_is_human = player1_type == "human"
+    p2_is_human = player2_type == "human"
+    if p1_is_human or p2_is_human:
+        human_side = "p1" if p1_is_human else "p2"
+        human_name = (
+            _normalize_showdown_override(
+                player1_account_name if p1_is_human else player2_account_name
+            )
+            or "Challenger"
+        )
+        ai_provider = player2_provider if p1_is_human else player1_provider
+        ai_model = player2_model if p1_is_human else player1_model
+        ai_persona_slug = player2_persona_slug if p1_is_human else player1_persona_slug
+        ai_team = player2_team_showdown if p1_is_human else player1_team_showdown
+        return await _run_human_vs_ai_match(
+            battle_format=battle_format,
+            human_side=human_side,
+            human_name=human_name,
+            ai_provider=ai_provider,
+            ai_model=ai_model,
+            ai_persona_slug=ai_persona_slug,
+            ai_team_showdown=ai_team,
+            series_snapshot=series_snapshot,
+            tourney_context=tourney_context,
+            manager_match_id=manager_match_id,
+        )
+
     server_config = make_server_config()
     p1_persona = load_persona(player1_persona_slug)
     p2_persona = load_persona(player2_persona_slug)

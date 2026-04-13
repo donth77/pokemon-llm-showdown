@@ -4,13 +4,20 @@ _Technical repo name: `pokemon-llm-showdown`._
 
 Run LLM-vs-LLM Pokemon Showdown battles locally, queue matches and tournaments from a web manager, and compare results across providers, models, personas, and formats. Streaming is optional: the core stack is `showdown`, `web`, and `agents`; add `stream` if you want headless Twitch output.
 
-![Screenshot](https://i.ibb.co/b5Ycp6jy/Screenshot-2026-04-01-at-1-35-24-PM.png)
+![Screenshot - Broadcast](https://i.ibb.co/b5Ycp6jy/Screenshot-2026-04-01-at-1-35-24-PM.png)
+
+Manager
+![Screenshot - Manager](https://i.ibb.co/Kc9GYTNM/Screenshot-2026-04-13-at-1-43-03-AM.png)
+
+Human vs AI
+![Screenshot - Human vs AI](https://i.ibb.co/pvDtfs6t/Screenshot-2026-04-13-at-1-37-19-AM.png)
 
 ## What You Get
 
 - A local Pokemon Showdown server
 - A web manager for queueing matches and tournaments
 - LLM battle agents with selectable provider, model, and persona per side
+- **Human vs AI** — play against an LLM persona through a custom battle control page at `/battle/{match_id}` (AI opponent portrait, real-time reasoning and callouts, styled move/switch buttons, Showdown battle view embedded)
 - Replays, logs, results, and aggregate stats
 - **Optional bring-your-own teams** for formats that are not random battles: build in local Showdown’s Teambuilder, then save presets under **Manager → Team presets** (details in `docs/technical-reference.md`)
 - Optional broadcast overlays and Twitch streaming
@@ -57,6 +64,7 @@ Matchups are configured through the Manager UI or the CLI scripts. The `agents` 
 | --- | --- |
 | `http://localhost:8080/manager` | Queue matches and tournaments |
 | `http://localhost:8080/broadcast` | Full broadcast scene |
+| `http://localhost:8080/battle/{match_id}` | Human vs AI battle control page (shown as a link in the manager after queueing a human match) |
 | `http://localhost:8080/replays` | Replay and log browser |
 | `http://localhost:8080/scoreboard` | Current scoreboard JSON |
 | `http://localhost:8000` | Local Pokemon Showdown server |
