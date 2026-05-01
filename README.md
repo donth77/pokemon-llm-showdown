@@ -1,5 +1,7 @@
 # Gotta Prompt 'Em All
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Python 3.11](https://img.shields.io/badge/Python-3.11-blue.svg)](https://www.python.org/downloads/release/python-3110/) [![Node 20](https://img.shields.io/badge/Node-20-green.svg)](https://nodejs.org/) [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg?logo=docker&logoColor=white)](https://docs.docker.com/compose/) [![GitHub last commit](https://img.shields.io/github/last-commit/donth77/ai-pkmn-showdown)](https://github.com/donth77/ai-pkmn-showdown/commits/main) [![GitHub stars](https://img.shields.io/github/stars/donth77/ai-pkmn-showdown)](https://github.com/donth77/ai-pkmn-showdown/stargazers)
+
 _Technical repo name: `pokemon-llm-showdown`._
 
 Run LLM-vs-LLM Pokemon Showdown battles locally, queue matches and tournaments from a web manager, and compare results across providers, models, personas, and formats. Streaming is optional: the core stack is `showdown`, `web`, and `agents`; add `stream` if you want headless Twitch output.
